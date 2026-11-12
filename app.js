@@ -1,0 +1,844 @@
+'use strict';
+(() => {
+  /* =====================================================================
+     WorkLog : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     Données d'exercices : ExerciseDB V1 (version gratuite, sans clé).
+     ===================================================================== */
+  const API = 'https://oss.exercisedb.dev/api/v1';
+  const GIF_BASE = 'https://static.exercisedb.dev/media/';
+  const BACKUP_KEY = 'worklog.backup.v1';
+  const NS = 'http://www.w3.org/2000/svg';
+
+  /* ---------- utilitaires ---------- */
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+  const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  const fmtNum = (n) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n);
+  const fDateTime = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fDayLong = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const fDayShort = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
+  const fTime = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const fMonth = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const dayKey = (ts) => { const d = new Date(ts); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+  const toLocalInput = (ts) => { const d = new Date(ts); return dayKey(ts) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+
+  function h(tag, props, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v == null || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'text') el.textContent = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else if (k === 'style') Object.assign(el.style, v);
+      else if (v === true) el.setAttribute(k, '');
+      else el.setAttribute(k, v);
+    }
+    for (const kid of kids.flat()) {
+      if (kid == null || kid === false) continue;
+      el.append(kid.nodeType ? kid : document.createTextNode(kid));
+    }
+    return el;
+  }
+  function sv(tag, attrs, ...kids) {
+    const el = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+    for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+    return el;
+  }
+
+  const ICONS = {
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+    star: '<path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.8 1-5.9L3.5 9.8l5.9-.8z"/>',
+    trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10 11v5M14 11v5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    down: '<path d="M6 10l6 6 6-6"/>',
+    left: '<path d="M15 6l-6 6 6 6"/>',
+    right: '<path d="M9 6l6 6-6 6"/>',
+    export: '<path d="M12 15V4M8 8l4-4 4 4M5 13v6h14v-6"/>',
+    import: '<path d="M12 4v11M8 11l4 4 4-4M5 13v6h14v-6"/>',
+  };
+  function icon(name, cls) {
+    const el = sv('svg', { viewBox: '0 0 24 24', class: 'ic ' + (cls || ''), 'aria-hidden': 'true' });
+    el.innerHTML = ICONS[name];
+    return el;
+  }
+
+  /* ---------- traductions (muscles et zones du corps) ---------- */
+  const MUSCLES = {
+    'abs': 'Abdominaux', 'abdominals': 'Abdominaux', 'rectus abdominis': 'Abdominaux', 'abdominis': 'Abdominaux',
+    'obliques': 'Obliques', 'external obliques': 'Obliques', 'internal obliques': 'Obliques', 'transverse abdominis': 'Transverse',
+    'abductors': 'Abducteurs', 'hip abductors': 'Abducteurs', 'adductors': 'Adducteurs', 'hip adductors': 'Adducteurs', 'adductor magnus': 'Grand adducteur',
+    'biceps': 'Biceps', 'biceps brachii': 'Biceps', 'brachialis': 'Brachial', 'brachioradialis': 'Brachio-radial',
+    'calves': 'Mollets', 'gastrocnemius': 'Gastrocnémien', 'soleus': 'Soléaire', 'tibialis anterior': 'Tibial antérieur',
+    'cardiovascular system': 'Système cardiovasculaire',
+    'delts': 'Deltoïdes', 'deltoids': 'Deltoïdes', 'deltoid': 'Deltoïde',
+    'deltoid anterior': 'Deltoïde antérieur', 'deltoid lateral': 'Deltoïde latéral', 'deltoid posterior': 'Deltoïde postérieur',
+    'anterior deltoid': 'Deltoïde antérieur', 'lateral deltoid': 'Deltoïde latéral', 'posterior deltoid': 'Deltoïde postérieur', 'rear deltoids': 'Deltoïdes postérieurs',
+    'forearms': 'Avant-bras', 'wrist flexors': 'Fléchisseurs du poignet', 'wrist extensors': 'Extenseurs du poignet', 'grip muscles': 'Muscles de la prise',
+    'glutes': 'Fessiers', 'gluteus maximus': 'Grand fessier', 'gluteus medius': 'Moyen fessier', 'gluteus minimus': 'Petit fessier',
+    'hamstrings': 'Ischio-jambiers', 'biceps femoris': 'Biceps fémoral', 'semitendinosus': 'Semi-tendineux', 'semimembranosus': 'Semi-membraneux',
+    'hip flexors': 'Fléchisseurs de la hanche', 'iliopsoas': 'Ilio-psoas', 'psoas': 'Psoas',
+    'lats': 'Grands dorsaux', 'latissimus dorsi': 'Grand dorsal',
+    'levator scapulae': 'Élévateur de la scapula',
+    'pectorals': 'Pectoraux', 'chest': 'Pectoraux', 'pectoralis major': 'Grand pectoral',
+    'pectoralis major clavicular head': 'Grand pectoral (haut)', 'pectoralis major sternal head': 'Grand pectoral (bas)', 'pectoralis minor': 'Petit pectoral',
+    'quads': 'Quadriceps', 'quadriceps': 'Quadriceps', 'rectus femoris': 'Droit fémoral', 'vastus lateralis': 'Vaste latéral', 'vastus medialis': 'Vaste médial', 'vastus intermedius': 'Vaste intermédiaire',
+    'serratus anterior': 'Dentelé antérieur',
+    'spine': 'Colonne vertébrale', 'erector spinae': 'Érecteurs du rachis',
+    'traps': 'Trapèzes', 'trapezius': 'Trapèze', 'trapezius upper fibers': 'Trapèze supérieur', 'trapezius middle fibers': 'Trapèze moyen', 'trapezius lower fibers': 'Trapèze inférieur',
+    'triceps': 'Triceps', 'triceps brachii': 'Triceps',
+    'upper back': 'Haut du dos', 'lower back': 'Bas du dos', 'middle back': 'Milieu du dos',
+    'rhomboids': 'Rhomboïdes', 'teres major': 'Grand rond', 'teres minor': 'Petit rond',
+    'infraspinatus': 'Infra-épineux', 'supraspinatus': 'Supra-épineux', 'subscapularis': 'Subscapulaire', 'rotator cuff': 'Coiffe des rotateurs',
+    'sternocleidomastoid': 'Sterno-cléido-mastoïdien', 'neck': 'Cou', 'shoulders': 'Épaules', 'core': 'Tronc',
+  };
+  const BODY = {
+    'back': 'Dos', 'cardio': 'Cardio', 'chest': 'Poitrine', 'lower arms': 'Avant-bras', 'lower legs': 'Mollets et jambes',
+    'neck': 'Cou', 'shoulders': 'Épaules', 'upper arms': 'Bras', 'upper legs': 'Cuisses', 'waist': 'Abdominaux et taille',
+    'arms': 'Bras', 'legs': 'Jambes', 'core': 'Abdominaux', 'calves': 'Mollets', 'full body': 'Corps entier',
+  };
+  const frMuscle = (s) => MUSCLES[fold(s)] || cap(String(s).toLowerCase());
+  const frBody = (s) => BODY[fold(s)] || cap(String(s).toLowerCase());
+
+  /* ---------- état ---------- */
+  const S = {
+    exercises: [],
+    byId: new Map(),
+    entries: [],
+    favs: new Set(),
+    frNames: {},
+    range: 1,
+    cal: null,
+    sync: { running: false, error: null, count: 0, total: null, done: false },
+    listeners: new Set(),
+  };
+
+  const dn = (ex) => S.frNames[String(ex.name).toLowerCase()] || cap(ex.name);
+  function getEx(id, fallbackName) {
+    return S.byId.get(id) || { id, name: fallbackName || id, gif: GIF_BASE + id + '.gif', body: [], target: [], secondary: [], equip: [] };
+  }
+  function indexExercises() {
+    S.byId = new Map(S.exercises.map((e) => [e.id, e]));
+    groupsCache = null;
+  }
+
+  /* ---------- stockage : IndexedDB + copie de secours localStorage ---------- */
+  let dbp;
+  function db() {
+    if (!dbp) {
+      dbp = new Promise((res, rej) => {
+        const r = indexedDB.open('worklog', 1);
+        r.onupgradeneeded = () => { r.result.createObjectStore('exercises', { keyPath: 'id' }); r.result.createObjectStore('kv'); };
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => rej(r.error);
+      });
+    }
+    return dbp;
+  }
+  function tx(store, mode, fn) {
+    return db().then((d) => new Promise((res, rej) => {
+      const t = d.transaction(store, mode);
+      let out;
+      try { out = fn(t.objectStore(store)); } catch (e) { rej(e); return; }
+      t.oncomplete = () => res(out && 'result' in out ? out.result : undefined);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
+    }));
+  }
+  const kvGet = (k) => tx('kv', 'readonly', (st) => st.get(k));
+  const kvSet = (k, v) => tx('kv', 'readwrite', (st) => { st.put(v, k); });
+  const exAll = () => tx('exercises', 'readonly', (st) => st.getAll());
+  const exPut = (list) => tx('exercises', 'readwrite', (st) => { list.forEach((e) => st.put(e)); });
+  const exClear = () => tx('exercises', 'readwrite', (st) => { st.clear(); });
+
+  const validEntry = (e) => e && typeof e.id === 'string' && typeof e.exerciseId === 'string'
+    && Number.isFinite(e.w) && e.w > 0 && Number.isFinite(e.r) && e.r > 0 && Number.isFinite(e.ts);
+
+  async function saveUser() {
+    const payload = { entries: S.entries, favs: [...S.favs] };
+    try { localStorage.setItem(BACKUP_KEY, JSON.stringify(payload)); } catch (e) { /* ignoré */ }
+    try { await kvSet('user', payload); } catch (e) { console.warn('IndexedDB indisponible', e); }
+  }
+  async function loadUser() {
+    let a = null; let b = null;
+    try { a = await kvGet('user'); } catch (e) { /* ignoré */ }
+    try { b = JSON.parse(localStorage.getItem(BACKUP_KEY) || 'null'); } catch (e) { /* ignoré */ }
+    const count = (p) => (p && Array.isArray(p.entries) ? p.entries.filter(validEntry).length : -1);
+    const p = count(b) > count(a) ? b : a;
+    if (p) {
+      S.entries = (p.entries || []).filter(validEntry);
+      S.favs = new Set((p.favs || []).filter((x) => typeof x === 'string'));
+    }
+  }
+
+  /* ---------- exercices : chargement depuis l'API et cache ---------- */
+  function norm(it) {
+    if (!it || typeof it !== 'object') return null;
+    const id = String(it.exerciseId ?? it.id ?? '');
+    if (!id || !it.name) return null;
+    const arr = (v) => (Array.isArray(v) ? v.map((x) => String(x).toLowerCase()) : v ? [String(v).toLowerCase()] : []);
+    const gif = typeof it.gifUrl === 'string' && it.gifUrl.startsWith('https://') ? it.gifUrl : GIF_BASE + id + '.gif';
+    return {
+      id, name: String(it.name), gif,
+      body: arr(it.bodyParts ?? it.bodyPart), target: arr(it.targetMuscles ?? it.target),
+      secondary: arr(it.secondaryMuscles), equip: arr(it.equipments ?? it.equipment),
+    };
+  }
+  async function apiGet(path, params) {
+    const u = new URL(API + path);
+    Object.entries(params || {}).forEach(([k, v]) => u.searchParams.set(k, v));
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const r = await fetch(u);
+      if (r.status === 429) {
+        const wait = (Number(r.headers.get('retry-after')) || 2 * (attempt + 1)) * 1000;
+        await sleep(Math.min(wait, 15000));
+        continue;
+      }
+      if (!r.ok) throw new Error('Erreur ' + r.status);
+      return r.json();
+    }
+    throw new Error('Trop de requêtes, réessaie dans une minute.');
+  }
+  const notify = () => S.listeners.forEach((fn) => fn());
+
+  async function syncExercises(fromScratch) {
+    if (S.sync.running) return;
+    S.sync.running = true; S.sync.error = null; notify();
+    try {
+      if (fromScratch) {
+        await exClear(); await kvSet('cursor', null); await kvSet('syncDone', false);
+        S.exercises = []; S.sync.done = false; indexExercises();
+      }
+      let cursor = await kvGet('cursor');
+      const seen = new Set(S.exercises.map((e) => e.id));
+      let guard = 0;
+      for (;;) {
+        const params = { limit: 25 };
+        if (cursor) params.after = cursor;
+        const res = await apiGet('/exercises', params);
+        const list = (Array.isArray(res.data) ? res.data : []).map(norm).filter(Boolean);
+        const fresh = list.filter((e) => !seen.has(e.id));
+        if (!fresh.length) break; // fin, ou l'API renvoie deux fois la même page
+        fresh.forEach((e) => seen.add(e.id));
+        await exPut(fresh);
+        S.exercises.push(...fresh);
+        const meta = res.meta || {};
+        S.sync.total = Number.isFinite(meta.total) ? meta.total : S.sync.total;
+        S.sync.count = S.exercises.length;
+        cursor = meta.nextCursor || list[list.length - 1].id;
+        await kvSet('cursor', cursor);
+        notify();
+        if (meta.hasNextPage === false) break;
+        if (++guard > 250) break;
+        await sleep(300);
+      }
+      indexExercises();
+      S.sync.count = S.exercises.length;
+      S.sync.done = S.exercises.length > 0;
+      if (!S.sync.done) S.sync.error = 'Aucun exercice reçu de l’API.';
+      await kvSet('syncDone', S.sync.done);
+    } catch (e) {
+      S.sync.error = e && e.message ? e.message : 'Connexion impossible';
+      indexExercises();
+    } finally {
+      S.sync.running = false; notify();
+    }
+  }
+
+  let groupsCache = null;
+  function groups() {
+    if (groupsCache) return groupsCache;
+    const m = new Map();
+    for (const ex of S.exercises) {
+      const keys = ex.body.length ? ex.body : ['autres'];
+      for (const k of keys) {
+        const label = k === 'autres' ? 'Autres' : frBody(k);
+        if (!m.has(label)) m.set(label, []);
+        m.get(label).push(ex);
+      }
+    }
+    const out = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'fr'));
+    out.forEach(([, list]) => list.sort((a, b) => dn(a).localeCompare(dn(b), 'fr')));
+    groupsCache = out;
+    return out;
+  }
+
+  /* ---------- petits composants ---------- */
+  let toastTimer;
+  function toast(msg, opts) {
+    const root = document.getElementById('toast');
+    root.textContent = '';
+    const t = h('div', { class: 't' }, h('span', { text: msg }));
+    if (opts && opts.action) {
+      t.append(h('button', { type: 'button', text: opts.label || 'Annuler', onclick: () => { root.textContent = ''; opts.action(); } }));
+    }
+    root.append(t);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { root.textContent = ''; }, (opts && opts.ms) || 3200);
+  }
+  function confirmDialog({ title, text, yes, no }) {
+    return new Promise((resolve) => {
+      const root = document.getElementById('modal-root');
+      const done = (v) => { root.textContent = ''; document.removeEventListener('keydown', onKey); resolve(v); };
+      const onKey = (e) => { if (e.key === 'Escape') done(false); };
+      const noBtn = h('button', { type: 'button', class: 'btn ghost', text: no || 'Non', onclick: () => done(false) });
+      const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+        h('h2', { id: 'dlg-t', text: title }), text ? h('p', { text }) : null,
+        h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn danger', text: yes || 'Oui', onclick: () => done(true) })));
+      const scrim = h('div', { class: 'scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, box);
+      root.append(scrim);
+      document.addEventListener('keydown', onKey);
+      noBtn.focus();
+    });
+  }
+  function starBtn(id, onChange) {
+    const b = h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Favori', 'aria-pressed': String(S.favs.has(id)) }, icon('star'));
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (S.favs.has(id)) S.favs.delete(id); else S.favs.add(id);
+      b.setAttribute('aria-pressed', String(S.favs.has(id)));
+      saveUser();
+      if (onChange) onChange();
+    });
+    return b;
+  }
+  const closeBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Fermer', onclick: goHome }, icon('close'));
+  const setText = (w, r) => fmtNum(w) + ' kg × ' + fmtNum(r);
+
+  /* ---------- navigation ---------- */
+  const app = () => document.getElementById('app');
+  S.depth = 0; S.cleanups = [];
+  function go(view, arg, opts) {
+    S.cleanups.forEach((fn) => fn()); S.cleanups = [];
+    S.view = view; S.arg = arg;
+    S.listeners.clear();
+    document.getElementById('toast').textContent = '';
+    const root = app();
+    root.textContent = '';
+    const render = { home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, sessions: viewSessions, session: viewSession }[view];
+    root.append(render(arg));
+    window.scrollTo(0, 0);
+    if (view !== 'home' && !(opts && opts.push === false)) history.pushState({ view, d: ++S.depth }, '');
+  }
+  function goHome() {
+    if (S.depth > 0) history.go(-S.depth); // le retour déclenche popstate, qui affiche l'accueil
+    else go('home', null, { push: false });
+  }
+  window.addEventListener('popstate', () => {
+    S.depth = (history.state && history.state.d) || 0;
+    go('home', null, { push: false });
+  });
+
+  /* ---------- accueil ---------- */
+  function lastEntry() {
+    let best = null;
+    for (const e of S.entries) if (!best || (e.created || e.ts) > (best.created || best.ts)) best = e;
+    return best;
+  }
+  function viewHome() {
+    const wrap = h('main', { class: 'home' });
+    const menu = h('div', { class: 'menu', role: 'menu', hidden: true });
+    const menuBtn = h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Menu', 'aria-expanded': 'false' }, icon('menu'));
+    const closeMenu = () => { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); };
+    const item = (label, fn, cls) => h('button', { type: 'button', role: 'menuitem', class: cls || '', text: label, onclick: () => { closeMenu(); fn(); } });
+    menu.append(
+      item('Historique', () => go('history')),
+      item('Séances', () => go('sessions')),
+      h('hr'),
+      item('Actualiser les exercices', refreshExercises, 'quiet'),
+      item('Exporter la liste des noms', exportNames, 'quiet'),
+    );
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+      menuBtn.setAttribute('aria-expanded', String(!menu.hidden));
+    });
+    const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== menuBtn) closeMenu(); };
+    const onEsc = (e) => { if (e.key === 'Escape') closeMenu(); };
+    document.addEventListener('click', onDoc);
+    document.addEventListener('keydown', onEsc);
+    S.cleanups.push(() => { document.removeEventListener('click', onDoc); document.removeEventListener('keydown', onEsc); });
+
+    wrap.append(h('header', { class: 'bar' },
+      h('div', { class: 'wordmark' }, h('img', { src: 'icon-192.png', alt: '' }), h('h1', { text: 'WorkLog' })),
+      menuBtn, menu));
+
+    const last = lastEntry();
+    if (last) {
+      const ex = getEx(last.exerciseId, last.name);
+      const mine = S.entries.filter((e) => e.exerciseId === last.exerciseId);
+      const latest = mine.reduce((a, b) => ((b.created || b.ts) > (a.created || a.ts) ? b : a));
+      wrap.append(h('button', { type: 'button', class: 'hero', onclick: () => go('exercise', ex.id) },
+        h('div', { class: 'frame' }, h('img', { src: ex.gif, alt: dn(ex), loading: 'eager' })),
+        h('h2', { text: dn(ex) }),
+        h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
+        h('p', { class: 'when', text: fDateTime.format(latest.ts) })));
+    } else {
+      wrap.append(h('button', { type: 'button', class: 'hero empty', onclick: () => go('library') },
+        h('h2', { text: 'Pas encore d’exercice' }),
+        h('p', { text: 'Choisis un exercice dans la bibliothèque pour noter ta première série.' })));
+    }
+
+    const sub = h('span', { class: 'sub' });
+    const upd = () => {
+      if (S.sync.running) sub.textContent = 'Chargement : ' + S.sync.count + (S.sync.total ? ' / ' + S.sync.total : '') + ' exercices';
+      else if (S.sync.error && !S.exercises.length) sub.textContent = 'Connexion impossible, touche pour réessayer';
+      else sub.textContent = S.exercises.length ? S.exercises.length + ' exercices · choisir un autre exercice' : 'Choisir un exercice';
+    };
+    upd(); S.listeners.add(upd);
+    wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('library') },
+      h('div', {}, h('strong', { text: 'Bibliothèque' }), sub),
+      h('span', { class: 'go' }, icon('right'))));
+    return wrap;
+  }
+  async function refreshExercises() {
+    const ok = await confirmDialog({ title: 'Actualiser les exercices ?', text: 'La liste est téléchargée à nouveau (environ une minute). Tes séries et favoris ne changent pas.', yes: 'Actualiser', no: 'Annuler' });
+    if (!ok) return;
+    toast('Actualisation lancée');
+    syncExercises(true);
+  }
+  async function shareFile(name, text, mime) {
+    const file = new File([text], name, { type: mime });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'WorkLog' }); return true; } catch (e) { if (e && e.name === 'AbortError') return false; }
+    }
+    const url = URL.createObjectURL(file);
+    const a = h('a', { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    return true;
+  }
+  async function exportNames() {
+    if (!S.exercises.length) { toast('Charge d’abord la bibliothèque.'); return; }
+    const names = [...new Set(S.exercises.map((e) => e.name.toLowerCase()))].sort();
+    await shareFile('worklog-noms-exercices.json', JSON.stringify({ app: 'WorkLog', type: 'exercise-names', names }, null, 2), 'application/json');
+  }
+
+  /* ---------- fiche exercice ---------- */
+  function viewExercise(id) {
+    const known = S.entries.find((e) => e.exerciseId === id);
+    const ex = getEx(id, known && known.name);
+    const wrap = h('main', { class: 'page exercise' });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('div', { class: 'grow' }), starBtn(ex.id)));
+    wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
+    wrap.append(h('div', { class: 'visual' }, h('img', { src: ex.gif, alt: 'Démonstration : ' + dn(ex) })));
+
+    const main = ex.target.map(frMuscle);
+    const sec = ex.secondary.map(frMuscle).filter((m) => !main.includes(m));
+    if (main.length || sec.length) {
+      wrap.append(h('p', { class: 'muscles' }, main.length ? h('b', { text: main.join(', ') }) : null, sec.length ? (main.length ? ' · aussi ' : 'Aussi ') + sec.join(', ') : null));
+    }
+
+    const recent = h('div', { class: 'recent' });
+    const chartBox = h('div');
+    const refresh = () => { renderRecent(); renderChart(); };
+
+    function mine() { return S.entries.filter((e) => e.exerciseId === ex.id).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0)); }
+
+    function renderRecent() {
+      recent.textContent = '';
+      const byDay = new Map();
+      for (const e of mine()) { const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
+      const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 3);
+      if (!days.length) { recent.append(h('p', { class: 'empty-note', text: 'Aucune série pour l’instant. Note ta première série en bas de la page.' })); return; }
+      for (const [, list] of days) {
+        recent.append(h('div', { class: 'day' },
+          h('div', { class: 'dlabel', text: cap(fDayLong.format(list[0].ts)) }),
+          h('div', { class: 'sets' }, list.map((e) => h('span', { class: 'set', text: setText(e.w, e.r) })))));
+      }
+    }
+
+    function renderChart() {
+      chartBox.textContent = '';
+      const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Période' },
+        [1, 3, 6].map((m) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.range === m), text: m + ' mois', onclick: () => { S.range = m; renderChart(); } })));
+      chartBox.append(chips);
+      const all = mine();
+      const end = Math.max(Date.now(), all.length ? all[all.length - 1].ts : 0);
+      const start = end - S.range * 30.44 * 86400000;
+      const pts = all.filter((e) => e.ts >= start && e.ts <= end);
+      chartBox.append(buildChart(pts, start, end));
+    }
+
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Dernières séances' }), h('div', { class: 'card' }, recent)));
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Progression' }), h('div', { class: 'card' }, chartBox)));
+    wrap.append(buildForm(ex, refresh));
+    refresh();
+    return wrap;
+  }
+
+  /* Graphique : charge totale d'une série = poids × répétitions. */
+  function buildChart(pts, start, end) {
+    const box = h('div');
+    if (!pts.length) {
+      box.append(h('p', { class: 'empty-note', text: 'Aucune série sur cette période.' }));
+      return box;
+    }
+    const vals = pts.map((p) => p.w * p.r);
+    const lo = Math.max(0, Math.floor(Math.min(...vals) * 0.9));
+    let hi = Math.ceil(Math.max(...vals) * 1.1);
+    if (hi <= lo) hi = lo + 1;
+    const W = 340; const H = 210; const m = { l: 48, r: 12, t: 12, b: 28 };
+    const x = (t) => m.l + ((t - start) / (end - start || 1)) * (W - m.l - m.r);
+    const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Courbe de progression : ' + pts.length + ' séries' });
+
+    const steps = Math.min(4, hi - lo);
+    const seen = new Set();
+    for (let i = 0; i <= steps; i++) {
+      const v = Math.round(lo + ((hi - lo) * i) / steps);
+      if (seen.has(v)) continue; seen.add(v);
+      svg.append(sv('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
+      svg.append(sv('text', { class: 'tick', x: m.l - 8, y: y(v) + 3.5, 'text-anchor': 'end' }, fmtNum(v)));
+    }
+    [0, 1 / 3, 2 / 3, 1].forEach((f, i) => {
+      const t = start + (end - start) * f;
+      svg.append(sv('text', { class: 'tick', x: m.l + f * (W - m.l - m.r), y: H - 8, 'text-anchor': i === 0 ? 'start' : i === 3 ? 'end' : 'middle' }, fDayShort.format(t)));
+    });
+
+    const sorted = [...pts].sort((a, b) => a.ts - b.ts);
+    if (sorted.length > 1) {
+      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(p.w * p.r).toFixed(1)).join(' ') }));
+    }
+    const detail = h('div', { class: 'detail', 'aria-live': 'polite' });
+    const dots = [];
+    const select = (i) => {
+      dots.forEach((d, j) => d.setAttribute('class', j === i ? 'dot on' : 'dot'));
+      const p = sorted[i];
+      detail.textContent = '';
+      detail.append(h('strong', { text: fmtNum(p.w) + ' kg × ' + fmtNum(p.r) + ' rép.' }),
+        h('span', { class: 'sub', text: 'Total ' + fmtNum(p.w * p.r) + ' · ' + fDateTime.format(p.ts) }));
+    };
+    sorted.forEach((p, i) => {
+      const cx = x(p.ts); const cy = y(p.w * p.r);
+      const dot = sv('circle', { class: 'dot', cx, cy, r: 5 });
+      dots.push(dot); svg.append(dot);
+    });
+    sorted.forEach((p, i) => {
+      const hit = sv('circle', { class: 'hit', cx: x(p.ts), cy: y(p.w * p.r), r: 16, tabindex: '0', role: 'button', 'aria-label': fmtNum(p.w) + ' kg × ' + fmtNum(p.r) + ', ' + fDateTime.format(p.ts) });
+      hit.addEventListener('click', () => select(i));
+      hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
+      svg.append(hit);
+    });
+    box.append(h('p', { class: 'chart-note', text: 'Charge totale par série (kg × répétitions)' }), svg, detail);
+    select(sorted.length - 1);
+    return box;
+  }
+
+  /* Saisie des séries */
+  function buildForm(ex, onSaved) {
+    const rows = [];
+    const list = h('div', { class: 'rows' });
+    const msg = h('p', { class: 'form-msg', role: 'alert' });
+    const newRow = () => ({ w: '', r: '', dt: Date.now(), manual: false });
+
+    function renderRows() {
+      list.textContent = '';
+      rows.forEach((row, i) => {
+        const wIn = h('input', { class: 'field', type: 'text', inputmode: 'decimal', placeholder: 'kg', 'aria-label': 'Poids de la série ' + (i + 1) + ' en kilos', autocomplete: 'off' });
+        const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions de la série ' + (i + 1), autocomplete: 'off' });
+        const dIn = h('input', { class: 'field', type: 'datetime-local', 'aria-label': 'Date et heure de la série ' + (i + 1) });
+        wIn.value = row.w; rIn.value = row.r; dIn.value = toLocalInput(row.dt);
+        const touch = () => {
+          msg.textContent = '';
+          wIn.classList.remove('invalid'); rIn.classList.remove('invalid');
+          if (!row.manual) { row.dt = Date.now(); dIn.value = toLocalInput(row.dt); }
+        };
+        wIn.addEventListener('input', () => { row.w = wIn.value; touch(); });
+        rIn.addEventListener('input', () => { row.r = rIn.value; touch(); });
+        dIn.addEventListener('change', () => {
+          const t = new Date(dIn.value).getTime();
+          if (Number.isFinite(t)) { row.dt = t; row.manual = true; } else { row.manual = false; row.dt = Date.now(); dIn.value = toLocalInput(row.dt); }
+        });
+        row.nodes = { wIn, rIn };
+        list.append(h('div', { class: 'srow' },
+          h('span', { class: 'n', text: String(i + 1) }), wIn, h('span', { class: 'times', 'aria-hidden': 'true', text: '×' }), rIn,
+          rows.length > 1 ? h('button', { type: 'button', class: 'iconbtn plain rm', 'aria-label': 'Retirer la série ' + (i + 1), onclick: () => { rows.splice(i, 1); renderRows(); } }, icon('close')) : h('span'),
+          h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+      });
+    }
+    rows.push(newRow()); renderRows();
+
+    const parseNum = (s) => Number(String(s).trim().replace(',', '.'));
+    async function save() {
+      msg.textContent = '';
+      const filled = rows.filter((r) => r.w.trim() || r.r.trim());
+      if (!filled.length) { msg.textContent = 'Renseigne le poids et les répétitions d’au moins une série.'; return; }
+      let bad = false;
+      for (const row of filled) {
+        const w = parseNum(row.w); const r = parseNum(row.r);
+        const okW = Number.isFinite(w) && w > 0; const okR = Number.isInteger(r) && r > 0;
+        row.nodes.wIn.classList.toggle('invalid', !okW); row.nodes.rIn.classList.toggle('invalid', !okR);
+        if (!okW || !okR) bad = true;
+      }
+      if (bad) { msg.textContent = 'Poids : un nombre positif. Répétitions : un nombre entier.'; return; }
+      const base = Date.now();
+      filled.forEach((row, i) => {
+        S.entries.push({ id: uid(), exerciseId: ex.id, name: ex.name, w: parseNum(row.w), r: parseNum(row.r), ts: row.dt, created: base + i });
+      });
+      await saveUser();
+      const n = filled.length;
+      rows.length = 0; rows.push(newRow()); renderRows();
+      toast(n + (n > 1 ? ' séries enregistrées' : ' série enregistrée'));
+      onSaved();
+    }
+
+    return h('section', { class: 'sec' },
+      h('h2', { text: 'Nouvelle série' }),
+      h('div', { class: 'card' }, list,
+        h('div', { class: 'form-actions' },
+          msg,
+          h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; last.nodes.wIn.focus(); } }, icon('plus'), 'Ajouter une série'),
+          h('button', { type: 'button', class: 'btn primary', onclick: save, text: 'Valider' }))));
+  }
+
+  /* ---------- bibliothèque ---------- */
+  function viewLibrary() {
+    const wrap = h('main', { class: 'page library' });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
+    const search = h('input', { class: 'search', type: 'search', placeholder: 'Rechercher un exercice', 'aria-label': 'Rechercher un exercice', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
+    const body = h('div');
+    wrap.append(search, body);
+
+    const openRow = (ex) => h('div', { class: 'exrow' },
+      h('button', { type: 'button', class: 'open', text: dn(ex), onclick: () => go('exercise', ex.id) }),
+      starBtn(ex.id, () => { if (!search.value.trim()) renderFavs(); }));
+
+    const favBox = h('section', { class: 'sec' });
+    function renderFavs() {
+      favBox.textContent = '';
+      const favs = [...S.favs].map((id) => S.byId.get(id)).filter(Boolean).sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
+      favBox.hidden = !favs.length;
+      if (!favs.length) return;
+      favBox.append(h('h2', { text: 'Favoris' }), h('div', { class: 'favs' }, favs.map((ex) =>
+        h('button', { type: 'button', class: 'tile', onclick: () => go('exercise', ex.id) },
+          h('img', { src: ex.gif, alt: '', loading: 'lazy' }), h('span', { class: 'nm', text: dn(ex) })))));
+    }
+
+    function renderLoader() {
+      const pct = S.sync.total ? Math.min(100, Math.round((S.sync.count / S.sync.total) * 100)) : 0;
+      const fill = h('div', { class: 'fill' });
+      fill.style.width = (S.sync.total ? pct : 8) + '%';
+      const box = h('div', { class: 'loader' },
+        h('strong', { text: S.sync.error ? 'Chargement interrompu' : 'Chargement des exercices' }),
+        h('div', { class: 'track' }, fill),
+        h('p', { text: S.sync.count + (S.sync.total ? ' sur ' + S.sync.total : '') + ' exercices chargés. Cette étape n’a lieu qu’une fois.' }));
+      if (S.sync.error) {
+        box.append(h('p', { class: 'err', text: S.sync.error }), h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: () => syncExercises(false) }));
+      }
+      return box;
+    }
+
+    function render() {
+      body.textContent = '';
+      const q = fold(search.value.trim());
+      const loading = !S.exercises.length || (S.sync.running && !S.sync.done);
+      if (!S.sync.running && !S.sync.done && !S.sync.error) { syncExercises(false); return; }
+      if (loading) { body.append(renderLoader()); return; }
+      if (S.sync.error) {
+        body.append(h('div', { class: 'loader', style: { marginBottom: '16px' } },
+          h('p', { class: 'err', text: 'Liste incomplète (' + S.exercises.length + ' exercices) : ' + S.sync.error }),
+          h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: () => syncExercises(false) })));
+      }
+      if (q) {
+        const tokens = q.split(/\s+/);
+        const hits = S.exercises.filter((ex) => { const hay = fold(dn(ex) + ' ' + ex.name); return tokens.every((t) => hay.includes(t)); })
+          .sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
+        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + search.value.trim() + ' ».' })); return; }
+        body.append(h('div', { class: 'results' }, hits.slice(0, 80).map(openRow)));
+        if (hits.length > 80) body.append(h('p', { class: 'empty-note', style: { margin: '10px 4px' }, text: hits.length + ' résultats, les 80 premiers sont affichés. Précise ta recherche.' }));
+        return;
+      }
+      renderFavs();
+      body.append(favBox);
+      const gs = h('section', { class: 'sec' }, h('h2', { text: 'Groupes musculaires' }));
+      const wrapG = h('div', { class: 'groups' });
+      for (const [label, list] of groups()) {
+        const d = h('details', { class: 'group' },
+          h('summary', {}, h('span', {}, label, h('span', { class: 'count', text: String(list.length) })), icon('down')));
+        let filled = false;
+        d.addEventListener('toggle', () => {
+          if (d.open && !filled) { filled = true; d.append(h('div', { class: 'exlist' }, list.map(openRow))); }
+        });
+        wrapG.append(d);
+      }
+      gs.append(wrapG);
+      body.append(gs);
+    }
+
+    let t;
+    search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 60); });
+    S.listeners.add(render);
+    render();
+    return wrap;
+  }
+
+  /* ---------- historique ---------- */
+  function viewHistory() {
+    const wrap = h('main', { class: 'page history' });
+    const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Historique' }),
+      h('button', { type: 'button', class: 'textbtn danger', text: 'Tout supprimer', onclick: wipeAll })));
+    wrap.append(h('div', { class: 'tools' },
+      h('button', { type: 'button', class: 'pill', onclick: exportData }, icon('export'), 'Exporter'),
+      h('button', { type: 'button', class: 'pill', onclick: () => fileIn.click() }, icon('import'), 'Importer'), fileIn));
+    const list = h('div');
+    wrap.append(list);
+
+    function render() {
+      list.textContent = '';
+      if (!S.entries.length) { list.append(h('p', { class: 'empty-note', text: 'Aucune série enregistrée. Elles apparaîtront ici dès ta première validation.' })); return; }
+      const sorted = [...S.entries].sort((a, b) => b.ts - a.ts || (b.created || 0) - (a.created || 0));
+      let cur = '';
+      for (const e of sorted) {
+        const k = dayKey(e.ts);
+        if (k !== cur) { cur = k; list.append(h('div', { class: 'dayhead', text: cap(fDayLong.format(e.ts)) + (new Date(e.ts).getFullYear() !== new Date().getFullYear() ? ' ' + new Date(e.ts).getFullYear() : '') })); }
+        const ex = getEx(e.exerciseId, e.name);
+        list.append(h('div', { class: 'hrow' },
+          h('div', {}, h('div', { class: 'nm', text: dn(ex) }),
+            h('div', { class: 'meta' }, h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), ' · total ' + fmtNum(e.w * e.r) + ' · ' + fTime.format(e.ts))),
+          h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Supprimer cette série', onclick: () => removeOne(e) }, icon('trash'))));
+      }
+    }
+    function removeOne(e) {
+      const idx = S.entries.findIndex((x) => x.id === e.id);
+      if (idx < 0) return;
+      S.entries.splice(idx, 1);
+      saveUser(); render();
+      toast('Série supprimée', { ms: 5000, action: () => { S.entries.push(e); saveUser(); render(); } });
+    }
+    async function wipeAll() {
+      if (!S.entries.length) { toast('Il n’y a rien à supprimer.'); return; }
+      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + ') seront supprimées. Tes favoris sont conservés.', yes: 'Oui', no: 'Non' });
+      if (!ok) return;
+      S.entries = []; await saveUser(); render(); toast('Historique supprimé');
+    }
+    fileIn.addEventListener('change', async () => {
+      const f = fileIn.files && fileIn.files[0]; fileIn.value = '';
+      if (!f) return;
+      const res = await importFile(f);
+      if (res) render();
+    });
+    render();
+    return wrap;
+  }
+  async function exportData() {
+    const data = { app: 'WorkLog', version: 1, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs] };
+    const ok = await shareFile('worklog-' + dayKey(Date.now()) + '.json', JSON.stringify(data, null, 2), 'application/json');
+    if (ok) toast('Sauvegarde prête : enregistre-la dans ton dossier.');
+  }
+  async function importFile(file) {
+    try {
+      if (file.size > 20 * 1024 * 1024) throw new Error('trop gros');
+      const d = JSON.parse(await file.text());
+      if (!d || d.app !== 'WorkLog' || !Array.isArray(d.entries)) throw new Error('format');
+      const sig = (e) => [e.exerciseId, e.ts, e.w, e.r].join('|');
+      const ids = new Set(S.entries.map((e) => e.id)); const sigs = new Set(S.entries.map(sig));
+      let added = 0; let dupes = 0; let invalid = 0;
+      for (const raw of d.entries) {
+        if (!validEntry(raw)) { invalid++; continue; }
+        if (ids.has(raw.id) || sigs.has(sig(raw))) { dupes++; continue; }
+        const e = { id: raw.id, exerciseId: raw.exerciseId, name: String(raw.name || raw.exerciseId), w: raw.w, r: raw.r, ts: raw.ts, created: Number.isFinite(raw.created) ? raw.created : raw.ts };
+        S.entries.push(e); ids.add(e.id); sigs.add(sig(e)); added++;
+      }
+      (Array.isArray(d.favorites) ? d.favorites : []).forEach((id) => { if (typeof id === 'string') S.favs.add(id); });
+      await saveUser();
+      toast(added + (added > 1 ? ' séries ajoutées' : ' série ajoutée') + (dupes ? ', ' + dupes + ' déjà présente' + (dupes > 1 ? 's' : '') : '') + (invalid ? ', ' + invalid + ' ligne' + (invalid > 1 ? 's' : '') + ' invalide' + (invalid > 1 ? 's ignorées' : ' ignorée') : ''), { ms: 4500 });
+      return true;
+    } catch (e) {
+      toast('Fichier non reconnu : choisis une sauvegarde WorkLog (.json).');
+      return false;
+    }
+  }
+
+  /* ---------- séances (calendrier) ---------- */
+  function viewSessions() {
+    const wrap = h('main', { class: 'page sessions' });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Séances' }), h('span')));
+    if (!S.cal) { const n = new Date(); S.cal = { y: n.getFullYear(), m: n.getMonth() }; }
+    const box = h('div');
+    wrap.append(box);
+
+    function render() {
+      box.textContent = '';
+      const { y, m } = S.cal;
+      const now = new Date();
+      const isCurrent = y === now.getFullYear() && m === now.getMonth();
+      const byDay = new Map();
+      for (const e of S.entries) { const k = dayKey(e.ts); byDay.set(k, (byDay.get(k) || 0) + 1); }
+      box.append(h('div', { class: 'monthbar' },
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Mois précédent', onclick: () => { S.cal = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }; render(); } }, icon('left')),
+        h('h2', { text: fMonth.format(new Date(y, m, 1)) }),
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Mois suivant', disabled: isCurrent, onclick: () => { S.cal = m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 }; render(); } }, icon('right'))));
+      const grid = h('div', { class: 'cal' });
+      ['L', 'M', 'M', 'J', 'V', 'S', 'D'].forEach((d) => grid.append(h('div', { class: 'wd', 'aria-hidden': 'true', text: d })));
+      const lead = (new Date(y, m, 1).getDay() + 6) % 7;
+      for (let i = 0; i < lead; i++) grid.append(h('div'));
+      const nDays = new Date(y, m + 1, 0).getDate();
+      let sessions = 0;
+      for (let d = 1; d <= nDays; d++) {
+        const k = y + '-' + pad2(m + 1) + '-' + pad2(d);
+        const has = byDay.has(k);
+        if (has) sessions++;
+        const isToday = isCurrent && d === now.getDate();
+        grid.append(h('button', {
+          type: 'button', class: 'day' + (has ? ' has' : '') + (isToday ? ' today' : ''), disabled: !has, text: String(d),
+          'aria-label': has ? 'Séance du ' + d + ' ' + fMonth.format(new Date(y, m, 1)) : null,
+          onclick: has ? () => go('session', k) : null,
+        }));
+      }
+      box.append(grid);
+      box.append(h('p', { class: 'cal-note', text: sessions ? sessions + (sessions > 1 ? ' jours d’entraînement ce mois-ci. Touche un carré pour revoir la séance.' : ' jour d’entraînement ce mois-ci. Touche le carré pour revoir la séance.') : 'Aucune séance ce mois-ci.' }));
+    }
+    render();
+    return wrap;
+  }
+
+  function viewSession(key) {
+    const wrap = h('main', { class: 'page session' });
+    const [yy, mm, dd] = key.split('-').map(Number);
+    const date = new Date(yy, mm - 1, dd);
+    wrap.append(h('header', { class: 'bar' },
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Retour au calendrier', onclick: () => go('sessions') }, icon('left')),
+      h('h1', { class: 'grow', text: cap(fDayLong.format(date)) }),
+      closeBtn()));
+    const entries = S.entries.filter((e) => dayKey(e.ts) === key).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
+    const blocks = [];
+    for (const e of entries) {
+      const last = blocks[blocks.length - 1];
+      if (last && last.exerciseId === e.exerciseId) last.sets.push(e); else blocks.push({ exerciseId: e.exerciseId, name: e.name, sets: [e] });
+    }
+    const nEx = new Set(entries.map((e) => e.exerciseId)).size;
+    wrap.append(h('p', { class: 'sum', text: nEx + (nEx > 1 ? ' exercices' : ' exercice') + ' · ' + entries.length + (entries.length > 1 ? ' séries' : ' série') }));
+    const tl = h('div', { class: 'timeline' });
+    for (const b of blocks) {
+      const ex = getEx(b.exerciseId, b.name);
+      tl.append(h('article', { class: 'tl' },
+        h('div', { class: 'head' }, h('img', { src: ex.gif, alt: '', loading: 'lazy' }),
+          h('div', {}, h('div', { class: 't', text: fTime.format(b.sets[0].ts) }), h('div', { class: 'nm', text: dn(ex) }))),
+        b.sets.map((e) => h('div', { class: 'line-set' }, h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), h('span', { class: 'tot', text: fmtNum(e.w * e.r) })))));
+    }
+    wrap.append(tl);
+    return wrap;
+  }
+
+  /* ---------- démarrage ---------- */
+  async function boot() {
+    try { const r = await fetch('names-fr.json', { cache: 'no-cache' }); if (r.ok) { const j = await r.json(); if (j && typeof j === 'object') S.frNames = j; } } catch (e) { /* noms anglais */ }
+    await loadUser();
+    try {
+      S.exercises = (await exAll()) || [];
+      S.sync.done = !!(await kvGet('syncDone')) && S.exercises.length > 0;
+      S.sync.count = S.exercises.length;
+    } catch (e) { S.exercises = []; }
+    indexExercises();
+    try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignoré */ }
+    go('home', null, { push: false });
+    if (!S.sync.done) syncExercises(false);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  boot();
+})();
