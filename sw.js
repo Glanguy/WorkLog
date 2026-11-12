@@ -1,13 +1,13 @@
-/* WorkLog V2 : l'application s'ouvre sans réseau.
+/* WorkLog V3 : l'application s'ouvre sans réseau.
    - Fichiers de l'app : réseau d'abord (toujours la dernière version), cache si pas de réseau.
    - Liste des exercices : cache d'abord, mise à jour en arrière-plan.
-   - Photos d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
+   - Images et animations d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
    Les séries, favoris et séances sont dans IndexedDB, pas ici. */
-const CACHE = 'worklog-v2';
+const CACHE = 'worklog-v3';
 const IMG_CACHE = 'worklog-img-v1';
 const IMG_MAX = 500;
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'exercises.json', 'names-fr.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
-const DATA = /\/(exercises|names-fr)\.json$/;
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'data-v3.json', 'bodymap.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+const DATA = /\/(data-v3|bodymap)\.json$/;
 const IMG_HOSTS = ['cdn.jsdelivr.net', 'raw.githubusercontent.com'];
 
 self.addEventListener('install', (e) => {

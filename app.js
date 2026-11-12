@@ -1,16 +1,19 @@
 'use strict';
 (() => {
   /* =====================================================================
-     WorkLog V2 : suivi d'exercices et de charges, 100 % local sur le téléphone.
-     Exercices : free-exercise-db (domaine public), liste intégrée à l'app
-     (exercises.json + names-fr.json). Les photos viennent du dépôt GitHub
-     de la base (secours : jsDelivr).
+     WorkLog V3 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     Exercices : liste fusionnée intégrée à l'app (data-v3.json), noms en anglais.
+       - ExerciseDB (données MIT, images et animations © Gym visual, 180 px) en priorité ;
+       - free-exercise-db (domaine public, photos) pour les exercices absents d'ExerciseDB.
+     Schéma des muscles : bodymap.json (react-native-body-highlighter, licence MIT).
      ===================================================================== */
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
   const NS = 'http://www.w3.org/2000/svg';
-  let IMG_SHA = 'main';
+  let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
+  let SHA_F = 'main';   // version figée du dépôt free-exercise-db
+  let BODY = null;      // schéma du corps (face et dos)
 
   /* ---------- utilitaires ---------- */
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
@@ -77,6 +80,7 @@
     export: '<path d="M12 15V4M8 8l4-4 4 4M5 13v6h14v-6"/>',
     import: '<path d="M12 4v11M8 11l4 4 4-4M5 13v6h14v-6"/>',
     tag: '<path d="M4 5v6.2l8.4 8.4 6.2-6.2L10.2 5zM8 9h.01"/>',
+    zoom: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
   };
   function icon(name, cls) {
     const el = sv('svg', { viewBox: '0 0 24 24', class: 'ic ' + (cls || ''), 'aria-hidden': 'true' });
@@ -90,7 +94,16 @@
     'middle back': 'Milieu du dos', 'lower back': 'Bas du dos', 'biceps': 'Biceps', 'triceps': 'Triceps', 'forearms': 'Avant-bras',
     'abdominals': 'Abdominaux', 'glutes': 'Fessiers', 'hamstrings': 'Ischio-jambiers', 'abductors': 'Abducteurs', 'adductors': 'Adducteurs',
     'quadriceps': 'Quadriceps', 'calves': 'Mollets',
+    'obliques': 'Obliques', 'hip flexors': 'Fléchisseurs de hanche', 'tibialis': 'Tibial antérieur', 'serratus': 'Dentelé antérieur', 'cardio': 'Système cardiovasculaire',
   };
+  /* Zones du schéma colorées pour chaque muscle. */
+  const SLUGS = {
+    'neck': ['neck'], 'shoulders': ['deltoids'], 'chest': ['chest'], 'traps': ['trapezius'], 'lats': ['upper-back'], 'middle back': ['upper-back'],
+    'lower back': ['lower-back'], 'biceps': ['biceps'], 'triceps': ['triceps'], 'forearms': ['forearm'], 'abdominals': ['abs', 'obliques'], 'obliques': ['obliques'],
+    'serratus': ['obliques'], 'glutes': ['gluteal'], 'hamstrings': ['hamstring'], 'abductors': ['gluteal'], 'adductors': ['adductors'], 'quadriceps': ['quadriceps'],
+    'hip flexors': [], 'calves': ['calves'], 'tibialis': ['tibialis'], 'cardio': [],
+  };
+  const SKIN = new Set(['head', 'hair', 'hands', 'feet', 'ankles', 'knees']);
   const frMuscle = (s) => MUSCLES[s] || cap(String(s));
 
   const TREE = [
@@ -135,37 +148,92 @@
     favs: new Set(),
     sessions: {},        // 'AAAA-MM-JJ' -> { name, main, sec: [] }
     cal: null,
+    alias: {},
     stack: [],
     cleanups: [],
     getUI: null,
   };
 
-  const dn = (ex) => ex.fr || ex.name;
+  const dn = (ex) => ex.name;
   function getEx(id, fallbackName) {
-    return S.byId.get(id) || { id, name: fallbackName || id, fr: fallbackName || id, missing: true, p: null, s: [], leaf: null };
+    return S.byId.get(id) || { id, name: fallbackName || id, missing: true, p: null, s: [], leaf: null };
   }
 
-  /* ---------- photos ---------- */
-  // Adresse principale : le dépôt GitHub de la base. Secours : la même photo via jsDelivr.
-  const imgUrl = (id, i, alt) => (alt
-    ? 'https://cdn.jsdelivr.net/gh/yuhonas/free-exercise-db@' + IMG_SHA + '/exercises/'
-    : 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/' + IMG_SHA + '/exercises/') + encodeURIComponent(id) + '/' + i + '.jpg';
-  function photo(ex, i, props) {
+  /* ---------- images ----------
+     ExerciseDB (src 0) : une vignette fixe et une animation gif, en 180 px.
+     free-exercise-db (src 1) : deux photos nettes (départ et arrivée du mouvement).
+     Adresse principale : le dépôt GitHub de chaque base. Secours : la même image via jsDelivr. */
+  const RAW = 'https://raw.githubusercontent.com/';
+  const CDN = 'https://cdn.jsdelivr.net/gh/';
+  function mediaUrl(ex, kind, alt) {
+    if (ex.src === 0) {
+      const path = kind === 'a' ? '/videos/' + ex.media + '.gif' : '/images/' + ex.media + '.jpg';
+      return alt ? CDN + 'hasaneyldrm/exercises-dataset@' + SHA_E + path : RAW + 'hasaneyldrm/exercises-dataset/' + SHA_E + path;
+    }
+    const path = '/exercises/' + encodeURIComponent(ex.id) + '/' + (kind === 1 ? 1 : 0) + '.jpg';
+    return alt ? CDN + 'yuhonas/free-exercise-db@' + SHA_F + path : RAW + 'yuhonas/free-exercise-db/' + SHA_F + path;
+  }
+  function photo(ex, kind, props) {
     if (ex.missing) return h('span', { class: 'ph ' + ((props && props.class) || '') });
-    const img = h('img', Object.assign({ alt: '', decoding: 'async', crossorigin: 'anonymous', width: '850', height: '567' }, props));
+    const img = h('img', Object.assign({ alt: '', decoding: 'async', crossorigin: 'anonymous' }, props));
     let retried = false;
     img.addEventListener('error', () => {
-      if (!retried) { retried = true; img.src = imgUrl(ex.id, i, true); } else img.classList.add('broken');
+      if (!retried) { retried = true; img.src = mediaUrl(ex, kind, true); } else img.classList.add('broken');
     });
-    img.src = imgUrl(ex.id, i);
+    img.src = mediaUrl(ex, kind);
     return img;
   }
-  /* Deux photos (départ et arrivée du mouvement) qui alternent. */
+  const thumb = (ex) => photo(ex, 't', { class: 'thumb' + (ex.src === 0 ? ' sq' : ''), loading: 'lazy' });
+  /* Deux photos qui alternent (free-exercise-db). */
   function flip(ex, props) {
     const lazy = props && props.lazy ? 'lazy' : null;
     return h('div', { class: 'flip ' + ((props && props.class) || '') },
       photo(ex, 0, { loading: lazy, alt: (props && props.alt) || '' }),
       photo(ex, 1, { loading: lazy, class: 'b' }));
+  }
+  /* Schéma du corps : muscle principal en violet foncé, secondaires en violet clair. */
+  function bodyFig(side, prim, sec) {
+    const v = BODY[side];
+    const svg = sv('svg', { viewBox: v.vb, class: 'body', 'aria-hidden': 'true' });
+    for (const [slug, d] of Object.entries(v.parts)) {
+      svg.append(sv('path', { class: prim.has(slug) ? 'p' : sec.has(slug) ? 's' : SKIN.has(slug) ? 'k' : 'm', d }));
+    }
+    return svg;
+  }
+  function muscleMaps(ex) {
+    if (!BODY || ex.missing) return null;
+    const prim = new Set(SLUGS[ex.p] || []);
+    const sec = new Set(ex.s.flatMap((m) => SLUGS[m] || []).filter((x) => !prim.has(x)));
+    return h('div', { class: 'maps' },
+      h('figure', {}, bodyFig('front', prim, sec), h('figcaption', { text: 'Face' })),
+      h('figure', {}, bodyFig('back', prim, sec), h('figcaption', { text: 'Dos' })));
+  }
+  /* Bloc visuel d'un exercice : le schéma en grand, l'animation ExerciseDB en vignette
+     (un appui l'agrandit). Pour free-exercise-db : le schéma puis les photos en grand. */
+  function visual(ex, opts) {
+    const zoom = !(opts && opts.static);
+    const maps = muscleMaps(ex);
+    if (ex.src === 0) {
+      const media = photo(ex, 'a', { alt: 'Animation : ' + dn(ex) });
+      const box = zoom
+        ? h('button', { type: 'button', class: 'anim', 'aria-label': 'Agrandir l’animation', onclick: () => lightbox(ex) }, media, h('span', { class: 'zoom' }, icon('zoom')))
+        : h('div', { class: 'anim' }, media);
+      return h('div', { class: 'vis' + (maps ? '' : ' nomap') }, maps, box);
+    }
+    const ph = zoom
+      ? h('button', { type: 'button', class: 'visual', 'aria-label': 'Agrandir les photos', onclick: () => lightbox(ex) }, flip(ex, { alt: 'Démonstration : ' + dn(ex) }))
+      : h('div', { class: 'visual' }, flip(ex, { alt: dn(ex) }));
+    return h('div', { class: 'visf' }, maps ? h('div', { class: 'vis solo' }, maps) : null, ph);
+  }
+  function lightbox(ex) {
+    let close = null;
+    const media = ex.src === 0
+      ? h('div', { class: 'lb-media sq' }, photo(ex, 'a', { alt: 'Animation : ' + dn(ex) }))
+      : h('div', { class: 'lb-media' }, flip(ex, { alt: 'Démonstration : ' + dn(ex) }));
+    const box = h('div', { class: 'dialog lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': dn(ex) },
+      media, h('p', { class: 'lb-name', text: dn(ex) }),
+      h('button', { type: 'button', class: 'btn ghost wide', text: 'Fermer', onclick: () => close() }));
+    close = openModal(box);
   }
 
   /* ---------- stockage : IndexedDB + copie de secours localStorage ---------- */
@@ -241,22 +309,35 @@
   }
 
   /* ---------- exercices : liste intégrée à l'app ---------- */
+  const getJson = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
   async function loadExercises() {
     try {
-      const [base, names] = await Promise.all(['exercises.json', 'names-fr.json'].map((u) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })));
-      if (typeof base.sha === 'string' && /^[0-9a-f]{7,40}$/.test(base.sha)) IMG_SHA = base.sha;
-      S.exercises = base.items.filter((it) => it && typeof it.id === 'string' && it.n).map((it) => {
-        const leaf = it.c === 'cardio' ? 'cardio' : (LEAF_OF.get(it.p) || 'cardio');
-        return { id: it.id, name: String(it.n), fr: (names && names[it.id]) || String(it.n), p: it.p, s: Array.isArray(it.s) ? it.s : [], leaf, top: topOf(leaf) };
-      });
+      const base = await getJson('data-v3.json');
+      const sha = (v) => (typeof v === 'string' && /^[0-9a-f]{7,40}$/.test(v) ? v : 'main');
+      SHA_E = sha(base.shaE); SHA_F = sha(base.shaF);
+      S.alias = base.alias && typeof base.alias === 'object' ? base.alias : {};
+      // [id, nom, source (0 ExerciseDB, 1 free-exercise-db), étirement (0/1), catégorie, muscle principal, muscles secondaires, média]
+      S.exercises = base.items.filter((it) => Array.isArray(it) && typeof it[0] === 'string' && it[1] && GROUPS.has(it[4])).map((it) => ({
+        id: it[0], name: String(it[1]), src: it[2] === 0 ? 0 : 1, st: it[3] === 1, leaf: it[4], top: topOf(it[4]),
+        p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null,
+      }));
       S.loadError = false;
     } catch (e) {
       S.exercises = []; S.loadError = true;
     }
+    if (!BODY) { try { BODY = await getJson('bodymap.json'); } catch (e) { BODY = null; } }
     S.byId = new Map(S.exercises.map((e) => [e.id, e]));
     S.byLeaf = new Map();
     for (const ex of S.exercises) { if (!S.byLeaf.has(ex.leaf)) S.byLeaf.set(ex.leaf, []); S.byLeaf.get(ex.leaf).push(ex); }
-    S.byLeaf.forEach((list) => list.sort((x, y) => dn(x).localeCompare(dn(y), 'fr')));
+    S.byLeaf.forEach((list) => list.sort((x, y) => dn(x).localeCompare(dn(y), 'en')));
+  }
+  /* Exercices retirés car en double avec ExerciseDB : l'historique et les favoris suivent le nouvel exercice. */
+  async function migrateAliases() {
+    const al = S.alias || {};
+    let changed = false;
+    for (const e of S.entries) { const to = al[e.exerciseId]; if (to && S.byId.has(to)) { e.exerciseId = to; e.name = S.byId.get(to).name; changed = true; } }
+    for (const id of [...S.favs]) { const to = al[id]; if (to && S.byId.has(to)) { S.favs.delete(id); S.favs.add(to); changed = true; } }
+    if (changed) await saveUser();
   }
 
   /* ---------- petits composants ---------- */
@@ -398,7 +479,7 @@
       const mine = S.entries.filter((e) => e.exerciseId === last.exerciseId);
       const latest = mine.reduce((a, b) => ((b.created || b.ts) > (a.created || a.ts) ? b : a));
       wrap.append(h('button', { type: 'button', class: 'hero', onclick: () => go('exercise', ex.id) },
-        ex.missing ? null : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) })),
+        ex.missing ? null : (ex.src === 0 ? visual(ex, { static: true }) : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) }))),
         h('h2', { text: dn(ex) }),
         h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
         h('p', { class: 'when', text: fDateTime.format(latest.ts) })));
@@ -410,7 +491,14 @@
 
     wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('library') },
       h('div', {}, h('strong', { text: 'Bibliothèque' }),
-        h('span', { class: 'sub', text: S.exercises.length ? S.exercises.length + ' exercices · choisir un autre exercice' : 'Choisir un exercice' })),
+        h('span', { class: 'sub', text: S.exercises.length ? fmtNum(S.exercises.length) + ' exercices · choisir un autre exercice' : 'Choisir un exercice' })),
+      h('span', { class: 'go' }, icon('right'))));
+
+    const byDay = daysIndex();
+    const named = Object.keys(S.sessions).filter((k) => byDay.has(k)).sort();
+    wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('seances') },
+      h('div', {}, h('strong', { text: 'Séances' }),
+        h('span', { class: 'sub', text: named.length ? plural(named.length, 'séance enregistrée', 'séances enregistrées') + ' · dernière ' + ago(named[named.length - 1]) : 'Tes séances nommées, par groupe musculaire' })),
       h('span', { class: 'go' }, icon('right'))));
     return wrap;
   }
@@ -443,11 +531,12 @@
     wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
     wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
     if (!ex.missing) {
-      wrap.append(h('div', { class: 'visual' }, flip(ex, { alt: 'Démonstration : ' + dn(ex) })));
-      const sec = ex.s.map(frMuscle).filter((m) => m !== frMuscle(ex.p));
-      wrap.append(h('div', { class: 'muscles' },
-        h('p', {}, h('span', { text: 'Muscle principal : ' }), h('b', { text: frMuscle(ex.p) })),
-        sec.length ? h('p', {}, h('span', { text: 'Muscles secondaires : ' }), sec.join(', ')) : null));
+      wrap.append(visual(ex));
+      const sec = [...new Set(ex.s.map(frMuscle))].filter((m) => m !== frMuscle(ex.p));
+      wrap.append(h('div', { class: 'legend' },
+        h('p', {}, h('i', { class: 'p' }), h('span', { text: 'Muscle principal : ' }), h('b', { text: frMuscle(ex.p) })),
+        sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: 'Muscles secondaires : ' }), sec.join(', ')) : null));
+      if (ex.src === 0) wrap.append(h('p', { class: 'credit', text: 'Animation © Gym visual' }));
     }
 
     const recent = h('div', { class: 'recent' });
@@ -611,48 +700,62 @@
           h('button', { type: 'button', class: 'btn primary', onclick: save, text: 'Valider' }))));
   }
 
-  /* ---------- bibliothèque ---------- */
+  /* ---------- bibliothèque : onglets Favoris / Musculation / Étirements ---------- */
+  const TABS = [['fav', 'Favoris'], ['musc', 'Musculation'], ['str', 'Étirements']];
   function viewLibrary(arg, ui) {
     const wrap = h('main', { class: 'page library' });
     wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
     const search = h('input', { class: 'search', type: 'search', placeholder: 'Rechercher un exercice', 'aria-label': 'Rechercher un exercice', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
     search.value = ui.q || '';
+    const tabBar = h('div', { class: 'tabs', role: 'tablist' });
     const body = h('div');
-    wrap.append(search, body);
-    const open = new Set(Array.isArray(ui.open) ? ui.open : []);
-    S.getUI = () => ({ q: search.value, open: [...open] });
+    wrap.append(search, tabBar, body);
+    let tab = TABS.some((t) => t[0] === ui.tab) ? ui.tab : (S.favs.size ? 'fav' : 'musc');
+    // Groupes dépliés (Musculation, Étirements) ou repliés (Favoris, dépliés par défaut).
+    const toggled = new Set(Array.isArray(ui.open) ? ui.open : []);
+    S.getUI = () => ({ q: search.value, tab, open: [...toggled] });
+    const inTab = (ex) => (tab === 'fav' ? S.favs.has(ex.id) : tab === 'str' ? ex.st : !ex.st);
 
-    const exRow = (ex) => h('div', { class: 'exrow' },
-      h('button', { type: 'button', class: 'open', onclick: () => go('exercise', ex.id) },
-        photo(ex, 0, { class: 'thumb', loading: 'lazy' }), h('span', { class: 'nm', text: dn(ex) })),
-      starBtn(ex.id, () => { if (!search.value.trim()) renderFavs(); }));
-
-    const favBox = h('section', { class: 'sec favsec' });
-    function renderFavs() {
-      favBox.textContent = '';
-      const favs = [...S.favs].map((id) => S.byId.get(id)).filter(Boolean).sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
-      favBox.hidden = !favs.length;
-      if (!favs.length) return;
-      favBox.append(h('h2', { text: 'Favoris' }), h('div', { class: 'favs' }, favs.map((ex) =>
-        h('button', { type: 'button', class: 'tile', onclick: () => go('exercise', ex.id) },
-          flip(ex, { lazy: true }), h('span', { class: 'nm', text: dn(ex) })))));
+    function onStar(ex) {
+      if (search.value.trim() || tab !== 'fav' || S.favs.has(ex.id)) return;
+      render();
+      toast('Retiré des favoris', { ms: 5000, action: () => { S.favs.add(ex.id); saveUser(); render(); } });
     }
+    const exRow = (ex, showKind) => h('div', { class: 'exrow' },
+      h('button', { type: 'button', class: 'open', onclick: () => go('exercise', ex.id) },
+        thumb(ex), h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: 'Étirement' }) : null)),
+      starBtn(ex.id, () => onStar(ex)));
 
     /* Un groupe repliable ; son contenu n'est construit qu'à la première ouverture. */
     function group(gid, label, count, fill, cls) {
+      const key = tab + ':' + gid;
+      const defOpen = tab === 'fav';
       const d = h('details', { class: 'group ' + (cls || '') },
         h('summary', {}, h('span', {}, label, h('span', { class: 'count', text: String(count) })), icon('down')));
       let filled = false;
       const ensure = () => { if (!filled) { filled = true; d.append(fill()); } };
-      if (open.has(gid)) { d.open = true; ensure(); }
-      d.addEventListener('toggle', () => { if (d.open) { open.add(gid); ensure(); } else open.delete(gid); });
+      if (defOpen !== toggled.has(key)) { d.open = true; ensure(); }
+      d.addEventListener('toggle', () => {
+        if (d.open) ensure();
+        if (d.open !== defOpen) toggled.add(key); else toggled.delete(key);
+      });
       return d;
     }
-    const leafList = (id) => S.byLeaf.get(id) || [];
+    const leafList = (id) => (S.byLeaf.get(id) || []).filter(inTab);
+
+    function renderTabs(hidden) {
+      tabBar.textContent = '';
+      tabBar.hidden = hidden;
+      for (const [id, label] of TABS) {
+        tabBar.append(h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': String(tab === id), text: label,
+          onclick: () => { if (tab !== id) { tab = id; render(); } } }));
+      }
+    }
 
     function render() {
       body.textContent = '';
       if (S.loadError || !S.exercises.length) {
+        renderTabs(true);
         body.append(h('div', { class: 'loader' },
           h('strong', { text: 'Liste des exercices indisponible' }),
           h('p', { class: 'err', text: 'Le fichier des exercices n’a pas pu être lu. Vérifie ta connexion puis réessaie.' }),
@@ -660,17 +763,15 @@
         return;
       }
       const raw = search.value.trim();
+      renderTabs(!!raw);
       if (raw) {
         const tokens = fold(raw).split(/\s+/);
-        const hits = S.exercises.filter((ex) => { const hay = fold(ex.fr + ' ' + ex.name); return tokens.every((t) => hay.includes(t)); })
-          .sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
+        const hits = S.exercises.filter((ex) => { const hay = fold(ex.name); return tokens.every((t) => hay.includes(t)); });
         if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + raw + ' ».' })); return; }
-        body.append(h('div', { class: 'results' }, hits.slice(0, 60).map(exRow)));
+        body.append(h('div', { class: 'results' }, hits.slice(0, 60).map((ex) => exRow(ex, true))));
         if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: hits.length + ' résultats, les 60 premiers sont affichés. Précise ta recherche.' }));
         return;
       }
-      renderFavs();
-      body.append(favBox);
       const wrapG = h('div', { class: 'groups' });
       for (const t of TREE) {
         if (t.subs) {
@@ -678,14 +779,18 @@
           const total = subs.reduce((n, s) => n + leafList(s.id).length, 0);
           if (!total) continue;
           wrapG.append(group(t.id, t.label, total, () => h('div', { class: 'subgroups' },
-            subs.map((s) => group(t.id + '/' + s.id, s.label, leafList(s.id).length, () => h('div', { class: 'exlist' }, leafList(s.id).map(exRow)), 'sub')))));
+            subs.map((s) => group(t.id + '/' + s.id, s.label, leafList(s.id).length, () => h('div', { class: 'exlist' }, leafList(s.id).map((ex) => exRow(ex))), 'sub')))));
         } else {
           const list = leafList(t.id);
-          if (!list.length) continue; // une catégorie sans exercice n'est pas affichée (ex. Cou)
-          wrapG.append(group(t.id, t.label, list.length, () => h('div', { class: 'exlist' }, list.map(exRow))));
+          if (!list.length) continue; // une catégorie sans exercice n'est pas affichée
+          wrapG.append(group(t.id, t.label, list.length, () => h('div', { class: 'exlist' }, list.map((ex) => exRow(ex)))));
         }
       }
-      body.append(h('section', { class: 'sec' }, h('h2', { text: 'Groupes musculaires' }), wrapG));
+      if (!wrapG.childElementCount) {
+        body.append(h('p', { class: 'empty-note', text: tab === 'fav' ? 'Aucun favori pour l’instant. Touche l’étoile à côté d’un exercice pour le retrouver ici, rangé par catégorie.' : 'Aucun exercice dans cet onglet.' }));
+        return;
+      }
+      body.append(wrapG);
     }
 
     let t;
@@ -867,7 +972,7 @@
     for (const b of blocks) {
       const ex = getEx(b.exerciseId, b.name);
       tl.append(h('article', { class: 'tl' },
-        h('button', { type: 'button', class: 'head', onclick: () => go('exercise', ex.id) }, photo(ex, 0, { class: 'thumb', loading: 'lazy' }),
+        h('button', { type: 'button', class: 'head', onclick: () => go('exercise', ex.id) }, thumb(ex),
           h('div', {}, h('div', { class: 't', text: fTime.format(b.sets[0].ts) }), h('div', { class: 'nm', text: dn(ex) }))),
         b.sets.map((e) => h('div', { class: 'line-set' }, h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), h('span', { class: 'tot', text: fmtNum(e.w * e.r) })))));
     }
@@ -991,6 +1096,7 @@
   async function boot() {
     try { history.scrollRestoration = 'manual'; } catch (e) { /* ignoré */ }
     await Promise.all([loadUser(), loadExercises()]);
+    await migrateAliases();
     dropOldCache();
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignoré */ }
     S.stack = [{ view: 'home', arg: null, ui: null }];

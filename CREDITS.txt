@@ -1,0 +1,7 @@
+WorkLog - crédits des données et des images
+
+- ExerciseDB : données des exercices sous licence MIT (github.com/hasaneyldrm/exercises-dataset).
+  Images et animations : © Gym visual - https://gymvisual.com/ (diffusées en 180 x 180, chargées depuis ce dépôt).
+- free-exercise-db : données et photos dans le domaine public (github.com/yuhonas/free-exercise-db).
+- Schéma du corps (bodymap.json) : tracés issus de react-native-body-highlighter,
+  Copyright (c) 2022 ELABBASSI Hicham, licence MIT (github.com/HichamELBSI/react-native-body-highlighter).

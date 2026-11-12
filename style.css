@@ -298,6 +298,46 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 36px; 
 .empty-card { display: grid; gap: 12px; padding: 22px; }
 .empty-card p { color: var(--muted); }
 
+/* ---------- V3 : schéma des muscles, animation, onglets ---------- */
+.vis { background: var(--card); border-radius: 24px; box-shadow: var(--shadow); padding: 16px 14px 12px; display: grid; grid-template-columns: 1fr 92px; gap: 10px; align-items: end; }
+.vis.solo, .vis.nomap { grid-template-columns: 1fr; }
+.vis.solo .maps { max-width: 230px; width: 100%; margin: 0 auto; }
+.vis.nomap .anim { width: 160px; margin: 0 auto; }
+.maps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.maps figure { margin: 0; text-align: center; }
+.maps figcaption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.body { width: 100%; height: auto; display: block; }
+.body .m { fill: #DED6EC; }
+.body .k { fill: #EBE6F3; }
+.body .s { fill: #BBA8EC; }
+.body .p { fill: #6A4FC0; }
+.anim { position: relative; display: block; width: 100%; padding: 0; background: #fff; border: 1.5px solid var(--line); border-radius: 16px; overflow: hidden; aspect-ratio: 1 / 1; margin-bottom: 20px; }
+.anim img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.anim .zoom { position: absolute; right: 4px; bottom: 4px; width: 24px; height: 24px; border-radius: 8px; background: var(--lav-soft); color: var(--deep-ink); display: grid; place-items: center; }
+.anim .zoom .ic { width: 14px; height: 14px; }
+.visf { display: grid; gap: 12px; }
+button.visual { display: block; padding: 0; border: 0; }
+.legend { margin: 12px 4px 0; display: grid; gap: 4px; font-size: 14.5px; }
+.legend p { position: relative; padding-left: 19px; }
+.legend i { width: 11px; height: 11px; border-radius: 50%; position: absolute; left: 0; top: 5px; }
+.legend i.p { background: #6A4FC0; }
+.legend i.s { background: #BBA8EC; }
+.legend span { color: var(--muted); }
+.legend b { font-weight: 700; }
+.credit { font-size: 11.5px; color: var(--muted); margin: 8px 4px 0; }
+.hero .vis { box-shadow: none; background: #fff; border-radius: 20px; }
+.library .search { margin-bottom: 12px; }
+.tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--lav-soft); border-radius: 16px; padding: 4px; margin-bottom: 16px; }
+.tab { border: 0; background: transparent; color: var(--deep-ink); font-weight: 600; font-size: 15px; border-radius: 12px; min-height: 42px; padding: 6px 4px; }
+.tab[aria-selected="true"] { background: var(--card); color: var(--ink); font-weight: 700; box-shadow: 0 1px 4px rgba(58, 51, 71, .14); }
+.thumb.sq { width: 56px; height: 56px; object-fit: contain; background: #fff; margin: 0 8px; }
+.exrow .kind { display: inline-block; margin-left: 8px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+.dialog.lightbox { width: min(420px, 100%); padding: 14px; display: grid; gap: 12px; }
+.lb-media { background: #fff; border-radius: 16px; overflow: hidden; aspect-ratio: 3 / 2; }
+.lb-media.sq { aspect-ratio: 1 / 1; }
+.lb-media.sq img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.dialog .lb-name { font-weight: 700; text-align: center; margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
