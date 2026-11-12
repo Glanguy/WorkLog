@@ -1,16 +1,18 @@
 'use strict';
 (() => {
   /* =====================================================================
-     WorkLog : suivi d'exercices et de charges, 100 % local sur le téléphone.
-     Données d'exercices : ExerciseDB V1 (version gratuite, sans clé).
+     WorkLog V2 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     Exercices : free-exercise-db (domaine public), liste intégrée à l'app
+     (exercises.json + names-fr.json). Les photos viennent du dépôt GitHub
+     de la base (secours : jsDelivr).
      ===================================================================== */
-  const API = 'https://oss.exercisedb.dev/api/v1';
-  const GIF_BASE = 'https://static.exercisedb.dev/media/';
   const BACKUP_KEY = 'worklog.backup.v1';
+  const ARCHIVE_KEY = 'worklog.archive.v1';
+  const DATA_V = 2;
   const NS = 'http://www.w3.org/2000/svg';
+  let IMG_SHA = 'main';
 
   /* ---------- utilitaires ---------- */
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
   const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -22,7 +24,22 @@
   const fMonth = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
   const pad2 = (n) => String(n).padStart(2, '0');
   const dayKey = (ts) => { const d = new Date(ts); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+  const keyDate = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
   const toLocalInput = (ts) => { const d = new Date(ts); return dayKey(ts) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+  const plural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
+  function dayLabel(date) {
+    const s = cap(fDayLong.format(date));
+    return date.getFullYear() !== new Date().getFullYear() ? s + ' ' + date.getFullYear() : s;
+  }
+  function ago(key) {
+    const now = new Date();
+    const n = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - keyDate(key)) / 86400000);
+    if (n <= 0) return 'aujourd’hui';
+    if (n === 1) return 'hier';
+    if (n < 14) return 'il y a ' + n + ' jours';
+    if (n < 63) return 'il y a ' + Math.round(n / 7) + ' semaines';
+    return 'il y a ' + Math.round(n / 30.44) + ' mois';
+  }
 
   function h(tag, props, ...kids) {
     const el = document.createElement(tag);
@@ -31,7 +48,7 @@
       if (k === 'class') el.className = v;
       else if (k === 'text') el.textContent = v;
       else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-      else if (k === 'style') Object.assign(el.style, v);
+      else if (k === 'style') { for (const [p, val] of Object.entries(v)) { if (p.startsWith('--')) el.style.setProperty(p, val); else el.style[p] = val; } }
       else if (v === true) el.setAttribute(k, '');
       else el.setAttribute(k, v);
     }
@@ -59,6 +76,7 @@
     right: '<path d="M9 6l6 6-6 6"/>',
     export: '<path d="M12 15V4M8 8l4-4 4 4M5 13v6h14v-6"/>',
     import: '<path d="M12 4v11M8 11l4 4 4-4M5 13v6h14v-6"/>',
+    tag: '<path d="M4 5v6.2l8.4 8.4 6.2-6.2L10.2 5zM8 9h.01"/>',
   };
   function icon(name, cls) {
     const el = sv('svg', { viewBox: '0 0 24 24', class: 'ic ' + (cls || ''), 'aria-hidden': 'true' });
@@ -66,63 +84,88 @@
     return el;
   }
 
-  /* ---------- traductions (muscles et zones du corps) ---------- */
+  /* ---------- muscles et catégories (de la tête aux pieds) ---------- */
   const MUSCLES = {
-    'abs': 'Abdominaux', 'abdominals': 'Abdominaux', 'rectus abdominis': 'Abdominaux', 'abdominis': 'Abdominaux',
-    'obliques': 'Obliques', 'external obliques': 'Obliques', 'internal obliques': 'Obliques', 'transverse abdominis': 'Transverse',
-    'abductors': 'Abducteurs', 'hip abductors': 'Abducteurs', 'adductors': 'Adducteurs', 'hip adductors': 'Adducteurs', 'adductor magnus': 'Grand adducteur',
-    'biceps': 'Biceps', 'biceps brachii': 'Biceps', 'brachialis': 'Brachial', 'brachioradialis': 'Brachio-radial',
-    'calves': 'Mollets', 'gastrocnemius': 'Gastrocnémien', 'soleus': 'Soléaire', 'tibialis anterior': 'Tibial antérieur',
-    'cardiovascular system': 'Système cardiovasculaire',
-    'delts': 'Deltoïdes', 'deltoids': 'Deltoïdes', 'deltoid': 'Deltoïde',
-    'deltoid anterior': 'Deltoïde antérieur', 'deltoid lateral': 'Deltoïde latéral', 'deltoid posterior': 'Deltoïde postérieur',
-    'anterior deltoid': 'Deltoïde antérieur', 'lateral deltoid': 'Deltoïde latéral', 'posterior deltoid': 'Deltoïde postérieur', 'rear deltoids': 'Deltoïdes postérieurs',
-    'forearms': 'Avant-bras', 'wrist flexors': 'Fléchisseurs du poignet', 'wrist extensors': 'Extenseurs du poignet', 'grip muscles': 'Muscles de la prise',
-    'glutes': 'Fessiers', 'gluteus maximus': 'Grand fessier', 'gluteus medius': 'Moyen fessier', 'gluteus minimus': 'Petit fessier',
-    'hamstrings': 'Ischio-jambiers', 'biceps femoris': 'Biceps fémoral', 'semitendinosus': 'Semi-tendineux', 'semimembranosus': 'Semi-membraneux',
-    'hip flexors': 'Fléchisseurs de la hanche', 'iliopsoas': 'Ilio-psoas', 'psoas': 'Psoas',
-    'lats': 'Grands dorsaux', 'latissimus dorsi': 'Grand dorsal',
-    'levator scapulae': 'Élévateur de la scapula',
-    'pectorals': 'Pectoraux', 'chest': 'Pectoraux', 'pectoralis major': 'Grand pectoral',
-    'pectoralis major clavicular head': 'Grand pectoral (haut)', 'pectoralis major sternal head': 'Grand pectoral (bas)', 'pectoralis minor': 'Petit pectoral',
-    'quads': 'Quadriceps', 'quadriceps': 'Quadriceps', 'rectus femoris': 'Droit fémoral', 'vastus lateralis': 'Vaste latéral', 'vastus medialis': 'Vaste médial', 'vastus intermedius': 'Vaste intermédiaire',
-    'serratus anterior': 'Dentelé antérieur',
-    'spine': 'Colonne vertébrale', 'erector spinae': 'Érecteurs du rachis',
-    'traps': 'Trapèzes', 'trapezius': 'Trapèze', 'trapezius upper fibers': 'Trapèze supérieur', 'trapezius middle fibers': 'Trapèze moyen', 'trapezius lower fibers': 'Trapèze inférieur',
-    'triceps': 'Triceps', 'triceps brachii': 'Triceps',
-    'upper back': 'Haut du dos', 'lower back': 'Bas du dos', 'middle back': 'Milieu du dos',
-    'rhomboids': 'Rhomboïdes', 'teres major': 'Grand rond', 'teres minor': 'Petit rond',
-    'infraspinatus': 'Infra-épineux', 'supraspinatus': 'Supra-épineux', 'subscapularis': 'Subscapulaire', 'rotator cuff': 'Coiffe des rotateurs',
-    'sternocleidomastoid': 'Sterno-cléido-mastoïdien', 'neck': 'Cou', 'shoulders': 'Épaules', 'core': 'Tronc',
+    'neck': 'Cou', 'shoulders': 'Épaules', 'chest': 'Pectoraux', 'traps': 'Trapèzes', 'lats': 'Grands dorsaux',
+    'middle back': 'Milieu du dos', 'lower back': 'Bas du dos', 'biceps': 'Biceps', 'triceps': 'Triceps', 'forearms': 'Avant-bras',
+    'abdominals': 'Abdominaux', 'glutes': 'Fessiers', 'hamstrings': 'Ischio-jambiers', 'abductors': 'Abducteurs', 'adductors': 'Adducteurs',
+    'quadriceps': 'Quadriceps', 'calves': 'Mollets',
   };
-  const BODY = {
-    'back': 'Dos', 'cardio': 'Cardio', 'chest': 'Poitrine', 'lower arms': 'Avant-bras', 'lower legs': 'Mollets et jambes',
-    'neck': 'Cou', 'shoulders': 'Épaules', 'upper arms': 'Bras', 'upper legs': 'Cuisses', 'waist': 'Abdominaux et taille',
-    'arms': 'Bras', 'legs': 'Jambes', 'core': 'Abdominaux', 'calves': 'Mollets', 'full body': 'Corps entier',
-  };
-  const frMuscle = (s) => MUSCLES[fold(s)] || cap(String(s).toLowerCase());
-  const frBody = (s) => BODY[fold(s)] || cap(String(s).toLowerCase());
+  const frMuscle = (s) => MUSCLES[s] || cap(String(s));
+
+  const TREE = [
+    { id: 'cou', label: 'Cou', color: '#7F8FA9', m: ['neck'] },
+    { id: 'epaules', label: 'Épaules', color: '#4F86E0', m: ['shoulders'] },
+    { id: 'pectoraux', label: 'Pectoraux', color: '#D9668F', m: ['chest'] },
+    { id: 'dos', label: 'Dos', color: '#2F9C8A', m: ['traps', 'lats', 'middle back', 'lower back'] },
+    { id: 'bras', label: 'Bras', color: '#DD8F2E', subs: [
+      { id: 'biceps', label: 'Biceps', m: ['biceps'] },
+      { id: 'triceps', label: 'Triceps', m: ['triceps'] },
+      { id: 'avant-bras', label: 'Avant-bras', m: ['forearms'] },
+    ] },
+    { id: 'abdos', label: 'Abdominaux et taille', color: '#A9912B', m: ['abdominals'] },
+    { id: 'jambes', label: 'Jambes', color: '#7459C4', subs: [
+      { id: 'fessiers-ischios', label: 'Fessiers et ischio-jambiers', m: ['glutes', 'hamstrings'] },
+      { id: 'abducteurs', label: 'Abducteurs et adducteurs', m: ['abductors', 'adductors'] },
+      { id: 'quadriceps', label: 'Quadriceps', m: ['quadriceps'] },
+      { id: 'mollets', label: 'Mollets', m: ['calves'] },
+    ] },
+    { id: 'cardio', label: 'Cardio', color: '#D95B56' },
+  ];
+  const GROUPS = new Map();      // id -> { id, label, full, top, color }
+  const LEAF_OF = new Map();     // muscle anglais -> id de la (sous-)catégorie
+  for (const t of TREE) {
+    GROUPS.set(t.id, { id: t.id, label: t.label, full: t.label, top: t.id, color: t.color });
+    (t.m || []).forEach((m) => LEAF_OF.set(m, t.id));
+    for (const s of t.subs || []) {
+      GROUPS.set(s.id, { id: s.id, label: s.label, full: t.label + ' – ' + s.label, top: t.id, color: t.color, sub: true });
+      s.m.forEach((m) => LEAF_OF.set(m, s.id));
+    }
+  }
+  const GROUP_LIST = [...GROUPS.values()];
+  const topOf = (id) => (GROUPS.get(id) || {}).top;
 
   /* ---------- état ---------- */
   const S = {
     exercises: [],
     byId: new Map(),
+    byLeaf: new Map(),
+    loadError: false,
     entries: [],
     favs: new Set(),
-    frNames: {},
-    range: 1,
+    sessions: {},        // 'AAAA-MM-JJ' -> { name, main, sec: [] }
     cal: null,
-    sync: { running: false, error: null, count: 0, total: null, done: false },
-    listeners: new Set(),
+    stack: [],
+    cleanups: [],
+    getUI: null,
   };
 
-  const dn = (ex) => S.frNames[String(ex.name).toLowerCase()] || cap(ex.name);
+  const dn = (ex) => ex.fr || ex.name;
   function getEx(id, fallbackName) {
-    return S.byId.get(id) || { id, name: fallbackName || id, gif: GIF_BASE + id + '.gif', body: [], target: [], secondary: [], equip: [] };
+    return S.byId.get(id) || { id, name: fallbackName || id, fr: fallbackName || id, missing: true, p: null, s: [], leaf: null };
   }
-  function indexExercises() {
-    S.byId = new Map(S.exercises.map((e) => [e.id, e]));
-    groupsCache = null;
+
+  /* ---------- photos ---------- */
+  // Adresse principale : le dépôt GitHub de la base. Secours : la même photo via jsDelivr.
+  const imgUrl = (id, i, alt) => (alt
+    ? 'https://cdn.jsdelivr.net/gh/yuhonas/free-exercise-db@' + IMG_SHA + '/exercises/'
+    : 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/' + IMG_SHA + '/exercises/') + encodeURIComponent(id) + '/' + i + '.jpg';
+  function photo(ex, i, props) {
+    if (ex.missing) return h('span', { class: 'ph ' + ((props && props.class) || '') });
+    const img = h('img', Object.assign({ alt: '', decoding: 'async', crossorigin: 'anonymous', width: '850', height: '567' }, props));
+    let retried = false;
+    img.addEventListener('error', () => {
+      if (!retried) { retried = true; img.src = imgUrl(ex.id, i, true); } else img.classList.add('broken');
+    });
+    img.src = imgUrl(ex.id, i);
+    return img;
+  }
+  /* Deux photos (départ et arrivée du mouvement) qui alternent. */
+  function flip(ex, props) {
+    const lazy = props && props.lazy ? 'lazy' : null;
+    return h('div', { class: 'flip ' + ((props && props.class) || '') },
+      photo(ex, 0, { loading: lazy, alt: (props && props.alt) || '' }),
+      photo(ex, 1, { loading: lazy, class: 'b' }));
   }
 
   /* ---------- stockage : IndexedDB + copie de secours localStorage ---------- */
@@ -150,15 +193,27 @@
   }
   const kvGet = (k) => tx('kv', 'readonly', (st) => st.get(k));
   const kvSet = (k, v) => tx('kv', 'readwrite', (st) => { st.put(v, k); });
-  const exAll = () => tx('exercises', 'readonly', (st) => st.getAll());
-  const exPut = (list) => tx('exercises', 'readwrite', (st) => { list.forEach((e) => st.put(e)); });
-  const exClear = () => tx('exercises', 'readwrite', (st) => { st.clear(); });
 
   const validEntry = (e) => e && typeof e.id === 'string' && typeof e.exerciseId === 'string'
     && Number.isFinite(e.w) && e.w > 0 && Number.isFinite(e.r) && e.r > 0 && Number.isFinite(e.ts);
+  function cleanSession(s) {
+    if (!s || typeof s !== 'object' || !GROUPS.has(s.main)) return null;
+    const sec = [...new Set((Array.isArray(s.sec) ? s.sec : []).filter((x) => GROUPS.has(x) && x !== s.main))];
+    return { name: typeof s.name === 'string' ? s.name.trim().slice(0, 60) : '', main: s.main, sec };
+  }
+  function cleanSessions(obj) {
+    const out = {};
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) {
+        const c = /^\d{4}-\d{2}-\d{2}$/.test(k) ? cleanSession(v) : null;
+        if (c) out[k] = c;
+      }
+    }
+    return out;
+  }
 
   async function saveUser() {
-    const payload = { entries: S.entries, favs: [...S.favs] };
+    const payload = { v: DATA_V, savedAt: Date.now(), entries: S.entries, favs: [...S.favs], sessions: S.sessions };
     try { localStorage.setItem(BACKUP_KEY, JSON.stringify(payload)); } catch (e) { /* ignoré */ }
     try { await kvSet('user', payload); } catch (e) { console.warn('IndexedDB indisponible', e); }
   }
@@ -166,104 +221,42 @@
     let a = null; let b = null;
     try { a = await kvGet('user'); } catch (e) { /* ignoré */ }
     try { b = JSON.parse(localStorage.getItem(BACKUP_KEY) || 'null'); } catch (e) { /* ignoré */ }
-    const count = (p) => (p && Array.isArray(p.entries) ? p.entries.filter(validEntry).length : -1);
-    const p = count(b) > count(a) ? b : a;
-    if (p) {
-      S.entries = (p.entries || []).filter(validEntry);
-      S.favs = new Set((p.favs || []).filter((x) => typeof x === 'string'));
-    }
+    const isV2 = (p) => p && p.v === DATA_V && Array.isArray(p.entries);
+    // Données de la V1 (identifiants de l'ancienne base) : mises de côté une fois, on repart de zéro.
+    const old = [a, b].find((p) => p && !isV2(p) && Array.isArray(p.entries) && p.entries.length);
+    if (old) { try { if (!localStorage.getItem(ARCHIVE_KEY)) localStorage.setItem(ARCHIVE_KEY, JSON.stringify(old)); } catch (e) { /* ignoré */ } }
+    const cands = [a, b].filter(isV2);
+    if (!cands.length) { if (a || b) await saveUser(); return; }
+    const p = cands.sort((x, y) => (y.savedAt || 0) - (x.savedAt || 0) || y.entries.length - x.entries.length)[0];
+    S.entries = p.entries.filter(validEntry);
+    S.favs = new Set((p.favs || []).filter((x) => typeof x === 'string'));
+    S.sessions = cleanSessions(p.sessions);
   }
-
-  /* ---------- exercices : chargement depuis l'API et cache ---------- */
-  function norm(it) {
-    if (!it || typeof it !== 'object') return null;
-    const id = String(it.exerciseId ?? it.id ?? '');
-    if (!id || !it.name) return null;
-    const arr = (v) => (Array.isArray(v) ? v.map((x) => String(x).toLowerCase()) : v ? [String(v).toLowerCase()] : []);
-    const gif = typeof it.gifUrl === 'string' && it.gifUrl.startsWith('https://') ? it.gifUrl : GIF_BASE + id + '.gif';
-    return {
-      id, name: String(it.name), gif,
-      body: arr(it.bodyParts ?? it.bodyPart), target: arr(it.targetMuscles ?? it.target),
-      secondary: arr(it.secondaryMuscles), equip: arr(it.equipments ?? it.equipment),
-    };
-  }
-  async function apiGet(path, params) {
-    const u = new URL(API + path);
-    Object.entries(params || {}).forEach(([k, v]) => u.searchParams.set(k, v));
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const r = await fetch(u);
-      if (r.status === 429) {
-        const wait = (Number(r.headers.get('retry-after')) || 2 * (attempt + 1)) * 1000;
-        await sleep(Math.min(wait, 15000));
-        continue;
-      }
-      if (!r.ok) throw new Error('Erreur ' + r.status);
-      return r.json();
-    }
-    throw new Error('Trop de requêtes, réessaie dans une minute.');
-  }
-  const notify = () => S.listeners.forEach((fn) => fn());
-
-  async function syncExercises(fromScratch) {
-    if (S.sync.running) return;
-    S.sync.running = true; S.sync.error = null; notify();
+  async function dropOldCache() {
     try {
-      if (fromScratch) {
-        await exClear(); await kvSet('cursor', null); await kvSet('syncDone', false);
-        S.exercises = []; S.sync.done = false; indexExercises();
-      }
-      let cursor = await kvGet('cursor');
-      const seen = new Set(S.exercises.map((e) => e.id));
-      let guard = 0;
-      for (;;) {
-        const params = { limit: 25 };
-        if (cursor) params.after = cursor;
-        const res = await apiGet('/exercises', params);
-        const list = (Array.isArray(res.data) ? res.data : []).map(norm).filter(Boolean);
-        const fresh = list.filter((e) => !seen.has(e.id));
-        if (!fresh.length) break; // fin, ou l'API renvoie deux fois la même page
-        fresh.forEach((e) => seen.add(e.id));
-        await exPut(fresh);
-        S.exercises.push(...fresh);
-        const meta = res.meta || {};
-        S.sync.total = Number.isFinite(meta.total) ? meta.total : S.sync.total;
-        S.sync.count = S.exercises.length;
-        cursor = meta.nextCursor || list[list.length - 1].id;
-        await kvSet('cursor', cursor);
-        notify();
-        if (meta.hasNextPage === false) break;
-        if (++guard > 250) break;
-        await sleep(300);
-      }
-      indexExercises();
-      S.sync.count = S.exercises.length;
-      S.sync.done = S.exercises.length > 0;
-      if (!S.sync.done) S.sync.error = 'Aucun exercice reçu de l’API.';
-      await kvSet('syncDone', S.sync.done);
-    } catch (e) {
-      S.sync.error = e && e.message ? e.message : 'Connexion impossible';
-      indexExercises();
-    } finally {
-      S.sync.running = false; notify();
-    }
+      if ((await kvGet('dataV')) === DATA_V) return;
+      await tx('exercises', 'readwrite', (st) => { st.clear(); });
+      await kvSet('cursor', null); await kvSet('syncDone', null); await kvSet('dataV', DATA_V);
+    } catch (e) { /* ignoré */ }
   }
 
-  let groupsCache = null;
-  function groups() {
-    if (groupsCache) return groupsCache;
-    const m = new Map();
-    for (const ex of S.exercises) {
-      const keys = ex.body.length ? ex.body : ['autres'];
-      for (const k of keys) {
-        const label = k === 'autres' ? 'Autres' : frBody(k);
-        if (!m.has(label)) m.set(label, []);
-        m.get(label).push(ex);
-      }
+  /* ---------- exercices : liste intégrée à l'app ---------- */
+  async function loadExercises() {
+    try {
+      const [base, names] = await Promise.all(['exercises.json', 'names-fr.json'].map((u) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })));
+      if (typeof base.sha === 'string' && /^[0-9a-f]{7,40}$/.test(base.sha)) IMG_SHA = base.sha;
+      S.exercises = base.items.filter((it) => it && typeof it.id === 'string' && it.n).map((it) => {
+        const leaf = it.c === 'cardio' ? 'cardio' : (LEAF_OF.get(it.p) || 'cardio');
+        return { id: it.id, name: String(it.n), fr: (names && names[it.id]) || String(it.n), p: it.p, s: Array.isArray(it.s) ? it.s : [], leaf, top: topOf(leaf) };
+      });
+      S.loadError = false;
+    } catch (e) {
+      S.exercises = []; S.loadError = true;
     }
-    const out = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'fr'));
-    out.forEach(([, list]) => list.sort((a, b) => dn(a).localeCompare(dn(b), 'fr')));
-    groupsCache = out;
-    return out;
+    S.byId = new Map(S.exercises.map((e) => [e.id, e]));
+    S.byLeaf = new Map();
+    for (const ex of S.exercises) { if (!S.byLeaf.has(ex.leaf)) S.byLeaf.set(ex.leaf, []); S.byLeaf.get(ex.leaf).push(ex); }
+    S.byLeaf.forEach((list) => list.sort((x, y) => dn(x).localeCompare(dn(y), 'fr')));
   }
 
   /* ---------- petits composants ---------- */
@@ -279,18 +272,28 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { root.textContent = ''; }, (opts && opts.ms) || 3200);
   }
+  let modalClose = null;
+  function openModal(box, onDismiss) {
+    const root = document.getElementById('modal-root');
+    const close = () => { root.textContent = ''; document.removeEventListener('keydown', onKey); modalClose = null; };
+    const dismiss = () => { close(); if (onDismiss) onDismiss(); };
+    const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
+    const scrim = h('div', { class: 'scrim', onclick: (e) => { if (e.target === scrim) dismiss(); } }, box);
+    root.textContent = '';
+    root.append(scrim);
+    document.addEventListener('keydown', onKey);
+    modalClose = dismiss;
+    return close;
+  }
   function confirmDialog({ title, text, yes, no }) {
     return new Promise((resolve) => {
-      const root = document.getElementById('modal-root');
-      const done = (v) => { root.textContent = ''; document.removeEventListener('keydown', onKey); resolve(v); };
-      const onKey = (e) => { if (e.key === 'Escape') done(false); };
+      let close = null;
+      const done = (v) => { close(); resolve(v); };
       const noBtn = h('button', { type: 'button', class: 'btn ghost', text: no || 'Non', onclick: () => done(false) });
       const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
         h('h2', { id: 'dlg-t', text: title }), text ? h('p', { text }) : null,
         h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn danger', text: yes || 'Oui', onclick: () => done(true) })));
-      const scrim = h('div', { class: 'scrim', onclick: (e) => { if (e.target === scrim) done(false); } }, box);
-      root.append(scrim);
-      document.addEventListener('keydown', onKey);
+      close = openModal(box, () => resolve(false));
       noBtn.focus();
     });
   }
@@ -306,30 +309,55 @@
     return b;
   }
   const closeBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Fermer', onclick: goHome }, icon('close'));
+  const backBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Retour', onclick: goBack }, icon('left'));
   const setText = (w, r) => fmtNum(w) + ' kg × ' + fmtNum(r);
+  const tag = (id, main) => { const g = GROUPS.get(id); return g ? h('span', { class: 'tag' + (main ? ' main' : ''), style: { '--c': g.color }, text: g.label }) : null; };
 
-  /* ---------- navigation ---------- */
+  /* ---------- navigation : une pile de pages, chaque page garde son état ----------
+     La flèche retour et le balayage depuis le bord gauche utilisent l'historique du
+     navigateur : on revient sur la page précédente telle qu'on l'avait laissée. */
   const app = () => document.getElementById('app');
-  S.depth = 0; S.cleanups = [];
-  function go(view, arg, opts) {
+  function render(entry) {
     S.cleanups.forEach((fn) => fn()); S.cleanups = [];
-    S.view = view; S.arg = arg;
-    S.listeners.clear();
+    S.getUI = null;
+    if (modalClose) modalClose();
     document.getElementById('toast').textContent = '';
     const root = app();
     root.textContent = '';
-    const render = { home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, sessions: viewSessions, session: viewSession }[view];
-    root.append(render(arg));
-    window.scrollTo(0, 0);
-    if (view !== 'home' && !(opts && opts.push === false)) history.pushState({ view, d: ++S.depth }, '');
+    const fn = { home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances }[entry.view] || viewHome;
+    root.append(fn(entry.arg, entry.ui || {}));
+    const y = (entry.ui && entry.ui.scroll) || 0;
+    window.scrollTo(0, y);
+    if (y) requestAnimationFrame(() => window.scrollTo(0, y));
   }
+  function snapshot() {
+    const top = S.stack[S.stack.length - 1];
+    if (top) top.ui = Object.assign({}, S.getUI ? S.getUI() : {}, { scroll: window.scrollY });
+  }
+  function go(view, arg) {
+    snapshot();
+    const entry = { view, arg: arg == null ? null : arg, ui: null };
+    S.stack.push(entry);
+    history.pushState({ i: S.stack.length - 1, view, arg: entry.arg }, '');
+    render(entry);
+  }
+  const prevView = () => (S.stack.length > 1 ? S.stack[S.stack.length - 2].view : null);
+  function goBack() { if (S.stack.length > 1) history.back(); else goHome(); }
   function goHome() {
-    if (S.depth > 0) history.go(-S.depth); // le retour déclenche popstate, qui affiche l'accueil
-    else go('home', null, { push: false });
+    const n = S.stack.length - 1;
+    if (n > 0) history.go(-n); else render(S.stack[0]);
   }
-  window.addEventListener('popstate', () => {
-    S.depth = (history.state && history.state.d) || 0;
-    go('home', null, { push: false });
+  window.addEventListener('popstate', (ev) => {
+    const st = ev.state && typeof ev.state.i === 'number' ? ev.state : { i: 0, view: 'home', arg: null };
+    const i = Math.max(0, st.i | 0);
+    if (i < S.stack.length) {
+      S.stack.length = i + 1;
+    } else {
+      snapshot();
+      while (S.stack.length < i) S.stack.push({ view: 'home', arg: null, ui: null });
+      S.stack.push({ view: st.view || 'home', arg: st.arg == null ? null : st.arg, ui: null });
+    }
+    render(S.stack[S.stack.length - 1]);
   });
 
   /* ---------- accueil ---------- */
@@ -343,13 +371,11 @@
     const menu = h('div', { class: 'menu', role: 'menu', hidden: true });
     const menuBtn = h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Menu', 'aria-expanded': 'false' }, icon('menu'));
     const closeMenu = () => { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); };
-    const item = (label, fn, cls) => h('button', { type: 'button', role: 'menuitem', class: cls || '', text: label, onclick: () => { closeMenu(); fn(); } });
+    const item = (label, fn) => h('button', { type: 'button', role: 'menuitem', text: label, onclick: () => { closeMenu(); fn(); } });
     menu.append(
       item('Historique', () => go('history')),
-      item('Séances', () => go('sessions')),
-      h('hr'),
-      item('Actualiser les exercices', refreshExercises, 'quiet'),
-      item('Exporter la liste des noms', exportNames, 'quiet'),
+      item('Calendrier', () => go('calendar')),
+      item('Séances', () => go('seances')),
     );
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -372,7 +398,7 @@
       const mine = S.entries.filter((e) => e.exerciseId === last.exerciseId);
       const latest = mine.reduce((a, b) => ((b.created || b.ts) > (a.created || a.ts) ? b : a));
       wrap.append(h('button', { type: 'button', class: 'hero', onclick: () => go('exercise', ex.id) },
-        h('div', { class: 'frame' }, h('img', { src: ex.gif, alt: dn(ex), loading: 'eager' })),
+        ex.missing ? null : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) })),
         h('h2', { text: dn(ex) }),
         h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
         h('p', { class: 'when', text: fDateTime.format(latest.ts) })));
@@ -382,23 +408,11 @@
         h('p', { text: 'Choisis un exercice dans la bibliothèque pour noter ta première série.' })));
     }
 
-    const sub = h('span', { class: 'sub' });
-    const upd = () => {
-      if (S.sync.running) sub.textContent = 'Chargement : ' + S.sync.count + (S.sync.total ? ' / ' + S.sync.total : '') + ' exercices';
-      else if (S.sync.error && !S.exercises.length) sub.textContent = 'Connexion impossible, touche pour réessayer';
-      else sub.textContent = S.exercises.length ? S.exercises.length + ' exercices · choisir un autre exercice' : 'Choisir un exercice';
-    };
-    upd(); S.listeners.add(upd);
     wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('library') },
-      h('div', {}, h('strong', { text: 'Bibliothèque' }), sub),
+      h('div', {}, h('strong', { text: 'Bibliothèque' }),
+        h('span', { class: 'sub', text: S.exercises.length ? S.exercises.length + ' exercices · choisir un autre exercice' : 'Choisir un exercice' })),
       h('span', { class: 'go' }, icon('right'))));
     return wrap;
-  }
-  async function refreshExercises() {
-    const ok = await confirmDialog({ title: 'Actualiser les exercices ?', text: 'La liste est téléchargée à nouveau (environ une minute). Tes séries et favoris ne changent pas.', yes: 'Actualiser', no: 'Annuler' });
-    if (!ok) return;
-    toast('Actualisation lancée');
-    syncExercises(true);
   }
   async function shareFile(name, text, mime) {
     const file = new File([text], name, { type: mime });
@@ -411,25 +425,29 @@
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     return true;
   }
-  async function exportNames() {
-    if (!S.exercises.length) { toast('Charge d’abord la bibliothèque.'); return; }
-    const names = [...new Set(S.exercises.map((e) => e.name.toLowerCase()))].sort();
-    await shareFile('worklog-noms-exercices.json', JSON.stringify({ app: 'WorkLog', type: 'exercise-names', names }, null, 2), 'application/json');
-  }
 
   /* ---------- fiche exercice ---------- */
-  function viewExercise(id) {
+  const RANGES = [
+    { k: '2s', label: '2 semaines', days: 14 },
+    { k: '1m', label: '1 mois', days: 30.44 },
+    { k: '3m', label: '3 mois', days: 91.3 },
+    { k: '6m', label: '6 mois', days: 182.6 },
+  ];
+  function viewExercise(id, ui) {
     const known = S.entries.find((e) => e.exerciseId === id);
     const ex = getEx(id, known && known.name);
+    let range = RANGES.some((r) => r.k === ui.range) ? ui.range : '2s';
+    S.getUI = () => ({ range });
     const wrap = h('main', { class: 'page exercise' });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('div', { class: 'grow' }), starBtn(ex.id)));
+    const fromHome = prevView() === 'home' || prevView() === null;
+    wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
     wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
-    wrap.append(h('div', { class: 'visual' }, h('img', { src: ex.gif, alt: 'Démonstration : ' + dn(ex) })));
-
-    const main = ex.target.map(frMuscle);
-    const sec = ex.secondary.map(frMuscle).filter((m) => !main.includes(m));
-    if (main.length || sec.length) {
-      wrap.append(h('p', { class: 'muscles' }, main.length ? h('b', { text: main.join(', ') }) : null, sec.length ? (main.length ? ' · aussi ' : 'Aussi ') + sec.join(', ') : null));
+    if (!ex.missing) {
+      wrap.append(h('div', { class: 'visual' }, flip(ex, { alt: 'Démonstration : ' + dn(ex) })));
+      const sec = ex.s.map(frMuscle).filter((m) => m !== frMuscle(ex.p));
+      wrap.append(h('div', { class: 'muscles' },
+        h('p', {}, h('span', { text: 'Muscle principal : ' }), h('b', { text: frMuscle(ex.p) })),
+        sec.length ? h('p', {}, h('span', { text: 'Muscles secondaires : ' }), sec.join(', ')) : null));
     }
 
     const recent = h('div', { class: 'recent' });
@@ -453,14 +471,12 @@
 
     function renderChart() {
       chartBox.textContent = '';
-      const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Période' },
-        [1, 3, 6].map((m) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(S.range === m), text: m + ' mois', onclick: () => { S.range = m; renderChart(); } })));
-      chartBox.append(chips);
+      chartBox.append(h('div', { class: 'chips fit', role: 'group', 'aria-label': 'Période' },
+        RANGES.map((r) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(range === r.k), text: r.label, onclick: () => { range = r.k; renderChart(); } }))));
       const all = mine();
       const end = Math.max(Date.now(), all.length ? all[all.length - 1].ts : 0);
-      const start = end - S.range * 30.44 * 86400000;
-      const pts = all.filter((e) => e.ts >= start && e.ts <= end);
-      chartBox.append(buildChart(pts, start, end));
+      const start = end - RANGES.find((r) => r.k === range).days * 86400000;
+      chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end));
     }
 
     wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Dernières séances' }), h('div', { class: 'card' }, recent)));
@@ -470,7 +486,8 @@
     return wrap;
   }
 
-  /* Graphique : charge totale d'une série = poids × répétitions. */
+  /* Graphique : charge totale d'une série = poids × répétitions.
+     Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
   function buildChart(pts, start, end) {
     const box = h('div');
     if (!pts.length) {
@@ -512,9 +529,8 @@
       detail.append(h('strong', { text: fmtNum(p.w) + ' kg × ' + fmtNum(p.r) + ' rép.' }),
         h('span', { class: 'sub', text: 'Total ' + fmtNum(p.w * p.r) + ' · ' + fDateTime.format(p.ts) }));
     };
-    sorted.forEach((p, i) => {
-      const cx = x(p.ts); const cy = y(p.w * p.r);
-      const dot = sv('circle', { class: 'dot', cx, cy, r: 5 });
+    sorted.forEach((p) => {
+      const dot = sv('circle', { class: 'dot', cx: x(p.ts), cy: y(p.w * p.r), r: 5 });
       dots.push(dot); svg.append(dot);
     });
     sorted.forEach((p, i) => {
@@ -577,7 +593,7 @@
       if (bad) { msg.textContent = 'Poids : un nombre positif. Répétitions : un nombre entier.'; return; }
       const base = Date.now();
       filled.forEach((row, i) => {
-        S.entries.push({ id: uid(), exerciseId: ex.id, name: ex.name, w: parseNum(row.w), r: parseNum(row.r), ts: row.dt, created: base + i });
+        S.entries.push({ id: uid(), exerciseId: ex.id, name: dn(ex), w: parseNum(row.w), r: parseNum(row.r), ts: row.dt, created: base + i });
       });
       await saveUser();
       const n = filled.length;
@@ -596,18 +612,22 @@
   }
 
   /* ---------- bibliothèque ---------- */
-  function viewLibrary() {
+  function viewLibrary(arg, ui) {
     const wrap = h('main', { class: 'page library' });
     wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
     const search = h('input', { class: 'search', type: 'search', placeholder: 'Rechercher un exercice', 'aria-label': 'Rechercher un exercice', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
+    search.value = ui.q || '';
     const body = h('div');
     wrap.append(search, body);
+    const open = new Set(Array.isArray(ui.open) ? ui.open : []);
+    S.getUI = () => ({ q: search.value, open: [...open] });
 
-    const openRow = (ex) => h('div', { class: 'exrow' },
-      h('button', { type: 'button', class: 'open', text: dn(ex), onclick: () => go('exercise', ex.id) }),
+    const exRow = (ex) => h('div', { class: 'exrow' },
+      h('button', { type: 'button', class: 'open', onclick: () => go('exercise', ex.id) },
+        photo(ex, 0, { class: 'thumb', loading: 'lazy' }), h('span', { class: 'nm', text: dn(ex) })),
       starBtn(ex.id, () => { if (!search.value.trim()) renderFavs(); }));
 
-    const favBox = h('section', { class: 'sec' });
+    const favBox = h('section', { class: 'sec favsec' });
     function renderFavs() {
       favBox.textContent = '';
       const favs = [...S.favs].map((id) => S.byId.get(id)).filter(Boolean).sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
@@ -615,63 +635,61 @@
       if (!favs.length) return;
       favBox.append(h('h2', { text: 'Favoris' }), h('div', { class: 'favs' }, favs.map((ex) =>
         h('button', { type: 'button', class: 'tile', onclick: () => go('exercise', ex.id) },
-          h('img', { src: ex.gif, alt: '', loading: 'lazy' }), h('span', { class: 'nm', text: dn(ex) })))));
+          flip(ex, { lazy: true }), h('span', { class: 'nm', text: dn(ex) })))));
     }
 
-    function renderLoader() {
-      const pct = S.sync.total ? Math.min(100, Math.round((S.sync.count / S.sync.total) * 100)) : 0;
-      const fill = h('div', { class: 'fill' });
-      fill.style.width = (S.sync.total ? pct : 8) + '%';
-      const box = h('div', { class: 'loader' },
-        h('strong', { text: S.sync.error ? 'Chargement interrompu' : 'Chargement des exercices' }),
-        h('div', { class: 'track' }, fill),
-        h('p', { text: S.sync.count + (S.sync.total ? ' sur ' + S.sync.total : '') + ' exercices chargés. Cette étape n’a lieu qu’une fois.' }));
-      if (S.sync.error) {
-        box.append(h('p', { class: 'err', text: S.sync.error }), h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: () => syncExercises(false) }));
-      }
-      return box;
+    /* Un groupe repliable ; son contenu n'est construit qu'à la première ouverture. */
+    function group(gid, label, count, fill, cls) {
+      const d = h('details', { class: 'group ' + (cls || '') },
+        h('summary', {}, h('span', {}, label, h('span', { class: 'count', text: String(count) })), icon('down')));
+      let filled = false;
+      const ensure = () => { if (!filled) { filled = true; d.append(fill()); } };
+      if (open.has(gid)) { d.open = true; ensure(); }
+      d.addEventListener('toggle', () => { if (d.open) { open.add(gid); ensure(); } else open.delete(gid); });
+      return d;
     }
+    const leafList = (id) => S.byLeaf.get(id) || [];
 
     function render() {
       body.textContent = '';
-      const q = fold(search.value.trim());
-      const loading = !S.exercises.length || (S.sync.running && !S.sync.done);
-      if (!S.sync.running && !S.sync.done && !S.sync.error) { syncExercises(false); return; }
-      if (loading) { body.append(renderLoader()); return; }
-      if (S.sync.error) {
-        body.append(h('div', { class: 'loader', style: { marginBottom: '16px' } },
-          h('p', { class: 'err', text: 'Liste incomplète (' + S.exercises.length + ' exercices) : ' + S.sync.error }),
-          h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: () => syncExercises(false) })));
+      if (S.loadError || !S.exercises.length) {
+        body.append(h('div', { class: 'loader' },
+          h('strong', { text: 'Liste des exercices indisponible' }),
+          h('p', { class: 'err', text: 'Le fichier des exercices n’a pas pu être lu. Vérifie ta connexion puis réessaie.' }),
+          h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: async () => { await loadExercises(); render(); } })));
+        return;
       }
-      if (q) {
-        const tokens = q.split(/\s+/);
-        const hits = S.exercises.filter((ex) => { const hay = fold(dn(ex) + ' ' + ex.name); return tokens.every((t) => hay.includes(t)); })
+      const raw = search.value.trim();
+      if (raw) {
+        const tokens = fold(raw).split(/\s+/);
+        const hits = S.exercises.filter((ex) => { const hay = fold(ex.fr + ' ' + ex.name); return tokens.every((t) => hay.includes(t)); })
           .sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
-        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + search.value.trim() + ' ».' })); return; }
-        body.append(h('div', { class: 'results' }, hits.slice(0, 80).map(openRow)));
-        if (hits.length > 80) body.append(h('p', { class: 'empty-note', style: { margin: '10px 4px' }, text: hits.length + ' résultats, les 80 premiers sont affichés. Précise ta recherche.' }));
+        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + raw + ' ».' })); return; }
+        body.append(h('div', { class: 'results' }, hits.slice(0, 60).map(exRow)));
+        if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: hits.length + ' résultats, les 60 premiers sont affichés. Précise ta recherche.' }));
         return;
       }
       renderFavs();
       body.append(favBox);
-      const gs = h('section', { class: 'sec' }, h('h2', { text: 'Groupes musculaires' }));
       const wrapG = h('div', { class: 'groups' });
-      for (const [label, list] of groups()) {
-        const d = h('details', { class: 'group' },
-          h('summary', {}, h('span', {}, label, h('span', { class: 'count', text: String(list.length) })), icon('down')));
-        let filled = false;
-        d.addEventListener('toggle', () => {
-          if (d.open && !filled) { filled = true; d.append(h('div', { class: 'exlist' }, list.map(openRow))); }
-        });
-        wrapG.append(d);
+      for (const t of TREE) {
+        if (t.subs) {
+          const subs = t.subs.filter((s) => leafList(s.id).length);
+          const total = subs.reduce((n, s) => n + leafList(s.id).length, 0);
+          if (!total) continue;
+          wrapG.append(group(t.id, t.label, total, () => h('div', { class: 'subgroups' },
+            subs.map((s) => group(t.id + '/' + s.id, s.label, leafList(s.id).length, () => h('div', { class: 'exlist' }, leafList(s.id).map(exRow)), 'sub')))));
+        } else {
+          const list = leafList(t.id);
+          if (!list.length) continue; // une catégorie sans exercice n'est pas affichée (ex. Cou)
+          wrapG.append(group(t.id, t.label, list.length, () => h('div', { class: 'exlist' }, list.map(exRow))));
+        }
       }
-      gs.append(wrapG);
-      body.append(gs);
+      body.append(h('section', { class: 'sec' }, h('h2', { text: 'Groupes musculaires' }), wrapG));
     }
 
     let t;
     search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 60); });
-    S.listeners.add(render);
     render();
     return wrap;
   }
@@ -695,7 +713,7 @@
       let cur = '';
       for (const e of sorted) {
         const k = dayKey(e.ts);
-        if (k !== cur) { cur = k; list.append(h('div', { class: 'dayhead', text: cap(fDayLong.format(e.ts)) + (new Date(e.ts).getFullYear() !== new Date().getFullYear() ? ' ' + new Date(e.ts).getFullYear() : '') })); }
+        if (k !== cur) { cur = k; list.append(h('div', { class: 'dayhead', text: dayLabel(new Date(e.ts)) })); }
         const ex = getEx(e.exerciseId, e.name);
         list.append(h('div', { class: 'hrow' },
           h('div', {}, h('div', { class: 'nm', text: dn(ex) }),
@@ -711,10 +729,11 @@
       toast('Série supprimée', { ms: 5000, action: () => { S.entries.push(e); saveUser(); render(); } });
     }
     async function wipeAll() {
-      if (!S.entries.length) { toast('Il n’y a rien à supprimer.'); return; }
-      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + ') seront supprimées. Tes favoris sont conservés.', yes: 'Oui', no: 'Non' });
+      const nSess = Object.keys(S.sessions).length;
+      if (!S.entries.length && !nSess) { toast('Il n’y a rien à supprimer.'); return; }
+      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + ') et les noms de séances seront supprimés. Tes favoris sont conservés.', yes: 'Oui', no: 'Non' });
       if (!ok) return;
-      S.entries = []; await saveUser(); render(); toast('Historique supprimé');
+      S.entries = []; S.sessions = {}; await saveUser(); render(); toast('Historique supprimé');
     }
     fileIn.addEventListener('change', async () => {
       const f = fileIn.files && fileIn.files[0]; fileIn.value = '';
@@ -726,7 +745,7 @@
     return wrap;
   }
   async function exportData() {
-    const data = { app: 'WorkLog', version: 1, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs] };
+    const data = { app: 'WorkLog', version: DATA_V, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs], sessions: S.sessions };
     const ok = await shareFile('worklog-' + dayKey(Date.now()) + '.json', JSON.stringify(data, null, 2), 'application/json');
     if (ok) toast('Sauvegarde prête : enregistre-la dans ton dossier.');
   }
@@ -745,6 +764,8 @@
         S.entries.push(e); ids.add(e.id); sigs.add(sig(e)); added++;
       }
       (Array.isArray(d.favorites) ? d.favorites : []).forEach((id) => { if (typeof id === 'string') S.favs.add(id); });
+      // Noms de séances : on ajoute ceux qui manquent, sans écraser ceux déjà présents.
+      for (const [k, v] of Object.entries(cleanSessions(d.sessions))) if (!S.sessions[k]) S.sessions[k] = v;
       await saveUser();
       toast(added + (added > 1 ? ' séries ajoutées' : ' série ajoutée') + (dupes ? ', ' + dupes + ' déjà présente' + (dupes > 1 ? 's' : '') : '') + (invalid ? ', ' + invalid + ' ligne' + (invalid > 1 ? 's' : '') + ' invalide' + (invalid > 1 ? 's ignorées' : ' ignorée') : ''), { ms: 4500 });
       return true;
@@ -754,10 +775,21 @@
     }
   }
 
-  /* ---------- séances (calendrier) ---------- */
-  function viewSessions() {
+  /* ---------- séances : données d'une journée ---------- */
+  function daysIndex() {
+    const m = new Map();
+    for (const e of S.entries) { const k = dayKey(e.ts); if (!m.has(k)) m.set(k, []); m.get(k).push(e); }
+    return m;
+  }
+  function dayStats(list) {
+    return { nEx: new Set(list.map((e) => e.exerciseId)).size, nSets: list.length, load: list.reduce((n, e) => n + e.w * e.r, 0) };
+  }
+  const sessionTitle = (s) => s.name || GROUPS.get(s.main).label;
+
+  /* ---------- calendrier ---------- */
+  function viewCalendar() {
     const wrap = h('main', { class: 'page sessions' });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Séances' }), h('span')));
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Calendrier' }), h('span')));
     if (!S.cal) { const n = new Date(); S.cal = { y: n.getFullYear(), m: n.getMonth() }; }
     const box = h('div');
     wrap.append(box);
@@ -767,8 +799,7 @@
       const { y, m } = S.cal;
       const now = new Date();
       const isCurrent = y === now.getFullYear() && m === now.getMonth();
-      const byDay = new Map();
-      for (const e of S.entries) { const k = dayKey(e.ts); byDay.set(k, (byDay.get(k) || 0) + 1); }
+      const byDay = daysIndex();
       box.append(h('div', { class: 'monthbar' },
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Mois précédent', onclick: () => { S.cal = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }; render(); } }, icon('left')),
         h('h2', { text: fMonth.format(new Date(y, m, 1)) }),
@@ -783,41 +814,60 @@
         const k = y + '-' + pad2(m + 1) + '-' + pad2(d);
         const has = byDay.has(k);
         if (has) sessions++;
+        const named = has && S.sessions[k];
         const isToday = isCurrent && d === now.getDate();
         grid.append(h('button', {
-          type: 'button', class: 'day' + (has ? ' has' : '') + (isToday ? ' today' : ''), disabled: !has, text: String(d),
-          'aria-label': has ? 'Séance du ' + d + ' ' + fMonth.format(new Date(y, m, 1)) : null,
+          type: 'button', class: 'day' + (has ? ' has' : '') + (named ? ' named' : '') + (isToday ? ' today' : ''), disabled: !has, text: String(d),
+          style: named ? { '--c': GROUPS.get(named.main).color } : null,
+          'aria-label': has ? 'Séance du ' + d + ' ' + fMonth.format(new Date(y, m, 1)) + (named ? ' : ' + sessionTitle(named) : '') : null,
           onclick: has ? () => go('session', k) : null,
         }));
       }
       box.append(grid);
-      box.append(h('p', { class: 'cal-note', text: sessions ? sessions + (sessions > 1 ? ' jours d’entraînement ce mois-ci. Touche un carré pour revoir la séance.' : ' jour d’entraînement ce mois-ci. Touche le carré pour revoir la séance.') : 'Aucune séance ce mois-ci.' }));
+      box.append(h('p', { class: 'cal-note', text: sessions ? plural(sessions, 'jour', 'jours') + ' d’entraînement ce mois-ci. Touche un carré pour revoir la séance et lui donner un nom.' : 'Aucune séance ce mois-ci.' }));
     }
     render();
     return wrap;
   }
 
+  /* ---------- une journée d'entraînement ---------- */
   function viewSession(key) {
     const wrap = h('main', { class: 'page session' });
-    const [yy, mm, dd] = key.split('-').map(Number);
-    const date = new Date(yy, mm - 1, dd);
-    wrap.append(h('header', { class: 'bar' },
-      h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Retour au calendrier', onclick: () => go('sessions') }, icon('left')),
-      h('h1', { class: 'grow', text: cap(fDayLong.format(date)) }),
-      closeBtn()));
+    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: dayLabel(keyDate(key)) }), closeBtn()));
     const entries = S.entries.filter((e) => dayKey(e.ts) === key).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
+    if (!entries.length) {
+      wrap.append(h('p', { class: 'empty-note', text: 'Aucune série enregistrée ce jour-là.' }));
+      return wrap;
+    }
+    const st = dayStats(entries);
+    const nameBox = h('div', { class: 'sess-name' });
+    function renderName() {
+      nameBox.textContent = '';
+      const s = S.sessions[key];
+      if (!s) {
+        nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: edit }, icon('tag'), 'Nommer la séance'));
+        return;
+      }
+      nameBox.append(h('div', { class: 'card named', style: { '--c': GROUPS.get(s.main).color } },
+        h('div', { class: 'row' }, h('strong', { class: 'nm', text: sessionTitle(s) }),
+          h('button', { type: 'button', class: 'textbtn', text: 'Modifier', onclick: edit })),
+        h('div', { class: 'tags' }, tag(s.main, true), s.sec.map((id) => tag(id)))));
+    }
+    function edit() { sessionDialog(key, entries, renderName); }
+    renderName();
+    wrap.append(nameBox);
+    wrap.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + ' · ' + fmtNum(Math.round(st.load)) + ' kg au total' }));
+
     const blocks = [];
     for (const e of entries) {
       const last = blocks[blocks.length - 1];
       if (last && last.exerciseId === e.exerciseId) last.sets.push(e); else blocks.push({ exerciseId: e.exerciseId, name: e.name, sets: [e] });
     }
-    const nEx = new Set(entries.map((e) => e.exerciseId)).size;
-    wrap.append(h('p', { class: 'sum', text: nEx + (nEx > 1 ? ' exercices' : ' exercice') + ' · ' + entries.length + (entries.length > 1 ? ' séries' : ' série') }));
     const tl = h('div', { class: 'timeline' });
     for (const b of blocks) {
       const ex = getEx(b.exerciseId, b.name);
       tl.append(h('article', { class: 'tl' },
-        h('div', { class: 'head' }, h('img', { src: ex.gif, alt: '', loading: 'lazy' }),
+        h('button', { type: 'button', class: 'head', onclick: () => go('exercise', ex.id) }, photo(ex, 0, { class: 'thumb', loading: 'lazy' }),
           h('div', {}, h('div', { class: 't', text: fTime.format(b.sets[0].ts) }), h('div', { class: 'nm', text: dn(ex) }))),
         b.sets.map((e) => h('div', { class: 'line-set' }, h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), h('span', { class: 'tot', text: fmtNum(e.w * e.r) })))));
     }
@@ -825,19 +875,127 @@
     return wrap;
   }
 
+  /* Fenêtre « Nommer la séance » : nom libre, groupe principal, groupes secondaires. */
+  function sessionDialog(key, entries, onDone) {
+    const cur = S.sessions[key];
+    // Proposition : le groupe le plus travaillé ce jour-là.
+    const counts = new Map();
+    for (const e of entries) { const ex = S.byId.get(e.exerciseId); if (ex) counts.set(ex.leaf, (counts.get(ex.leaf) || 0) + 1); }
+    const guess = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+    let main = cur ? cur.main : (guess ? guess[0] : '');
+    const sec = new Set(cur ? cur.sec : []);
+
+    const nameIn = h('input', { class: 'field left', type: 'text', id: 'sess-nm', maxlength: '60', placeholder: 'Ex. Push, Haut du corps, Jambes lourdes', autocomplete: 'off', enterkeyhint: 'done' });
+    nameIn.value = cur ? cur.name : '';
+    const sel = h('select', { class: 'field left', id: 'sess-main' },
+      h('option', { value: '', text: 'Choisir un groupe' }),
+      GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
+    sel.value = main;
+    const chipBox = h('div', { class: 'chips wrap', role: 'group', 'aria-label': 'Groupes secondaires' });
+    const msg = h('p', { class: 'form-msg', role: 'alert' });
+    function renderChips() {
+      chipBox.textContent = '';
+      sec.delete(main);
+      for (const g of GROUP_LIST) {
+        if (g.id === main) continue;
+        const b = h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(sec.has(g.id)), text: g.label });
+        b.addEventListener('click', () => { if (sec.has(g.id)) sec.delete(g.id); else sec.add(g.id); b.setAttribute('aria-pressed', String(sec.has(g.id))); });
+        chipBox.append(b);
+      }
+    }
+    sel.addEventListener('change', () => { main = sel.value; msg.textContent = ''; renderChips(); });
+    renderChips();
+
+    let close = null;
+    async function save() {
+      if (!GROUPS.has(main)) { msg.textContent = 'Choisis le groupe musculaire principal.'; sel.focus(); return; }
+      S.sessions[key] = { name: nameIn.value.trim().slice(0, 60), main, sec: [...sec] };
+      await saveUser();
+      close(); onDone(); toast('Séance enregistrée');
+    }
+    async function clear() {
+      delete S.sessions[key];
+      await saveUser();
+      close(); onDone(); toast('Nom de la séance retiré');
+    }
+    const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+      h('h2', { id: 'dlg-t', text: cur ? 'Modifier la séance' : 'Nommer la séance' }),
+      h('label', { class: 'lbl', for: 'sess-nm', text: 'Nom de la séance' }), nameIn,
+      h('label', { class: 'lbl', for: 'sess-main', text: 'Groupe musculaire principal' }), sel,
+      h('div', { class: 'lbl', text: 'Groupes secondaires' }), chipBox,
+      msg,
+      h('div', { class: 'acts' },
+        h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => close() }),
+        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: save })),
+      cur ? h('button', { type: 'button', class: 'textbtn danger center', text: 'Retirer le nom de cette séance', onclick: clear }) : null);
+    close = openModal(box);
+  }
+
+  /* ---------- page Séances : les séances nommées, par groupe musculaire ---------- */
+  function viewSeances(arg, ui) {
+    let filter = GROUPS.has(ui.filter) ? ui.filter : 'all';
+    S.getUI = () => ({ filter });
+    const wrap = h('main', { class: 'page seances' });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Séances' }), h('span')));
+    const byDay = daysIndex();
+    const all = Object.keys(S.sessions).filter((k) => byDay.has(k)).sort().reverse()
+      .map((k) => ({ key: k, s: S.sessions[k], st: dayStats(byDay.get(k)) }));
+    if (!all.length) {
+      wrap.append(h('div', { class: 'card empty-card' },
+        h('strong', { text: 'Aucune séance nommée' }),
+        h('p', { text: 'Ouvre un jour d’entraînement dans le calendrier, puis touche « Nommer la séance ». Elle apparaîtra ici, classée par groupe musculaire.' }),
+        h('button', { type: 'button', class: 'btn primary', text: 'Ouvrir le calendrier', onclick: () => go('calendar') })));
+      return wrap;
+    }
+    const works = (x, top) => topOf(x.s.main) === top || x.s.sec.some((id) => topOf(id) === top);
+    const tops = TREE.filter((t) => all.some((x) => works(x, t.id)));
+    if (filter !== 'all' && !tops.some((t) => t.id === filter)) filter = 'all';
+    const body = h('div');
+    wrap.append(body);
+
+    function card(x) {
+      const g = GROUPS.get(x.s.main);
+      return h('button', { type: 'button', class: 'scard', style: { '--c': g.color }, onclick: () => go('session', x.key) },
+        h('div', { class: 'top' }, h('span', { class: 'date', text: dayLabel(keyDate(x.key)) }), h('span', { class: 'ago', text: ago(x.key) })),
+        h('div', { class: 'nm', text: sessionTitle(x.s) }),
+        h('div', { class: 'tags' }, tag(x.s.main, true), x.s.sec.map((id) => tag(id))),
+        h('div', { class: 'figs' },
+          h('div', {}, h('b', { text: String(x.st.nEx) }), h('span', { text: x.st.nEx > 1 ? 'exercices' : 'exercice' })),
+          h('div', {}, h('b', { text: String(x.st.nSets) }), h('span', { text: x.st.nSets > 1 ? 'séries' : 'série' })),
+          h('div', {}, h('b', { text: fmtNum(Math.round(x.st.load)) }), h('span', { text: 'kg soulevés' }))));
+    }
+    function render() {
+      body.textContent = '';
+      const chip = (id, label, n) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); window.scrollTo(0, 0); } }, label, h('span', { class: 'n', text: String(n) }));
+      body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'Filtrer par groupe musculaire' },
+        chip('all', 'Toutes', all.length), tops.map((t) => chip(t.id, t.label, all.filter((x) => works(x, t.id)).length))));
+      const list = filter === 'all' ? all : all.filter((x) => works(x, filter));
+      if (filter === 'all') {
+        body.append(h('section', { class: 'sec tight' }, h('h2', { text: 'Dernière fois par groupe' }),
+          h('div', { class: 'card lastlist' }, tops.map((t) => {
+            const last = all.find((x) => works(x, t.id));
+            return h('button', { type: 'button', class: 'lastrow', onclick: () => { filter = t.id; render(); window.scrollTo(0, 0); } },
+              h('span', { class: 'dot', style: { '--c': t.color } }), h('span', { class: 'g', text: t.label }),
+              h('span', { class: 'w', text: ago(last.key) + ' · ' + fDayShort.format(keyDate(last.key)) }));
+          }))));
+      } else {
+        body.append(h('p', { class: 'sum pad', text: plural(list.length, 'séance', 'séances') + ' · dernière ' + ago(list[0].key) }));
+      }
+      body.append(h('section', { class: 'sec tight' }, filter === 'all' ? h('h2', { text: 'Toutes les séances' }) : null, h('div', { class: 'scards' }, list.map(card))));
+    }
+    render();
+    return wrap;
+  }
+
   /* ---------- démarrage ---------- */
   async function boot() {
-    try { const r = await fetch('names-fr.json', { cache: 'no-cache' }); if (r.ok) { const j = await r.json(); if (j && typeof j === 'object') S.frNames = j; } } catch (e) { /* noms anglais */ }
-    await loadUser();
-    try {
-      S.exercises = (await exAll()) || [];
-      S.sync.done = !!(await kvGet('syncDone')) && S.exercises.length > 0;
-      S.sync.count = S.exercises.length;
-    } catch (e) { S.exercises = []; }
-    indexExercises();
+    try { history.scrollRestoration = 'manual'; } catch (e) { /* ignoré */ }
+    await Promise.all([loadUser(), loadExercises()]);
+    dropOldCache();
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignoré */ }
-    go('home', null, { push: false });
-    if (!S.sync.done) syncExercises(false);
+    S.stack = [{ view: 'home', arg: null, ui: null }];
+    history.replaceState({ i: 0, view: 'home', arg: null }, '');
+    render(S.stack[0]);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   boot();
