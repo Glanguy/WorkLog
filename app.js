@@ -1,7 +1,9 @@
 'use strict';
 (() => {
   /* =====================================================================
-     WorkLog V3 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     WorkLog V4 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     V4 : séances types en dossiers, séance du jour (ordre, duplication), notes,
+     calcul du poids, modification/suppression des séries, cardio, fichier d'activité.
      Exercices : liste fusionnée intégrée à l'app (data-v3.json), noms en anglais.
        - ExerciseDB (données MIT, images et animations © Gym visual, 180 px) en priorité ;
        - free-exercise-db (domaine public, photos) pour les exercices absents d'ExerciseDB.
@@ -18,6 +20,7 @@
   /* ---------- utilitaires ---------- */
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
   const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const skey = (s) => fold(s).replace(/[^a-z0-9]+/g, ' ').trim();
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
   const fmtNum = (n) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n);
   const fDateTime = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -81,6 +84,11 @@
     import: '<path d="M12 4v11M8 11l4 4 4-4M5 13v6h14v-6"/>',
     tag: '<path d="M4 5v6.2l8.4 8.4 6.2-6.2L10.2 5zM8 9h.01"/>',
     zoom: '<path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 5.5H7A1.5 1.5 0 0 0 5.5 7v8.5"/>',
+    grip: '<path d="M6 9h12M6 15h12"/>',
+    play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+    folder: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5V17A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17z"/>',
   };
   function icon(name, cls) {
     const el = sv('svg', { viewBox: '0 0 24 24', class: 'ic ' + (cls || ''), 'aria-hidden': 'true' });
@@ -147,6 +155,12 @@
     entries: [],
     favs: new Set(),
     sessions: {},        // 'AAAA-MM-JJ' -> { name, main, sec: [] }
+    days: {},            // 'AAAA-MM-JJ' -> { order: [id], plan: { id: [{ w, r }] }, note }
+    notes: {},           // id d'exercice -> note libre
+    plans: [],           // séances types : { id, name, folder, main, sec, items: [{ ex, sets: [{ w, r }] }], created, last }
+    folders: [],         // noms des dossiers de séances types
+    guard: null,         // saisie non validée sur la page en cours : { dirty(), save() }
+    draft: null,         // saisie à remettre après « Annuler » : { id, rows }
     cal: null,
     alias: {},
     stack: [],
@@ -262,8 +276,19 @@
   const kvGet = (k) => tx('kv', 'readonly', (st) => st.get(k));
   const kvSet = (k, v) => tx('kv', 'readwrite', (st) => { st.put(v, k); });
 
-  const validEntry = (e) => e && typeof e.id === 'string' && typeof e.exerciseId === 'string'
-    && Number.isFinite(e.w) && e.w > 0 && Number.isFinite(e.r) && e.r > 0 && Number.isFinite(e.ts);
+  /* Une série de musculation : { w, r }. Une série de cardio : { c: 1, dur (s), dist (km), incl, lvl, rounds, kcal }. */
+  const fin = (v) => typeof v === 'number' && Number.isFinite(v);
+  const validEntry = (e) => e && typeof e.id === 'string' && typeof e.exerciseId === 'string' && fin(e.ts)
+    && (e.c === 1 ? fin(e.dur) && e.dur > 0 : fin(e.w) && e.w > 0 && fin(e.r) && e.r > 0);
+  const CARDIO_KEYS = ['dist', 'incl', 'lvl', 'rounds', 'kcal'];
+  function normEntry(raw) {
+    const e = { id: raw.id, exerciseId: raw.exerciseId, name: String(raw.name || raw.exerciseId), ts: raw.ts, created: fin(raw.created) ? raw.created : raw.ts };
+    if (raw.c === 1) {
+      e.c = 1; e.dur = raw.dur;
+      for (const k of CARDIO_KEYS) if (fin(raw[k]) && raw[k] >= 0) e[k] = raw[k];
+    } else { e.w = raw.w; e.r = raw.r; }
+    return e;
+  }
   function cleanSession(s) {
     if (!s || typeof s !== 'object' || !GROUPS.has(s.main)) return null;
     const sec = [...new Set((Array.isArray(s.sec) ? s.sec : []).filter((x) => GROUPS.has(x) && x !== s.main))];
@@ -279,9 +304,49 @@
     }
     return out;
   }
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  function numOrBlank(v) {
+    if (fin(v)) return v > 0 ? v : '';
+    if (typeof v === 'string' && v.trim()) { const n = calcEval(v); return Number.isFinite(n) && n > 0 ? n : ''; }
+    return '';
+  }
+  const cleanSets = (a) => (Array.isArray(a) ? a.slice(0, 30).map((x) => ({ w: numOrBlank(x && x.w), r: numOrBlank(x && x.r) })) : []);
+  function cleanPlans(arr) {
+    const out = []; const seen = new Set();
+    for (const p of Array.isArray(arr) ? arr : []) {
+      if (!p || typeof p.id !== 'string' || seen.has(p.id)) continue;
+      seen.add(p.id);
+      const ids = new Set();
+      const items = (Array.isArray(p.items) ? p.items : []).filter((it) => it && typeof it.ex === 'string' && !ids.has(it.ex) && ids.add(it.ex))
+        .map((it) => ({ ex: it.ex, sets: cleanSets(it.sets) }));
+      out.push({ id: p.id, name: str(p.name, 60), folder: str(p.folder, 40).trim(), main: GROUPS.has(p.main) ? p.main : '',
+        sec: (Array.isArray(p.sec) ? p.sec : []).filter((x) => GROUPS.has(x) && x !== p.main), items,
+        created: fin(p.created) ? p.created : Date.now(), last: /^\d{4}-\d{2}-\d{2}$/.test(p.last || '') ? p.last : null });
+    }
+    return out;
+  }
+  function cleanDays(obj) {
+    const out = {};
+    for (const [k, d] of Object.entries(obj && typeof obj === 'object' ? obj : {})) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !d || typeof d !== 'object') continue;
+      const order = [...new Set((Array.isArray(d.order) ? d.order : []).filter((x) => typeof x === 'string'))];
+      const plan = {};
+      for (const [id, sets] of Object.entries(d.plan && typeof d.plan === 'object' ? d.plan : {})) { const c = cleanSets(sets); if (c.length) plan[id] = c; }
+      const note = str(d.note, 4000);
+      if (order.length || note) out[k] = { order, plan, note };
+    }
+    return out;
+  }
+  function cleanNotes(obj) {
+    const out = {};
+    for (const [k, v] of Object.entries(obj && typeof obj === 'object' ? obj : {})) if (typeof v === 'string' && v.trim()) out[k] = v.slice(0, 4000);
+    return out;
+  }
+  const cleanFolders = (a) => [...new Set((Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 40)))];
 
   async function saveUser() {
-    const payload = { v: DATA_V, savedAt: Date.now(), entries: S.entries, favs: [...S.favs], sessions: S.sessions };
+    const payload = { v: DATA_V, savedAt: Date.now(), entries: S.entries, favs: [...S.favs], sessions: S.sessions,
+      days: S.days, notes: S.notes, plans: S.plans, folders: S.folders };
     try { localStorage.setItem(BACKUP_KEY, JSON.stringify(payload)); } catch (e) { /* ignoré */ }
     try { await kvSet('user', payload); } catch (e) { console.warn('IndexedDB indisponible', e); }
   }
@@ -296,9 +361,13 @@
     const cands = [a, b].filter(isV2);
     if (!cands.length) { if (a || b) await saveUser(); return; }
     const p = cands.sort((x, y) => (y.savedAt || 0) - (x.savedAt || 0) || y.entries.length - x.entries.length)[0];
-    S.entries = p.entries.filter(validEntry);
+    S.entries = p.entries.filter(validEntry).map(normEntry);
     S.favs = new Set((p.favs || []).filter((x) => typeof x === 'string'));
     S.sessions = cleanSessions(p.sessions);
+    S.days = cleanDays(p.days);
+    S.notes = cleanNotes(p.notes);
+    S.plans = cleanPlans(p.plans);
+    S.folders = cleanFolders(p.folders);
   }
   async function dropOldCache() {
     try {
@@ -319,7 +388,7 @@
       // [id, nom, source (0 ExerciseDB, 1 free-exercise-db), étirement (0/1), catégorie, muscle principal, muscles secondaires, média]
       S.exercises = base.items.filter((it) => Array.isArray(it) && typeof it[0] === 'string' && it[1] && GROUPS.has(it[4])).map((it) => ({
         id: it[0], name: String(it[1]), src: it[2] === 0 ? 0 : 1, st: it[3] === 1, leaf: it[4], top: topOf(it[4]),
-        p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null,
+        p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null, key: skey(it[1]),
       }));
       S.loadError = false;
     } catch (e) {
@@ -337,21 +406,275 @@
     let changed = false;
     for (const e of S.entries) { const to = al[e.exerciseId]; if (to && S.byId.has(to)) { e.exerciseId = to; e.name = S.byId.get(to).name; changed = true; } }
     for (const id of [...S.favs]) { const to = al[id]; if (to && S.byId.has(to)) { S.favs.delete(id); S.favs.add(to); changed = true; } }
+    const mv = (id) => { const to = al[id]; if (to && S.byId.has(to)) { changed = true; return to; } return id; };
+    for (const p of S.plans) for (const it of p.items) it.ex = mv(it.ex);
+    for (const d of Object.values(S.days)) {
+      d.order = [...new Set(d.order.map(mv))];
+      for (const id of Object.keys(d.plan)) { const to = mv(id); if (to !== id) { d.plan[to] = d.plan[id]; delete d.plan[id]; } }
+    }
+    for (const id of Object.keys(S.notes)) { const to = mv(id); if (to !== id && !S.notes[to]) { S.notes[to] = S.notes[id]; delete S.notes[id]; } }
     if (changed) await saveUser();
   }
 
   /* ---------- petits composants ---------- */
-  let toastTimer;
+  let toastTimer; let toastSticky = false;
+  /* opts.sticky : le message reste affiché même si on change de page (bouton « Annuler » après « Valider »). */
   function toast(msg, opts) {
     const root = document.getElementById('toast');
     root.textContent = '';
     const t = h('div', { class: 't' }, h('span', { text: msg }));
     if (opts && opts.action) {
-      t.append(h('button', { type: 'button', text: opts.label || 'Annuler', onclick: () => { root.textContent = ''; opts.action(); } }));
+      t.append(h('button', { type: 'button', text: opts.label || 'Annuler', onclick: () => { root.textContent = ''; toastSticky = false; opts.action(); } }));
     }
     root.append(t);
+    toastSticky = !!(opts && opts.sticky);
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { root.textContent = ''; }, (opts && opts.ms) || 3200);
+    toastTimer = setTimeout(() => { root.textContent = ''; toastSticky = false; }, (opts && opts.ms) || 3200);
+  }
+
+  /* ----- calcul dans le champ du poids : 20+2,5+2,5 → 25 ----- */
+  const fmtIn = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
+  const OPS = /[+\-−×÷*/()]/;
+  function calcEval(src) {
+    const t = String(src).replace(/\s+/g, '').replace(/,/g, '.').replace(/[−–]/g, '-').replace(/×/g, '*').replace(/÷/g, '/');
+    if (!t) return NaN;
+    let i = 0;
+    const num = () => { const m = /^(\d+\.?\d*|\.\d+)/.exec(t.slice(i)); if (!m) throw new Error('n'); i += m[0].length; return parseFloat(m[0]); };
+    const factor = () => {
+      if (t[i] === '-') { i++; return -factor(); }
+      if (t[i] === '+') { i++; return factor(); }
+      if (t[i] === '(') { i++; const v = expr(); if (t[i] === ')') i++; return v; }
+      return num();
+    };
+    const term = () => { let v = factor(); while (t[i] === '*' || t[i] === '/') { const op = t[i++]; const r = factor(); v = op === '*' ? v * r : v / r; } return v; };
+    const expr = () => { let v = term(); while (t[i] === '+' || t[i] === '-') { const op = t[i++]; const r = term(); v = op === '+' ? v + r : v - r; } return v; };
+    try { const v = expr(); return i === t.length && Number.isFinite(v) ? Math.round(v * 100) / 100 : NaN; } catch (e) { return NaN; }
+  }
+  /* Remplace le calcul par son résultat (touche « = » ou en quittant le champ). */
+  function finishCalc(inp) {
+    const v = inp.value.trim();
+    if (!OPS.test(v.replace(/^[-−]/, ''))) return;
+    const n = calcEval(v);
+    if (Number.isFinite(n)) { inp.value = fmtIn(n); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+  }
+  let calcBar = null; let calcTarget = null;
+  function hideCalc() { if (calcBar) calcBar.hidden = true; calcTarget = null; }
+  function ensureCalcBar() {
+    if (calcBar) return calcBar;
+    calcBar = h('div', { class: 'calcbar', hidden: true, role: 'toolbar', 'aria-label': 'Calcul du poids' },
+      ['+', '−', '×', '÷', '(', ')'].map((k) => h('button', { type: 'button', class: 'ck', 'data-k': k, text: k })),
+      h('button', { type: 'button', class: 'ck eq', 'data-k': '=', text: '=' }));
+    const press = (b) => {
+      const inp = calcTarget;
+      if (!b || !inp) return;
+      const k = b.dataset.k;
+      if (k === '=') finishCalc(inp);
+      else {
+        const a = inp.selectionStart == null ? inp.value.length : inp.selectionStart;
+        const z = inp.selectionEnd == null ? a : inp.selectionEnd;
+        inp.setRangeText(k, a, z, 'end');
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      inp.focus();
+    };
+    // Appui traité au contact du doigt : le champ garde le focus et le clavier reste ouvert.
+    calcBar.addEventListener('pointerdown', (e) => { e.preventDefault(); press(e.target.closest('button')); });
+    calcBar.addEventListener('touchstart', (e) => { e.preventDefault(); }, { passive: false });
+    calcBar.addEventListener('click', (e) => { if (e.detail === 0) press(e.target.closest('button')); });
+    document.body.append(calcBar);
+    const place = () => {
+      if (calcBar.hidden) return;
+      const vv = window.visualViewport;
+      const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      calcBar.style.top = Math.round(bottom - calcBar.offsetHeight) + 'px';
+    };
+    if (window.visualViewport) { visualViewport.addEventListener('resize', place); visualViewport.addEventListener('scroll', place); }
+    window.addEventListener('scroll', place, { passive: true });
+    calcBar.place = place;
+    return calcBar;
+  }
+  function calcInput(props) {
+    const inp = h('input', Object.assign({ class: 'field calc', type: 'text', inputmode: 'decimal', autocomplete: 'off', enterkeyhint: 'done' }, props));
+    inp.addEventListener('focus', () => { const b = ensureCalcBar(); calcTarget = inp; b.hidden = false; b.place(); setTimeout(b.place, 250); setTimeout(b.place, 600); });
+    inp.addEventListener('blur', () => {
+      finishCalc(inp);
+      setTimeout(() => { if (calcTarget === inp && document.activeElement !== inp) hideCalc(); }, 0);
+    });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === '=') { e.preventDefault(); finishCalc(inp); } });
+    return inp;
+  }
+
+  /* ----- cardio : les données suivies dépendent de l'activité ----- */
+  function cardioKind(ex) {
+    if (!ex || ex.leaf !== 'cardio') return null;
+    const n = ex.key || skey(ex.name);
+    if (/jump rope|rope jump/.test(n)) return 'rope';
+    if (/elliptical|cross trainer|stairmaster|step ?mill|stepper|ski step/.test(n)) return 'ellip';
+    if (/rowing/.test(n)) return 'row';
+    if (/bicycl|bike|cycl/.test(n)) return 'bike';
+    if (/run|jog|treadmill|walk|sprint/.test(n)) return 'run';
+    return 'other';
+  }
+  const CARDIO = {
+    run: { fields: ['dist', 'incl', 'kcal'], metrics: ['dur', 'speed'] },
+    bike: { fields: ['dist', 'lvl', 'kcal'], metrics: ['dur', 'speed'] },
+    row: { fields: ['dist', 'kcal'], metrics: ['dur', 'speed'] },
+    ellip: { fields: ['lvl', 'kcal'], metrics: ['dur', 'lvl'] },
+    rope: { fields: ['rounds', 'kcal'], metrics: ['dur', 'rounds'] },
+    other: { fields: ['rounds', 'kcal'], metrics: ['dur', 'rounds'] },
+  };
+  const CFIELD = {
+    dist: { label: 'Distance', ph: 'km' }, incl: { label: 'Pente', ph: '%' }, lvl: { label: 'Niveau', ph: 'niv.' },
+    rounds: { label: 'Tours', ph: 'tours' }, kcal: { label: 'Calories', ph: 'kcal' },
+  };
+  function fmtDur(sec) {
+    const m = Math.floor(sec / 60); const s2 = Math.round(sec % 60);
+    if (m >= 60) return Math.floor(m / 60) + ' h ' + pad2(m % 60);
+    return s2 ? m + ' min ' + pad2(s2) : m + ' min';
+  }
+  const speedOf = (e) => (e.c === 1 && e.dist > 0 && e.dur > 0 ? e.dist / (e.dur / 3600) : null);
+  function entryText(e) {
+    if (e.c !== 1) return fmtNum(e.w) + ' kg × ' + fmtNum(e.r);
+    const kind = cardioKind(S.byId.get(e.exerciseId)) || 'other';
+    const out = [fmtDur(e.dur)];
+    if (e.dist > 0) out.push(fmtNum(e.dist) + ' km');
+    const sp = speedOf(e);
+    if (sp && kind === 'row') { const p = e.dur / (e.dist * 2); out.push(Math.floor(p / 60) + ':' + pad2(Math.round(p % 60)) + ' /500 m'); } else if (sp) out.push(fmtNum(Math.round(sp * 10) / 10) + ' km/h');
+    if (fin(e.incl)) out.push('pente ' + fmtNum(e.incl) + ' %');
+    if (fin(e.lvl)) out.push('niveau ' + fmtNum(e.lvl));
+    if (fin(e.rounds)) out.push(plural(e.rounds, 'tour', 'tours'));
+    if (fin(e.kcal)) out.push(fmtNum(e.kcal) + ' kcal');
+    return out.join(' · ');
+  }
+  const parseNum = (v) => { const t = String(v == null ? '' : v).trim().replace(',', '.'); return t ? Number(t) : NaN; };
+  /* Champs d'une série de cardio, liés à un objet de saisie (chaînes). */
+  function cardioFields(kind, row, onInput) {
+    const mk = (key, ph, label, mode) => {
+      const inp = h('input', { class: 'field', type: 'text', inputmode: mode || 'decimal', placeholder: ph, 'aria-label': label, autocomplete: 'off' });
+      inp.value = row[key] || '';
+      inp.addEventListener('input', () => { row[key] = inp.value; inp.classList.remove('invalid'); onInput(); });
+      (row.nodes = row.nodes || {})[key] = inp;
+      return inp;
+    };
+    return h('div', { class: 'cgrid' },
+      h('label', { class: 'cf dur' }, h('span', { text: 'Durée' }),
+        h('div', { class: 'durin' }, mk('min', 'min', 'Durée : minutes', 'numeric'), h('span', { text: ':' }), mk('sec', 's', 'Durée : secondes', 'numeric'))),
+      CARDIO[kind].fields.map((k) => h('label', { class: 'cf' }, h('span', { text: CFIELD[k].label }), mk(k, CFIELD[k].ph, CFIELD[k].label))));
+  }
+  function readCardio(kind, row) {
+    const min = row.min && String(row.min).trim() ? parseNum(row.min) : 0;
+    const sec = row.sec && String(row.sec).trim() ? parseNum(row.sec) : 0;
+    const bad = [];
+    if (!(min >= 0) || !(sec >= 0) || !(min * 60 + sec > 0)) bad.push('min', 'sec');
+    const out = { c: 1, dur: Math.round(min * 60 + sec) };
+    for (const k of CARDIO[kind].fields) {
+      if (!row[k] || !String(row[k]).trim()) continue;
+      const n = parseNum(row[k]);
+      if (n >= 0) out[k] = n; else bad.push(k);
+    }
+    return { ok: !bad.length, vals: out, bad };
+  }
+  const cardioRowOf = (e) => {
+    const r = { min: String(Math.floor(e.dur / 60)), sec: e.dur % 60 ? String(Math.round(e.dur % 60)) : '' };
+    for (const k of CARDIO_KEYS) if (fin(e[k])) r[k] = fmtIn(e[k]);
+    return r;
+  };
+
+  /* ----- glisser de droite à gauche pour supprimer ----- */
+  function swipeable(content, onDelete, label) {
+    const del = h('button', { type: 'button', class: 'swipe-del', 'aria-label': label || 'Supprimer' }, icon('trash'));
+    const wrap = h('div', { class: 'swipe' }, del, content);
+    content.classList.add('swipe-c');
+    let sx = 0; let sy = 0; let dx = 0; let mode = null; let open = false; let pid = null; let swiped = false;
+    const setX = (x, anim) => { content.style.transition = anim ? 'transform .18s ease' : 'none'; content.style.transform = x ? 'translateX(' + x + 'px)' : ''; };
+    const shut = () => { open = false; wrap.classList.remove('open'); setX(0, true); };
+    content.addEventListener('pointerdown', (e) => {
+      if (e.button > 0 || e.target.closest('.handle, input, textarea, select')) return;
+      sx = e.clientX; sy = e.clientY; dx = 0; mode = null; pid = e.pointerId;
+    });
+    content.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== pid) return;
+      const mx = e.clientX - sx; const my = e.clientY - sy;
+      if (!mode) {
+        if (Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my) * 1.2) { mode = 'h'; try { content.setPointerCapture(pid); } catch (er) { /* ignoré */ } } else if (Math.abs(my) > 8) mode = 'v';
+      }
+      if (mode === 'h') { dx = Math.min(0, Math.max(-130, mx + (open ? -88 : 0))); setX(dx); }
+    });
+    const end = (e) => {
+      if (e.pointerId !== pid) return;
+      pid = null;
+      if (mode === 'h') {
+        swiped = true; setTimeout(() => { swiped = false; }, 350);
+        open = dx < -44; wrap.classList.toggle('open', open); setX(open ? -88 : 0, true);
+      }
+      mode = null;
+    };
+    content.addEventListener('pointerup', end);
+    content.addEventListener('pointercancel', end);
+    content.addEventListener('click', (e) => {
+      if (swiped) { e.stopPropagation(); e.preventDefault(); return; }
+      if (open) { e.stopPropagation(); e.preventDefault(); shut(); }
+    }, true);
+    del.addEventListener('click', () => { shut(); onDelete(); });
+    return wrap;
+  }
+  /* ----- déplacer un élément de liste avec la poignée ----- */
+  function sortable(list, onDrop) {
+    list.addEventListener('pointerdown', (e) => {
+      const hd = e.target.closest('.handle');
+      if (!hd) return;
+      const item = hd.closest('.sitem');
+      if (!item || item.parentNode !== list) return;
+      e.preventDefault();
+      const pid = e.pointerId;
+      try { hd.setPointerCapture(pid); } catch (er) { /* ignoré */ }
+      const startY = e.clientY; const base = item.offsetTop;
+      item.classList.add('dragging');
+      const move = (ev) => {
+        if (ev.pointerId !== pid) return;
+        let dy = ev.clientY - startY - (item.offsetTop - base);
+        const prev = item.previousElementSibling; const next = item.nextElementSibling;
+        if (prev && dy < -prev.offsetHeight / 2) list.insertBefore(item, prev);
+        else if (next && dy > next.offsetHeight / 2) list.insertBefore(next, item);
+        dy = ev.clientY - startY - (item.offsetTop - base);
+        item.style.transform = 'translateY(' + dy + 'px)';
+      };
+      const up = (ev) => {
+        if (ev.pointerId !== pid) return;
+        hd.removeEventListener('pointermove', move); hd.removeEventListener('pointerup', up); hd.removeEventListener('pointercancel', up);
+        item.style.transform = ''; item.classList.remove('dragging');
+        onDrop([...list.children].map((c) => c.dataset.id));
+      };
+      hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
+    });
+  }
+  /* ----- note libre, enregistrée au fil de la frappe ----- */
+  function noteBox(get, set, placeholder, label) {
+    const ta = h('textarea', { class: 'note', rows: '1', placeholder, 'aria-label': label });
+    ta.value = get() || '';
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    let t = null; let dirty = false;
+    const save = () => { clearTimeout(t); if (!dirty) return; dirty = false; set(ta.value.replace(/\s+$/, '')); saveUser(); };
+    ta.addEventListener('input', () => { fit(); dirty = true; clearTimeout(t); t = setTimeout(save, 500); });
+    ta.addEventListener('blur', save);
+    S.cleanups.push(save);
+    requestAnimationFrame(fit);
+    return h('div', { class: 'notebox' }, ta);
+  }
+  function promptDialog(title, label, value) {
+    return new Promise((resolve) => {
+      let close = null;
+      const inp = h('input', { class: 'field left', type: 'text', maxlength: '40', id: 'pr-in', autocomplete: 'off', enterkeyhint: 'done' });
+      inp.value = value || '';
+      const ok = () => { const v = inp.value.trim(); close(); resolve(v || null); };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+      const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+        h('h2', { id: 'dlg-t', text: title }), h('label', { class: 'lbl', for: 'pr-in', text: label }), inp,
+        h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => { close(); resolve(null); } }),
+          h('button', { type: 'button', class: 'btn primary', text: 'Valider', onclick: ok })));
+      close = openModal(box, () => resolve(null));
+      setTimeout(() => inp.focus(), 50);
+    });
   }
   let modalClose = null;
   function openModal(box, onDismiss) {
@@ -366,14 +689,14 @@
     modalClose = dismiss;
     return close;
   }
-  function confirmDialog({ title, text, yes, no }) {
+  function confirmDialog({ title, text, yes, no, safe }) {
     return new Promise((resolve) => {
       let close = null;
       const done = (v) => { close(); resolve(v); };
       const noBtn = h('button', { type: 'button', class: 'btn ghost', text: no || 'Non', onclick: () => done(false) });
       const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
         h('h2', { id: 'dlg-t', text: title }), text ? h('p', { text }) : null,
-        h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn danger', text: yes || 'Oui', onclick: () => done(true) })));
+        h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn ' + (safe ? 'primary' : 'danger'), text: yes || 'Oui', onclick: () => done(true) })));
       close = openModal(box, () => resolve(false));
       noBtn.focus();
     });
@@ -398,14 +721,17 @@
      La flèche retour et le balayage depuis le bord gauche utilisent l'historique du
      navigateur : on revient sur la page précédente telle qu'on l'avait laissée. */
   const app = () => document.getElementById('app');
+  const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan });
   function render(entry) {
     S.cleanups.forEach((fn) => fn()); S.cleanups = [];
     S.getUI = null;
+    S.guard = null;
+    hideCalc();
     if (modalClose) modalClose();
-    document.getElementById('toast').textContent = '';
+    if (!toastSticky) document.getElementById('toast').textContent = '';
     const root = app();
     root.textContent = '';
-    const fn = { home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances }[entry.view] || viewHome;
+    const fn = VIEWS()[entry.view] || viewHome;
     root.append(fn(entry.arg, entry.ui || {}));
     const y = (entry.ui && entry.ui.scroll) || 0;
     window.scrollTo(0, y);
@@ -415,22 +741,50 @@
     const top = S.stack[S.stack.length - 1];
     if (top) top.ui = Object.assign({}, S.getUI ? S.getUI() : {}, { scroll: window.scrollY });
   }
-  function go(view, arg) {
+  /* Saisie non validée : « Enregistrer », « Ne pas enregistrer » ou « Rester ». */
+  const guarded = () => !!(S.guard && S.guard.dirty());
+  function askLeave(proceed) {
+    const g = S.guard;
+    let close = null;
+    const stay = h('button', { type: 'button', class: 'btn ghost', text: 'Rester', onclick: () => close() });
+    const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+      h('h2', { id: 'dlg-t', text: 'Enregistrer ta saisie ?' }),
+      h('p', { text: 'Tu as rempli une série sans la valider.' }),
+      h('div', { class: 'acts col' },
+        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: async () => { close(); if (await g.save()) { S.guard = null; proceed(); } } }),
+        h('button', { type: 'button', class: 'btn ghost warn', text: 'Ne pas enregistrer', onclick: () => { close(); S.guard = null; proceed(); } }),
+        stay));
+    close = openModal(box);
+    stay.focus();
+  }
+  const leave = (fn) => { if (guarded()) askLeave(fn); else fn(); };
+  function goNow(view, arg) {
     snapshot();
     const entry = { view, arg: arg == null ? null : arg, ui: null };
     S.stack.push(entry);
     history.pushState({ i: S.stack.length - 1, view, arg: entry.arg }, '');
     render(entry);
   }
+  const go = (view, arg) => leave(() => goNow(view, arg));
   const prevView = () => (S.stack.length > 1 ? S.stack[S.stack.length - 2].view : null);
-  function goBack() { if (S.stack.length > 1) history.back(); else goHome(); }
-  function goHome() {
+  function homeNow() {
     const n = S.stack.length - 1;
     if (n > 0) history.go(-n); else render(S.stack[0]);
   }
+  const goBack = () => leave(() => { if (S.stack.length > 1) history.back(); else homeNow(); });
+  const goHome = () => leave(homeNow);
   window.addEventListener('popstate', (ev) => {
     const st = ev.state && typeof ev.state.i === 'number' ? ev.state : { i: 0, view: 'home', arg: null };
     const i = Math.max(0, st.i | 0);
+    const cur = S.stack.length - 1;
+    if (i < cur && guarded()) {
+      // Balayage depuis le bord gauche avec une saisie en cours : on reste et on demande.
+      const top = S.stack[cur];
+      S.stack = S.stack.slice(0, i + 1).concat([top]);
+      history.pushState({ i: i + 1, view: top.view, arg: top.arg }, '');
+      askLeave(() => history.back());
+      return;
+    }
     if (i < S.stack.length) {
       S.stack.length = i + 1;
     } else {
@@ -457,6 +811,7 @@
       item('Historique', () => go('history')),
       item('Calendrier', () => go('calendar')),
       item('Séances', () => go('seances')),
+      item('Créer une séance', createPlan),
     );
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -473,6 +828,18 @@
       h('div', { class: 'wordmark' }, h('img', { src: 'icon-192.png', alt: '' }), h('h1', { text: 'WorkLog' })),
       menuBtn, menu));
 
+    const tk = todayKey();
+    const tOrder = dayOrder(tk);
+    if (S.days[tk] && tOrder.length) {
+      const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
+      const k = tOrder.filter((id) => done.has(id)).length;
+      const s = S.sessions[tk];
+      wrap.append(h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('session', tk) },
+        h('div', {}, h('span', { class: 'sub', text: 'Séance du jour' }), h('strong', { text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
+          h('span', { class: 'prog', text: k + ' / ' + plural(tOrder.length, 'exercice fait', 'exercices faits') })),
+        h('span', { class: 'go' }, icon('right'))));
+    }
+
     const last = lastEntry();
     if (last) {
       const ex = getEx(last.exerciseId, last.name);
@@ -481,7 +848,8 @@
       wrap.append(h('button', { type: 'button', class: 'hero', onclick: () => go('exercise', ex.id) },
         ex.missing ? null : (ex.src === 0 ? visual(ex, { static: true }) : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) }))),
         h('h2', { text: dn(ex) }),
-        h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
+        latest.c === 1 ? h('p', { class: 'last' }, h('strong', { text: fmtDur(latest.dur) }), latest.dist > 0 ? ' · ' + fmtNum(latest.dist) + ' km' : '')
+          : h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
         h('p', { class: 'when', text: fDateTime.format(latest.ts) })));
     } else {
       wrap.append(h('button', { type: 'button', class: 'hero empty', onclick: () => go('library') },
@@ -521,15 +889,22 @@
     { k: '3m', label: '3 mois', days: 91.3 },
     { k: '6m', label: '6 mois', days: 182.6 },
   ];
-  function viewExercise(id, ui) {
+  function viewExercise(arg, ui) {
+    const id = typeof arg === 'string' ? arg : (arg && arg.id) || '';
+    const dayCtx = arg && typeof arg === 'object' && arg.day ? arg.day : null;
     const known = S.entries.find((e) => e.exerciseId === id);
     const ex = getEx(id, known && known.name);
+    const kind = cardioKind(ex);
+    const metrics = kind ? CARDIO[kind].metrics : ['load'];
     let range = RANGES.some((r) => r.k === ui.range) ? ui.range : '2s';
-    S.getUI = () => ({ range });
+    let metric = metrics.includes(ui.metric) ? ui.metric : metrics[0];
+    S.getUI = () => ({ range, metric });
     const wrap = h('main', { class: 'page exercise' });
     const fromHome = prevView() === 'home' || prevView() === null;
     wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
     wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
+    wrap.append(noteBox(() => S.notes[id], (v) => { if (v.trim()) S.notes[id] = v; else delete S.notes[id]; },
+      'Ajouter une note : réglages, position de la machine…', 'Note sur l’exercice'));
     if (!ex.missing) {
       wrap.append(visual(ex));
       const sec = [...new Set(ex.s.map(frMuscle))].filter((m) => m !== frMuscle(ex.p));
@@ -554,36 +929,56 @@
       for (const [, list] of days) {
         recent.append(h('div', { class: 'day' },
           h('div', { class: 'dlabel', text: cap(fDayLong.format(list[0].ts)) }),
-          h('div', { class: 'sets' }, list.map((e) => h('span', { class: 'set', text: setText(e.w, e.r) })))));
+          h('div', { class: 'sets' }, list.map((e) => h('button', { type: 'button', class: 'set', 'aria-label': 'Modifier la série ' + entryText(e), text: entryText(e), onclick: () => editEntry(e, refresh) })))));
       }
+      recent.append(h('p', { class: 'hint', text: 'Touche une série pour la modifier ou la supprimer.' }));
     }
 
     function renderChart() {
       chartBox.textContent = '';
+      if (metrics.length > 1) {
+        chartBox.append(h('div', { class: 'tabs two', role: 'tablist', 'aria-label': 'Donnée affichée' },
+          metrics.map((m) => h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': String(metric === m), text: METRICS[m].label, onclick: () => { metric = m; renderChart(); } }))));
+      }
       chartBox.append(h('div', { class: 'chips fit', role: 'group', 'aria-label': 'Période' },
         RANGES.map((r) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(range === r.k), text: r.label, onclick: () => { range = r.k; renderChart(); } }))));
       const all = mine();
       const end = Math.max(Date.now(), all.length ? all[all.length - 1].ts : 0);
       const start = end - RANGES.find((r) => r.k === range).days * 86400000;
-      chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end));
+      chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end, METRICS[metric]));
     }
 
     wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Dernières séances' }), h('div', { class: 'card' }, recent)));
     wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Progression' }), h('div', { class: 'card' }, chartBox)));
-    wrap.append(buildForm(ex, refresh));
+    let draft = null;
+    if (S.draft && S.draft.id === id) { draft = S.draft.rows; S.draft = null; }
+    const planned = dayCtx && S.days[dayCtx] && S.days[dayCtx].plan[id] && !dayEntries(dayCtx).some((e) => e.exerciseId === id) ? S.days[dayCtx].plan[id] : null;
+    wrap.append(buildForm(ex, { day: dayCtx, draft, planned, arg }, refresh));
     refresh();
     return wrap;
   }
 
-  /* Graphique : charge totale d'une série = poids × répétitions.
-     Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
-  function buildChart(pts, start, end) {
+  /* Données affichables sur le graphique. */
+  const METRICS = {
+    load: { label: 'Charge', note: 'Charge totale par série (kg × répétitions)', val: (e) => e.w * e.r, tick: fmtNum,
+      detail: (e) => [fmtNum(e.w) + ' kg × ' + fmtNum(e.r) + ' rép.', 'Total ' + fmtNum(e.w * e.r) + ' · ' + fDateTime.format(e.ts)] },
+    dur: { label: 'Durée', note: 'Durée (minutes)', val: (e) => e.dur / 60, tick: (v) => fmtNum(Math.round(v)),
+      detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
+    speed: { label: 'Vitesse', note: 'Vitesse moyenne (km/h)', val: (e) => speedOf(e), tick: (v) => fmtNum(Math.round(v)),
+      detail: (e) => [fmtNum(Math.round(speedOf(e) * 10) / 10) + ' km/h', entryText(e) + ' · ' + fDateTime.format(e.ts)] },
+    lvl: { label: 'Niveau', note: 'Niveau', val: (e) => e.lvl, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
+    rounds: { label: 'Tours', note: 'Nombre de tours', val: (e) => e.rounds, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
+  };
+
+  /* Graphique. Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
+  function buildChart(all, start, end, M) {
     const box = h('div');
+    const pts = all.filter((p) => { const v = M.val(p); return fin(v) && v > 0; });
     if (!pts.length) {
-      box.append(h('p', { class: 'empty-note', text: 'Aucune série sur cette période.' }));
+      box.append(h('p', { class: 'empty-note', text: all.length ? 'Pas de donnée « ' + M.label.toLowerCase() + ' » sur cette période.' : 'Aucune série sur cette période.' }));
       return box;
     }
-    const vals = pts.map((p) => p.w * p.r);
+    const vals = pts.map(M.val);
     const lo = Math.max(0, Math.floor(Math.min(...vals) * 0.9));
     let hi = Math.ceil(Math.max(...vals) * 1.1);
     if (hi <= lo) hi = lo + 1;
@@ -598,7 +993,7 @@
       const v = Math.round(lo + ((hi - lo) * i) / steps);
       if (seen.has(v)) continue; seen.add(v);
       svg.append(sv('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }));
-      svg.append(sv('text', { class: 'tick', x: m.l - 8, y: y(v) + 3.5, 'text-anchor': 'end' }, fmtNum(v)));
+      svg.append(sv('text', { class: 'tick', x: m.l - 8, y: y(v) + 3.5, 'text-anchor': 'end' }, M.tick(v)));
     }
     [0, 1 / 3, 2 / 3, 1].forEach((f, i) => {
       const t = start + (end - start) * f;
@@ -607,109 +1002,236 @@
 
     const sorted = [...pts].sort((a, b) => a.ts - b.ts);
     if (sorted.length > 1) {
-      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(p.w * p.r).toFixed(1)).join(' ') }));
+      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(M.val(p)).toFixed(1)).join(' ') }));
     }
     const detail = h('div', { class: 'detail', 'aria-live': 'polite' });
     const dots = [];
     const select = (i) => {
       dots.forEach((d, j) => d.setAttribute('class', j === i ? 'dot on' : 'dot'));
-      const p = sorted[i];
+      const [a, b] = M.detail(sorted[i]);
       detail.textContent = '';
-      detail.append(h('strong', { text: fmtNum(p.w) + ' kg × ' + fmtNum(p.r) + ' rép.' }),
-        h('span', { class: 'sub', text: 'Total ' + fmtNum(p.w * p.r) + ' · ' + fDateTime.format(p.ts) }));
+      detail.append(h('strong', { text: a }), h('span', { class: 'sub', text: b }));
     };
     sorted.forEach((p) => {
-      const dot = sv('circle', { class: 'dot', cx: x(p.ts), cy: y(p.w * p.r), r: 5 });
+      const dot = sv('circle', { class: 'dot', cx: x(p.ts), cy: y(M.val(p)), r: 5 });
       dots.push(dot); svg.append(dot);
     });
     sorted.forEach((p, i) => {
-      const hit = sv('circle', { class: 'hit', cx: x(p.ts), cy: y(p.w * p.r), r: 16, tabindex: '0', role: 'button', 'aria-label': fmtNum(p.w) + ' kg × ' + fmtNum(p.r) + ', ' + fDateTime.format(p.ts) });
+      const hit = sv('circle', { class: 'hit', cx: x(p.ts), cy: y(M.val(p)), r: 16, tabindex: '0', role: 'button', 'aria-label': M.detail(p).join(', ') });
       hit.addEventListener('click', () => select(i));
       hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
       svg.append(hit);
     });
-    box.append(h('p', { class: 'chart-note', text: 'Charge totale par série (kg × répétitions)' }), svg, detail);
+    box.append(h('p', { class: 'chart-note', text: M.note }), svg, detail);
     select(sorted.length - 1);
     return box;
   }
 
-  /* Saisie des séries */
-  function buildForm(ex, onSaved) {
+  /* Saisie des séries.
+     ctx.day : séance d'un jour précis (séries datées de ce jour) ; ctx.planned : séries prévues ;
+     ctx.draft : saisie remise après « Annuler ». */
+  function buildForm(ex, ctx, onSaved) {
+    const kind = cardioKind(ex);
     const rows = [];
     const list = h('div', { class: 'rows' });
     const msg = h('p', { class: 'form-msg', role: 'alert' });
-    const newRow = () => ({ w: '', r: '', dt: Date.now(), manual: false });
+    const fixedDay = ctx.day && ctx.day !== todayKey() ? ctx.day : null;
+    const baseDt = (i) => (fixedDay ? keyDate(fixedDay).getTime() + 18 * 3600000 + i * 120000 : Date.now());
+    const keys = kind ? ['min', 'sec'].concat(CARDIO[kind].fields) : ['w', 'r'];
+    const newRow = (vals) => {
+      const r = { dt: baseDt(rows.length), manual: !!fixedDay };
+      for (const k of keys) r[k] = vals && vals[k] != null ? String(vals[k]) : '';
+      return r;
+    };
+    const isFilled = (r) => keys.some((k) => String(r[k] || '').trim());
+    const toStr = (v) => (fin(v) ? fmtIn(v) : typeof v === 'string' ? v : '');
 
     function renderRows() {
       list.textContent = '';
       rows.forEach((row, i) => {
-        const wIn = h('input', { class: 'field', type: 'text', inputmode: 'decimal', placeholder: 'kg', 'aria-label': 'Poids de la série ' + (i + 1) + ' en kilos', autocomplete: 'off' });
-        const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions de la série ' + (i + 1), autocomplete: 'off' });
+        row.nodes = {};
         const dIn = h('input', { class: 'field', type: 'datetime-local', 'aria-label': 'Date et heure de la série ' + (i + 1) });
-        wIn.value = row.w; rIn.value = row.r; dIn.value = toLocalInput(row.dt);
+        dIn.value = toLocalInput(row.dt);
         const touch = () => {
           msg.textContent = '';
-          wIn.classList.remove('invalid'); rIn.classList.remove('invalid');
           if (!row.manual) { row.dt = Date.now(); dIn.value = toLocalInput(row.dt); }
         };
-        wIn.addEventListener('input', () => { row.w = wIn.value; touch(); });
-        rIn.addEventListener('input', () => { row.r = rIn.value; touch(); });
         dIn.addEventListener('change', () => {
           const t = new Date(dIn.value).getTime();
           if (Number.isFinite(t)) { row.dt = t; row.manual = true; } else { row.manual = false; row.dt = Date.now(); dIn.value = toLocalInput(row.dt); }
         });
-        row.nodes = { wIn, rIn };
-        list.append(h('div', { class: 'srow' },
-          h('span', { class: 'n', text: String(i + 1) }), wIn, h('span', { class: 'times', 'aria-hidden': 'true', text: '×' }), rIn,
-          rows.length > 1 ? h('button', { type: 'button', class: 'iconbtn plain rm', 'aria-label': 'Retirer la série ' + (i + 1), onclick: () => { rows.splice(i, 1); renderRows(); } }, icon('close')) : h('span'),
-          h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+        const dup = h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (i + 1),
+          onclick: () => { const c = newRow(row); rows.splice(i + 1, 0, c); renderRows(); } }, icon('copy'));
+        const rm = rows.length > 1 ? h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (i + 1), onclick: () => { rows.splice(i, 1); renderRows(); } }, icon('close')) : h('span', { class: 'mini' });
+        if (kind) {
+          const live = h('span', { class: 'live' });
+          const upd = () => { const r = readCardio(kind, row); live.textContent = r.ok && speedOf(r.vals) ? fmtNum(Math.round(speedOf(r.vals) * 10) / 10) + ' km/h' : ''; };
+          list.append(h('div', { class: 'crow' },
+            h('div', { class: 'chead' }, h('span', { class: 'n', text: String(i + 1) }), live, h('span', { class: 'grow' }), dup, rm),
+            cardioFields(kind, row, () => { touch(); upd(); }),
+            h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+          upd();
+        } else {
+          const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids de la série ' + (i + 1) + ' en kilos' });
+          const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions de la série ' + (i + 1), autocomplete: 'off' });
+          wIn.value = row.w; rIn.value = row.r;
+          wIn.addEventListener('input', () => { row.w = wIn.value; wIn.classList.remove('invalid'); touch(); });
+          rIn.addEventListener('input', () => { row.r = rIn.value; rIn.classList.remove('invalid'); touch(); });
+          row.nodes = { w: wIn, r: rIn };
+          list.append(h('div', { class: 'srow' },
+            h('span', { class: 'n', text: String(i + 1) }), wIn, h('span', { class: 'times', 'aria-hidden': 'true', text: '×' }), rIn, dup, rm,
+            h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+        }
       });
     }
-    rows.push(newRow()); renderRows();
+    if (ctx.draft && ctx.draft.length) ctx.draft.forEach((d) => rows.push(Object.assign(newRow(d), { dt: d.dt, manual: d.manual })));
+    else if (ctx.planned && ctx.planned.length && !kind) ctx.planned.forEach((p) => rows.push(newRow({ w: toStr(p.w), r: toStr(p.r) })));
+    else rows.push(newRow());
+    renderRows();
 
-    const parseNum = (s) => Number(String(s).trim().replace(',', '.'));
+    /* Enregistre les séries remplies ; renvoie false si une valeur est invalide. */
     async function save() {
       msg.textContent = '';
-      const filled = rows.filter((r) => r.w.trim() || r.r.trim());
-      if (!filled.length) { msg.textContent = 'Renseigne le poids et les répétitions d’au moins une série.'; return; }
+      rows.forEach((r) => { if (r.nodes && r.nodes.w) finishCalc(r.nodes.w); });
+      const filled = rows.filter(isFilled);
+      if (!filled.length) { msg.textContent = kind ? 'Renseigne au moins la durée.' : 'Renseigne le poids et les répétitions d’au moins une série.'; return false; }
       let bad = false;
-      for (const row of filled) {
-        const w = parseNum(row.w); const r = parseNum(row.r);
+      const vals = filled.map((row) => {
+        if (kind) {
+          const r = readCardio(kind, row);
+          r.bad.forEach((k) => row.nodes[k] && row.nodes[k].classList.add('invalid'));
+          if (!r.ok) bad = true;
+          return r.vals;
+        }
+        const w = calcEval(row.w); const r = parseNum(row.r);
         const okW = Number.isFinite(w) && w > 0; const okR = Number.isInteger(r) && r > 0;
-        row.nodes.wIn.classList.toggle('invalid', !okW); row.nodes.rIn.classList.toggle('invalid', !okR);
+        row.nodes.w.classList.toggle('invalid', !okW); row.nodes.r.classList.toggle('invalid', !okR);
         if (!okW || !okR) bad = true;
-      }
-      if (bad) { msg.textContent = 'Poids : un nombre positif. Répétitions : un nombre entier.'; return; }
+        return { w, r };
+      });
+      if (bad) { msg.textContent = kind ? 'Durée obligatoire ; les autres valeurs doivent être des nombres.' : 'Poids : un nombre positif. Répétitions : un nombre entier.'; return false; }
       const base = Date.now();
+      const created = [];
       filled.forEach((row, i) => {
-        S.entries.push({ id: uid(), exerciseId: ex.id, name: dn(ex), w: parseNum(row.w), r: parseNum(row.r), ts: row.dt, created: base + i });
+        const e = Object.assign({ id: uid(), exerciseId: ex.id, name: dn(ex), ts: row.dt, created: base + i }, vals[i]);
+        S.entries.push(e); created.push(e.id);
+        const k = dayKey(e.ts);
+        if (S.days[k] && !S.days[k].order.includes(ex.id)) S.days[k].order.push(ex.id);
       });
       await saveUser();
+      const draft = filled.map((r) => { const o = { dt: r.dt, manual: r.manual }; keys.forEach((k) => { o[k] = r[k]; }); return o; });
       const n = filled.length;
       rows.length = 0; rows.push(newRow()); renderRows();
-      toast(n + (n > 1 ? ' séries enregistrées' : ' série enregistrée'));
+      toast(n + (n > 1 ? ' séries enregistrées' : ' série enregistrée'), { ms: 6000, sticky: true, action: () => undoSave(ex.id, created, draft, ctx.arg) });
       onSaved();
+      return true;
     }
+    S.guard = { dirty: () => rows.some(isFilled), save };
 
     return h('section', { class: 'sec' },
-      h('h2', { text: 'Nouvelle série' }),
+      h('h2', { text: 'Nouvelle série' + (fixedDay ? ' · ' + cap(fDayLong.format(keyDate(fixedDay))) : '') }),
       h('div', { class: 'card' }, list,
         h('div', { class: 'form-actions' },
           msg,
-          h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; last.nodes.wIn.focus(); } }, icon('plus'), 'Ajouter une série'),
+          h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; const f = last.nodes.w || last.nodes.min; if (f) f.focus(); } }, icon('plus'), 'Ajouter une série'),
           h('button', { type: 'button', class: 'btn primary', onclick: save, text: 'Valider' }))));
+  }
+  /* « Annuler » après « Valider » : les séries sont retirées et la saisie revient sur la page de l'exercice. */
+  function undoSave(exId, ids, draft, arg) {
+    const set = new Set(ids);
+    S.entries = S.entries.filter((e) => !set.has(e.id));
+    saveUser();
+    S.draft = { id: exId, rows: draft };
+    const top = S.stack[S.stack.length - 1];
+    const topId = top && top.view === 'exercise' ? (typeof top.arg === 'string' ? top.arg : top.arg && top.arg.id) : null;
+    if (topId === exId) { snapshot(); S.guard = null; render(top); } else go('exercise', arg || exId);
+  }
+  /* Modifier ou supprimer une série déjà enregistrée. */
+  function editEntry(e, onDone) {
+    const ex = getEx(e.exerciseId, e.name);
+    const kind = e.c === 1 ? (cardioKind(ex) || 'other') : null;
+    const msg = h('p', { class: 'form-msg', role: 'alert' });
+    let row; let fields;
+    if (kind) { row = cardioRowOf(e); fields = cardioFields(kind, row, () => { msg.textContent = ''; }); } else {
+      row = { w: fmtIn(e.w), r: String(e.r) };
+      const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids en kilos' }); wIn.value = row.w;
+      const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions', autocomplete: 'off' }); rIn.value = row.r;
+      wIn.addEventListener('input', () => { row.w = wIn.value; wIn.classList.remove('invalid'); });
+      rIn.addEventListener('input', () => { row.r = rIn.value; rIn.classList.remove('invalid'); });
+      row.nodes = { w: wIn, r: rIn };
+      fields = h('div', { class: 'srow edit' }, wIn, h('span', { class: 'times', text: '×' }), rIn);
+    }
+    const dIn = h('input', { class: 'field left', type: 'datetime-local', id: 'ed-dt' });
+    dIn.value = toLocalInput(e.ts);
+    let close = null;
+    const save = async () => {
+      let vals;
+      if (kind) { const r = readCardio(kind, row); r.bad.forEach((k) => row.nodes[k] && row.nodes[k].classList.add('invalid')); if (!r.ok) { msg.textContent = 'Durée obligatoire ; les autres valeurs doivent être des nombres.'; return; } vals = r.vals; } else {
+        finishCalc(row.nodes.w);
+        const w = calcEval(row.w); const r = parseNum(row.r);
+        const okW = Number.isFinite(w) && w > 0; const okR = Number.isInteger(r) && r > 0;
+        row.nodes.w.classList.toggle('invalid', !okW); row.nodes.r.classList.toggle('invalid', !okR);
+        if (!okW || !okR) { msg.textContent = 'Poids : un nombre positif. Répétitions : un nombre entier.'; return; }
+        vals = { w, r };
+      }
+      const t = new Date(dIn.value).getTime();
+      if (kind) CARDIO_KEYS.forEach((k) => { delete e[k]; });
+      Object.assign(e, vals, Number.isFinite(t) ? { ts: t } : {});
+      await saveUser();
+      close(); onDone(); toast('Série modifiée');
+    };
+    const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+      h('h2', { id: 'dlg-t', text: 'Modifier la série' }), h('p', { class: 'ed-name', text: dn(ex) }),
+      fields, h('label', { class: 'lbl', for: 'ed-dt', text: 'Date et heure' }), dIn, msg,
+      h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => close() }),
+        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: save })),
+      h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette série', onclick: () => { close(); deleteEntry(e, onDone); } }));
+    close = openModal(box, hideCalc);
+    const c0 = close; close = () => { hideCalc(); c0(); };
+  }
+  function deleteEntry(e, onDone) {
+    const i = S.entries.findIndex((x) => x.id === e.id);
+    if (i < 0) return;
+    S.entries.splice(i, 1);
+    saveUser(); onDone();
+    toast('Série supprimée', { ms: 6000, action: () => { S.entries.push(e); saveUser(); onDone(); } });
   }
 
   /* ---------- bibliothèque : onglets Favoris / Musculation / Étirements ---------- */
   const TABS = [['fav', 'Favoris'], ['musc', 'Musculation'], ['str', 'Étirements']];
   function viewLibrary(arg, ui) {
     const wrap = h('main', { class: 'page library' });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
+    // Mode « ajouter des exercices » à une séance du jour (pick: 'day') ou à une séance type (pick: 'plan').
+    const pick = arg && arg.pick ? arg : null;
+    const pickPlan = pick && pick.pick === 'plan' ? S.plans.find((p) => p.id === pick.id) : null;
+    const picked = (id) => (pickPlan ? pickPlan.items.some((it) => it.ex === id) : pick ? dayOrder(pick.id).includes(id) : false);
+    function togglePick(ex, row) {
+      if (pickPlan) {
+        if (picked(ex.id)) pickPlan.items = pickPlan.items.filter((it) => it.ex !== ex.id); else pickPlan.items.push({ ex: ex.id, sets: [] });
+      } else {
+        const d = dayMeta(pick.id, true);
+        if (picked(ex.id)) {
+          if (dayEntries(pick.id).some((e) => e.exerciseId === ex.id)) { toast('Cet exercice a déjà des séries ce jour-là.'); return; }
+          d.order = d.order.filter((x) => x !== ex.id); delete d.plan[ex.id];
+        } else if (!d.order.includes(ex.id)) d.order = dayOrder(pick.id).concat([ex.id]);
+      }
+      saveUser();
+      row.classList.toggle('picked', picked(ex.id));
+      countEl.textContent = pickPlan ? String(pickPlan.items.length) : String(dayOrder(pick.id).length);
+    }
+    const countEl = h('span', { class: 'pcount' });
+    if (pick) {
+      countEl.textContent = pickPlan ? String(pickPlan.items.length) : String(dayOrder(pick.id).length);
+      wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: 'Ajouter des exercices' }),
+        h('button', { type: 'button', class: 'btn primary okbtn', onclick: goBack }, 'OK ', countEl)));
+    } else wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
     const search = h('input', { class: 'search', type: 'search', placeholder: 'Rechercher un exercice', 'aria-label': 'Rechercher un exercice', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
     search.value = ui.q || '';
     const tabBar = h('div', { class: 'tabs', role: 'tablist' });
     const body = h('div');
-    wrap.append(search, tabBar, body);
+    const clearBtn = h('button', { type: 'button', class: 'clear', 'aria-label': 'Effacer la recherche', hidden: !search.value,
+      onclick: () => { search.value = ''; clearBtn.hidden = true; render(); search.focus(); } }, icon('close'));
+    wrap.append(h('div', { class: 'searchbox' }, search, clearBtn), tabBar, body);
     let tab = TABS.some((t) => t[0] === ui.tab) ? ui.tab : (S.favs.size ? 'fav' : 'musc');
     // Groupes dépliés (Musculation, Étirements) ou repliés (Favoris, dépliés par défaut).
     const toggled = new Set(Array.isArray(ui.open) ? ui.open : []);
@@ -721,10 +1243,13 @@
       render();
       toast('Retiré des favoris', { ms: 5000, action: () => { S.favs.add(ex.id); saveUser(); render(); } });
     }
-    const exRow = (ex, showKind) => h('div', { class: 'exrow' },
-      h('button', { type: 'button', class: 'open', onclick: () => go('exercise', ex.id) },
+    const exRow = (ex, showKind) => {
+      const row = h('div', { class: 'exrow' + (pick && picked(ex.id) ? ' picked' : '') });
+      row.append(h('button', { type: 'button', class: 'open', 'aria-pressed': pick ? String(picked(ex.id)) : null, onclick: () => (pick ? togglePick(ex, row) : go('exercise', ex.id)) },
         thumb(ex), h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: 'Étirement' }) : null)),
-      starBtn(ex.id, () => onStar(ex)));
+      pick ? h('span', { class: 'pick', 'aria-hidden': 'true' }, icon('check')) : starBtn(ex.id, () => onStar(ex)));
+      return row;
+    };
 
     /* Un groupe repliable ; son contenu n'est construit qu'à la première ouverture. */
     function group(gid, label, count, fill, cls) {
@@ -765,8 +1290,22 @@
       const raw = search.value.trim();
       renderTabs(!!raw);
       if (raw) {
-        const tokens = fold(raw).split(/\s+/);
-        const hits = S.exercises.filter((ex) => { const hay = fold(ex.name); return tokens.every((t) => hay.includes(t)); });
+        // « pull up », « pull-up » et « pullup » trouvent les mêmes exercices.
+        // Ordre : nom exact, puis noms qui commencent par la recherche, puis ceux qui la contiennent
+        // telle quelle, puis le reste ; à égalité, le nom le plus court d'abord.
+        const q = skey(raw);
+        const tokens = q.split(' ');
+        const qc = q.replace(/ /g, '');
+        const rank = (ex) => {
+          const k = ex.key;
+          if (k === q || k.replace(/ /g, '') === qc) return 0;
+          if (k.startsWith(q + ' ')) return 1;
+          if ((' ' + k + ' ').includes(' ' + q + ' ')) return 2;
+          if (k.startsWith(q)) return 3;
+          return 4;
+        };
+        const hits = S.exercises.filter((ex) => tokens.every((t) => ex.key.includes(t)) || (qc.length > 2 && ex.key.replace(/ /g, '').includes(qc)))
+          .map((ex) => [rank(ex), ex]).sort((a, b) => a[0] - b[0] || a[1].key.length - b[1].key.length || a[1].key.localeCompare(b[1].key)).map((x) => x[1]);
         if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + raw + ' ».' })); return; }
         body.append(h('div', { class: 'results' }, hits.slice(0, 60).map((ex) => exRow(ex, true))));
         if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: hits.length + ' résultats, les 60 premiers sont affichés. Précise ta recherche.' }));
@@ -794,7 +1333,7 @@
     }
 
     let t;
-    search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(render, 60); });
+    search.addEventListener('input', () => { clearBtn.hidden = !search.value; clearTimeout(t); t = setTimeout(render, 60); });
     render();
     return wrap;
   }
@@ -821,8 +1360,8 @@
         if (k !== cur) { cur = k; list.append(h('div', { class: 'dayhead', text: dayLabel(new Date(e.ts)) })); }
         const ex = getEx(e.exerciseId, e.name);
         list.append(h('div', { class: 'hrow' },
-          h('div', {}, h('div', { class: 'nm', text: dn(ex) }),
-            h('div', { class: 'meta' }, h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), ' · total ' + fmtNum(e.w * e.r) + ' · ' + fTime.format(e.ts))),
+          h('button', { type: 'button', class: 'hedit', 'aria-label': 'Modifier : ' + dn(ex) + ', ' + entryText(e), onclick: () => editEntry(e, render) }, h('div', { class: 'nm', text: dn(ex) }),
+            h('div', { class: 'meta' }, h('b', { text: entryText(e) }), (e.c === 1 ? '' : ' · total ' + fmtNum(e.w * e.r)) + ' · ' + fTime.format(e.ts))),
           h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Supprimer cette série', onclick: () => removeOne(e) }, icon('trash'))));
       }
     }
@@ -834,11 +1373,11 @@
       toast('Série supprimée', { ms: 5000, action: () => { S.entries.push(e); saveUser(); render(); } });
     }
     async function wipeAll() {
-      const nSess = Object.keys(S.sessions).length;
+      const nSess = Object.keys(S.sessions).length + Object.keys(S.days).length;
       if (!S.entries.length && !nSess) { toast('Il n’y a rien à supprimer.'); return; }
-      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + ') et les noms de séances seront supprimés. Tes favoris sont conservés.', yes: 'Oui', no: 'Non' });
+      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + '), les noms et notes de séances seront supprimés. Tes favoris, tes notes d’exercices et tes séances types sont conservés.', yes: 'Oui', no: 'Non' });
       if (!ok) return;
-      S.entries = []; S.sessions = {}; await saveUser(); render(); toast('Historique supprimé');
+      S.entries = []; S.sessions = {}; S.days = {}; await saveUser(); render(); toast('Historique supprimé');
     }
     fileIn.addEventListener('change', async () => {
       const f = fileIn.files && fileIn.files[0]; fileIn.value = '';
@@ -850,7 +1389,8 @@
     return wrap;
   }
   async function exportData() {
-    const data = { app: 'WorkLog', version: DATA_V, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs], sessions: S.sessions };
+    const data = { app: 'WorkLog', version: DATA_V, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs], sessions: S.sessions,
+      days: S.days, notes: S.notes, plans: S.plans, folders: S.folders };
     const ok = await shareFile('worklog-' + dayKey(Date.now()) + '.json', JSON.stringify(data, null, 2), 'application/json');
     if (ok) toast('Sauvegarde prête : enregistre-la dans ton dossier.');
   }
@@ -859,19 +1399,26 @@
       if (file.size > 20 * 1024 * 1024) throw new Error('trop gros');
       const d = JSON.parse(await file.text());
       if (!d || d.app !== 'WorkLog' || !Array.isArray(d.entries)) throw new Error('format');
-      const sig = (e) => [e.exerciseId, e.ts, e.w, e.r].join('|');
+      const sig = (e) => (e.c === 1 ? [e.exerciseId, e.ts, 'c', e.dur, e.dist] : [e.exerciseId, e.ts, e.w, e.r]).join('|');
       const ids = new Set(S.entries.map((e) => e.id)); const sigs = new Set(S.entries.map(sig));
       let added = 0; let dupes = 0; let invalid = 0;
       for (const raw of d.entries) {
         if (!validEntry(raw)) { invalid++; continue; }
         if (ids.has(raw.id) || sigs.has(sig(raw))) { dupes++; continue; }
-        const e = { id: raw.id, exerciseId: raw.exerciseId, name: String(raw.name || raw.exerciseId), w: raw.w, r: raw.r, ts: raw.ts, created: Number.isFinite(raw.created) ? raw.created : raw.ts };
+        const e = normEntry(raw);
         S.entries.push(e); ids.add(e.id); sigs.add(sig(e)); added++;
       }
       (Array.isArray(d.favorites) ? d.favorites : []).forEach((id) => { if (typeof id === 'string') S.favs.add(id); });
       // Noms de séances : on ajoute ceux qui manquent, sans écraser ceux déjà présents.
       for (const [k, v] of Object.entries(cleanSessions(d.sessions))) if (!S.sessions[k]) S.sessions[k] = v;
+      // Notes, séances types, journées et dossiers : on ajoute ce qui manque, sans rien écraser.
+      for (const [k, v] of Object.entries(cleanNotes(d.notes))) if (!S.notes[k]) S.notes[k] = v;
+      for (const [k, v] of Object.entries(cleanDays(d.days))) if (!S.days[k]) S.days[k] = v;
+      const have = new Set(S.plans.map((p) => p.id));
+      for (const p of cleanPlans(d.plans)) if (!have.has(p.id)) S.plans.push(p);
+      S.folders = cleanFolders(S.folders.concat(Array.isArray(d.folders) ? d.folders : []));
       await saveUser();
+      await migrateAliases();
       toast(added + (added > 1 ? ' séries ajoutées' : ' série ajoutée') + (dupes ? ', ' + dupes + ' déjà présente' + (dupes > 1 ? 's' : '') : '') + (invalid ? ', ' + invalid + ' ligne' + (invalid > 1 ? 's' : '') + ' invalide' + (invalid > 1 ? 's ignorées' : ' ignorée') : ''), { ms: 4500 });
       return true;
     } catch (e) {
@@ -887,7 +1434,38 @@
     return m;
   }
   function dayStats(list) {
-    return { nEx: new Set(list.map((e) => e.exerciseId)).size, nSets: list.length, load: list.reduce((n, e) => n + e.w * e.r, 0) };
+    return { nEx: new Set(list.map((e) => e.exerciseId)).size, nSets: list.length, load: list.reduce((n, e) => n + (e.c === 1 ? 0 : e.w * e.r), 0) };
+  }
+  const todayKey = () => dayKey(Date.now());
+  function dayMeta(key, create) {
+    if (!S.days[key] && create) S.days[key] = { order: [], plan: {}, note: '' };
+    return S.days[key] || null;
+  }
+  const dayEntries = (key) => S.entries.filter((e) => dayKey(e.ts) === key).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
+  /* Ordre des exercices d'une journée : l'ordre choisi, puis les exercices faits sans y figurer. */
+  function dayOrder(key) {
+    const d = S.days[key];
+    const ids = d ? d.order.slice() : [];
+    for (const e of dayEntries(key)) if (!ids.includes(e.exerciseId)) ids.push(e.exerciseId);
+    return ids;
+  }
+  function guessMain(ids) {
+    const c = new Map();
+    for (const id of ids) { const ex = S.byId.get(id); if (ex) c.set(ex.leaf, (c.get(ex.leaf) || 0) + 1); }
+    const g = [...c.entries()].sort((a, b) => b[1] - a[1])[0];
+    return g ? g[0] : '';
+  }
+  /* Prépare une journée à partir d'une séance type ou d'une ancienne séance. */
+  function startDay(key, src) {
+    const d = dayMeta(key, true);
+    d.order = dayOrder(key);
+    for (const it of src.items) {
+      if (!d.order.includes(it.ex)) d.order.push(it.ex);
+      const sets = (it.sets || []).filter((x) => x.w !== '' || x.r !== '');
+      if (sets.length) d.plan[it.ex] = sets.map((x) => ({ w: x.w, r: x.r }));
+    }
+    const main = GROUPS.has(src.main) ? src.main : guessMain(src.items.map((it) => it.ex));
+    if (main && !S.sessions[key]) S.sessions[key] = { name: (src.name || '').trim(), main, sec: (src.sec || []).filter((x) => GROUPS.has(x) && x !== main) };
   }
   const sessionTitle = (s) => s.name || GROUPS.get(s.main).label;
 
@@ -918,14 +1496,15 @@
       for (let d = 1; d <= nDays; d++) {
         const k = y + '-' + pad2(m + 1) + '-' + pad2(d);
         const has = byDay.has(k);
+        const planned = !has && S.days[k] && S.days[k].order.length > 0;
         if (has) sessions++;
         const named = has && S.sessions[k];
         const isToday = isCurrent && d === now.getDate();
         grid.append(h('button', {
-          type: 'button', class: 'day' + (has ? ' has' : '') + (named ? ' named' : '') + (isToday ? ' today' : ''), disabled: !has, text: String(d),
+          type: 'button', class: 'day' + (has ? ' has' : '') + (planned ? ' planned' : '') + (named ? ' named' : '') + (isToday ? ' today' : ''), disabled: !has && !planned, text: String(d),
           style: named ? { '--c': GROUPS.get(named.main).color } : null,
-          'aria-label': has ? 'Séance du ' + d + ' ' + fMonth.format(new Date(y, m, 1)) + (named ? ' : ' + sessionTitle(named) : '') : null,
-          onclick: has ? () => go('session', k) : null,
+          'aria-label': has || planned ? (planned ? 'Séance prévue le ' : 'Séance du ') + d + ' ' + fMonth.format(new Date(y, m, 1)) + (named ? ' : ' + sessionTitle(named) : '') : null,
+          onclick: has || planned ? () => go('session', k) : null,
         }));
       }
       box.append(grid);
@@ -939,45 +1518,130 @@
   function viewSession(key) {
     const wrap = h('main', { class: 'page session' });
     wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: dayLabel(keyDate(key)) }), closeBtn()));
-    const entries = S.entries.filter((e) => dayKey(e.ts) === key).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
-    if (!entries.length) {
-      wrap.append(h('p', { class: 'empty-note', text: 'Aucune série enregistrée ce jour-là.' }));
-      return wrap;
-    }
-    const st = dayStats(entries);
-    const nameBox = h('div', { class: 'sess-name' });
-    function renderName() {
-      nameBox.textContent = '';
-      const s = S.sessions[key];
-      if (!s) {
-        nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: edit }, icon('tag'), 'Nommer la séance'));
-        return;
-      }
-      nameBox.append(h('div', { class: 'card named', style: { '--c': GROUPS.get(s.main).color } },
-        h('div', { class: 'row' }, h('strong', { class: 'nm', text: sessionTitle(s) }),
-          h('button', { type: 'button', class: 'textbtn', text: 'Modifier', onclick: edit })),
-        h('div', { class: 'tags' }, tag(s.main, true), s.sec.map((id) => tag(id)))));
-    }
-    function edit() { sessionDialog(key, entries, renderName); }
-    renderName();
-    wrap.append(nameBox);
-    wrap.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + ' · ' + fmtNum(Math.round(st.load)) + ' kg au total' }));
+    const body = h('div');
+    wrap.append(body);
+    const isToday = key === todayKey();
 
-    const blocks = [];
-    for (const e of entries) {
-      const last = blocks[blocks.length - 1];
-      if (last && last.exerciseId === e.exerciseId) last.sets.push(e); else blocks.push({ exerciseId: e.exerciseId, name: e.name, sets: [e] });
+    function render() {
+      body.textContent = '';
+      const entries = dayEntries(key);
+      const order = dayOrder(key);
+      const meta = S.days[key];
+      if (entries.length || order.length) {
+        const nameBox = h('div', { class: 'sess-name' });
+        const s = S.sessions[key];
+        if (!s) nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }, icon('tag'), 'Nommer la séance'));
+        else {
+          nameBox.append(h('div', { class: 'card named', style: { '--c': GROUPS.get(s.main).color } },
+            h('div', { class: 'row' }, h('strong', { class: 'nm', text: sessionTitle(s) }),
+              h('button', { type: 'button', class: 'textbtn', text: 'Modifier', onclick: () => sessionDialog(key, entries, render) })),
+            h('div', { class: 'tags' }, tag(s.main, true), s.sec.map((id) => tag(id)))));
+        }
+        body.append(nameBox);
+      }
+      body.append(noteBox(() => (S.days[key] || {}).note, (v) => { const d = dayMeta(key, true); d.note = v; },
+        'Note de séance : sensations, fatigue…', 'Note de la séance'));
+      if (entries.length) {
+        const st = dayStats(entries);
+        body.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' kg au total' : '') }));
+      }
+      if (!order.length) {
+        body.append(h('p', { class: 'empty-note pad', text: isToday ? 'Rien de prévu aujourd’hui. Ajoute des exercices ou lance une de tes séances types.' : 'Aucun exercice ce jour-là.' }));
+      } else {
+        const list = h('div', { class: 'dlist' });
+        for (const id of order) {
+          const sets = entries.filter((e) => e.exerciseId === id);
+          const ex = getEx(id, sets[0] && sets[0].name);
+          const planned = !sets.length && meta && meta.plan[id] ? meta.plan[id] : null;
+          const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? 'À faire · ' + plural(planned.length, 'série prévue', 'séries prévues') : 'À faire';
+          const head = h('div', { class: 'dhead' },
+            h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex), title: 'Maintenir et glisser pour déplacer' }, icon('grip')),
+            h('button', { type: 'button', class: 'open', onclick: () => go('exercise', { id, day: key }) }, thumb(ex),
+              h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st' + (sets.length ? '' : ' todo'), text: status }))),
+            h('span', { class: 'chev' }, icon('right')));
+          list.append(h('div', { class: 'sitem', 'data-id': id },
+            h('article', { class: 'dcard' + (sets.length ? '' : ' todo') },
+              swipeable(head, () => removeFromDay(id), 'Retirer ' + dn(ex) + ' de la séance'),
+              sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': 'Modifier la série ' + entryText(e), onclick: () => editEntry(e, render) },
+                h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: entryText(e) }), e.c === 1 ? null : h('span', { class: 'tot', text: fmtNum(e.w * e.r) })),
+                () => deleteEntry(e, render), 'Supprimer la série')),
+              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: (p.w !== '' ? fmtNum(p.w) + ' kg' : '… kg') + ' × ' + (p.r !== '' ? fmtNum(p.r) : '…') }))) : null)));
+        }
+        sortable(list, (ids) => { const d = dayMeta(key, true); d.order = ids; saveUser(); });
+        body.append(list, h('p', { class: 'hint', text: 'Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.' }));
+      }
+      body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), 'Ajouter un exercice'));
+      if (isToday && S.plans.length) body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => go('seances', { tab: 'plans' }) }, icon('folder'), 'Lancer une séance type'));
+      if (entries.length) {
+        body.append(h('section', { class: 'sec tight acts-day' },
+          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key) }, icon('copy'), 'Refaire cette séance aujourd’hui'),
+          h('button', { type: 'button', class: 'pill', onclick: () => dayToPlan(key) }, icon('folder'), 'Enregistrer comme séance type'),
+          h('button', { type: 'button', class: 'pill', onclick: () => exportActivity(key) }, icon('export'), 'Exporter l’activité (Strava…)')));
+      }
     }
-    const tl = h('div', { class: 'timeline' });
-    for (const b of blocks) {
-      const ex = getEx(b.exerciseId, b.name);
-      tl.append(h('article', { class: 'tl' },
-        h('button', { type: 'button', class: 'head', onclick: () => go('exercise', ex.id) }, thumb(ex),
-          h('div', {}, h('div', { class: 't', text: fTime.format(b.sets[0].ts) }), h('div', { class: 'nm', text: dn(ex) }))),
-        b.sets.map((e) => h('div', { class: 'line-set' }, h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: fmtNum(e.w) + ' kg × ' + fmtNum(e.r) }), h('span', { class: 'tot', text: fmtNum(e.w * e.r) })))));
+    function removeFromDay(id) {
+      const removed = S.entries.filter((e) => e.exerciseId === id && dayKey(e.ts) === key);
+      const old = S.days[key] ? JSON.parse(JSON.stringify(S.days[key])) : null;
+      S.entries = S.entries.filter((e) => !(e.exerciseId === id && dayKey(e.ts) === key));
+      const d = S.days[key];
+      if (d) { d.order = d.order.filter((x) => x !== id); delete d.plan[id]; }
+      saveUser(); render();
+      toast(removed.length ? 'Exercice et ' + plural(removed.length, 'série supprimés', 'séries supprimés') : 'Exercice retiré', { ms: 6000,
+        action: () => { S.entries.push(...removed); if (old) S.days[key] = old; saveUser(); render(); } });
     }
-    wrap.append(tl);
+    render();
     return wrap;
+  }
+  function redoDay(key) {
+    const tk = todayKey();
+    const entries = dayEntries(key);
+    const s = S.sessions[key];
+    startDay(tk, { name: s ? s.name : '', main: s ? s.main : '', sec: s ? s.sec : [],
+      items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })) });
+    saveUser();
+    go('session', tk);
+    toast('Séance recopiée pour aujourd’hui : ajuste les charges si besoin.');
+  }
+  function dayToPlan(key) {
+    const entries = dayEntries(key);
+    const s = S.sessions[key];
+    const p = { id: uid(), name: s ? sessionTitle(s) : 'Séance du ' + fDayShort.format(keyDate(key)), folder: '', main: s ? s.main : '', sec: s ? s.sec.slice() : [],
+      items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })), created: Date.now(), last: key };
+    S.plans.push(p);
+    saveUser();
+    go('plan', p.id);
+    toast('Séance type créée');
+  }
+  /* Fichier d'activité .tcx (format accepté par Strava, Garmin…) pour une journée faite. */
+  function exportActivity(key) {
+    const ents = dayEntries(key);
+    if (!ents.length) return;
+    const start = Math.min(...ents.map((e) => e.ts));
+    const end = Math.max(...ents.map((e) => e.ts + (e.c === 1 ? e.dur * 1000 : 0))) + 120000;
+    const secs = Math.max(60, Math.round((end - start) / 1000));
+    const dist = Math.round(ents.reduce((n, e) => n + (e.c === 1 && e.dist > 0 ? e.dist * 1000 : 0), 0));
+    const kcal = Math.round(ents.reduce((n, e) => n + (e.c === 1 && e.kcal > 0 ? e.kcal : 0), 0));
+    const s = S.sessions[key];
+    const lines = [s ? sessionTitle(s) : 'Séance WorkLog'];
+    for (const id of dayOrder(key)) {
+      const sets = ents.filter((e) => e.exerciseId === id);
+      if (sets.length) lines.push(getEx(id, sets[0].name).name + ' : ' + sets.map(entryText).join(', '));
+    }
+    if (S.days[key] && S.days[key].note) lines.push('', S.days[key].note);
+    const iso = (t) => new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">\n'
+      + ' <Activities>\n  <Activity Sport="Other">\n   <Id>' + iso(start) + '</Id>\n'
+      + '   <Lap StartTime="' + iso(start) + '">\n'
+      + '    <TotalTimeSeconds>' + secs + '</TotalTimeSeconds>\n    <DistanceMeters>' + dist + '</DistanceMeters>\n'
+      + '    <Calories>' + kcal + '</Calories>\n    <Intensity>Active</Intensity>\n    <TriggerMethod>Manual</TriggerMethod>\n'
+      + '    <Track>\n     <Trackpoint><Time>' + iso(start) + '</Time><DistanceMeters>0</DistanceMeters></Trackpoint>\n'
+      + '     <Trackpoint><Time>' + iso(start + secs * 1000) + '</Time><DistanceMeters>' + dist + '</DistanceMeters></Trackpoint>\n    </Track>\n'
+      + '   </Lap>\n   <Notes>' + esc(lines.join('\n')) + '</Notes>\n  </Activity>\n </Activities>\n</TrainingCenterDatabase>\n';
+    shareFile('worklog-' + key + '.tcx', xml, 'application/vnd.garmin.tcx+xml').then((ok) => {
+      if (ok) toast('Fichier prêt : importe-le sur strava.com (Téléverser une activité > Fichier).', { ms: 6000 });
+    });
   }
 
   /* Fenêtre « Nommer la séance » : nom libre, groupe principal, groupes secondaires. */
@@ -1036,44 +1700,96 @@
     close = openModal(box);
   }
 
-  /* ---------- page Séances : les séances nommées, par groupe musculaire ---------- */
+  /* ---------- page Séances : séances types (en dossiers) et séances réalisées ---------- */
+  function createPlan() {
+    const p = { id: uid(), name: '', folder: '', main: '', sec: [], items: [], created: Date.now(), last: null };
+    S.plans.push(p);
+    saveUser();
+    go('plan', p.id);
+  }
+  const planTitle = (p) => p.name.trim() || 'Séance sans nom';
+  function startPlanToday(p) {
+    if (!p.items.length) { toast('Ajoute au moins un exercice à cette séance.'); return; }
+    const tk = todayKey();
+    startDay(tk, p);
+    p.last = tk;
+    saveUser();
+    go('session', tk);
+    toast('« ' + planTitle(p) + ' » ajoutée à aujourd’hui');
+  }
   function viewSeances(arg, ui) {
+    let tab = ui.tab || (arg && arg.tab) || (S.plans.length ? 'plans' : 'done');
     let filter = GROUPS.has(ui.filter) ? ui.filter : 'all';
-    S.getUI = () => ({ filter });
+    let pfilter = GROUPS.has(ui.pfilter) ? ui.pfilter : 'all';
+    const closedF = new Set(Array.isArray(ui.closed) ? ui.closed : []);
+    S.getUI = () => ({ tab, filter, pfilter, closed: [...closedF] });
     const wrap = h('main', { class: 'page seances' });
     wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Séances' }), h('span')));
-    const byDay = daysIndex();
-    const all = Object.keys(S.sessions).filter((k) => byDay.has(k)).sort().reverse()
-      .map((k) => ({ key: k, s: S.sessions[k], st: dayStats(byDay.get(k)) }));
-    if (!all.length) {
-      wrap.append(h('div', { class: 'card empty-card' },
-        h('strong', { text: 'Aucune séance nommée' }),
-        h('p', { text: 'Ouvre un jour d’entraînement dans le calendrier, puis touche « Nommer la séance ». Elle apparaîtra ici, classée par groupe musculaire.' }),
-        h('button', { type: 'button', class: 'btn primary', text: 'Ouvrir le calendrier', onclick: () => go('calendar') })));
-      return wrap;
-    }
-    const works = (x, top) => topOf(x.s.main) === top || x.s.sec.some((id) => topOf(id) === top);
-    const tops = TREE.filter((t) => all.some((x) => works(x, t.id)));
-    if (filter !== 'all' && !tops.some((t) => t.id === filter)) filter = 'all';
+    const tabBar = h('div', { class: 'tabs two', role: 'tablist' });
     const body = h('div');
-    wrap.append(body);
+    wrap.append(tabBar, body);
+    const chipsFor = (tops, cur, count, set) => h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'Filtrer par groupe musculaire' },
+      [['all', 'Toutes']].concat(tops.map((t) => [t.id, t.label])).map(([id, label]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(cur === id),
+        onclick: () => { set(id); render(); window.scrollTo(0, 0); } }, label, h('span', { class: 'n', text: String(count(id)) }))));
 
-    function card(x) {
-      const g = GROUPS.get(x.s.main);
-      return h('button', { type: 'button', class: 'scard', style: { '--c': g.color }, onclick: () => go('session', x.key) },
-        h('div', { class: 'top' }, h('span', { class: 'date', text: dayLabel(keyDate(x.key)) }), h('span', { class: 'ago', text: ago(x.key) })),
-        h('div', { class: 'nm', text: sessionTitle(x.s) }),
-        h('div', { class: 'tags' }, tag(x.s.main, true), x.s.sec.map((id) => tag(id))),
-        h('div', { class: 'figs' },
-          h('div', {}, h('b', { text: String(x.st.nEx) }), h('span', { text: x.st.nEx > 1 ? 'exercices' : 'exercice' })),
-          h('div', {}, h('b', { text: String(x.st.nSets) }), h('span', { text: x.st.nSets > 1 ? 'séries' : 'série' })),
-          h('div', {}, h('b', { text: fmtNum(Math.round(x.st.load)) }), h('span', { text: 'kg soulevés' }))));
+    function renderTabs() {
+      tabBar.textContent = '';
+      [['plans', 'Mes séances'], ['done', 'Réalisées']].forEach(([id, label]) => tabBar.append(h('button', { type: 'button', role: 'tab', class: 'tab',
+        'aria-selected': String(tab === id), text: label, onclick: () => { if (tab !== id) { tab = id; render(); window.scrollTo(0, 0); } } })));
     }
-    function render() {
-      body.textContent = '';
-      const chip = (id, label, n) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter === id), onclick: () => { filter = id; render(); window.scrollTo(0, 0); } }, label, h('span', { class: 'n', text: String(n) }));
-      body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'Filtrer par groupe musculaire' },
-        chip('all', 'Toutes', all.length), tops.map((t) => chip(t.id, t.label, all.filter((x) => works(x, t.id)).length))));
+
+    function renderPlans() {
+      body.append(h('button', { type: 'button', class: 'btn primary wide', onclick: createPlan }, icon('plus'), ' Créer une séance'));
+      if (!S.plans.length) {
+        body.append(h('div', { class: 'card empty-card' }, h('strong', { text: 'Aucune séance type' }),
+          h('p', { text: 'Crée une séance (Push, Jambes…), ajoute ses exercices et, si tu veux, les séries et charges prévues. Range-la dans un dossier, puis lance-la le jour où tu la fais.' })));
+        return;
+      }
+      const works = (p, top) => topOf(p.main) === top || p.sec.some((id) => topOf(id) === top);
+      const tops = TREE.filter((t) => S.plans.some((p) => works(p, t.id)));
+      if (pfilter !== 'all' && !tops.some((t) => t.id === pfilter)) pfilter = 'all';
+      if (tops.length) body.append(chipsFor(tops, pfilter, (id) => (id === 'all' ? S.plans.length : S.plans.filter((p) => works(p, id)).length), (v) => { pfilter = v; }));
+      const list = pfilter === 'all' ? S.plans : S.plans.filter((p) => works(p, pfilter));
+      const folders = [...new Set(S.folders.concat(S.plans.map((p) => p.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+      const box = h('div', { class: 'groups folders' });
+      for (const f of folders.concat([''])) {
+        const ps = list.filter((p) => p.folder === f).sort((a, b) => planTitle(a).localeCompare(planTitle(b), 'fr'));
+        if (!ps.length && (f === '' || pfilter !== 'all')) continue;
+        const key = f || '__none';
+        const d = h('details', { class: 'group' }, h('summary', {}, h('span', { class: 'fsum' }, icon('folder'), f || 'Sans dossier', h('span', { class: 'count', text: String(ps.length) })), icon('down')));
+        d.open = !closedF.has(key);
+        d.addEventListener('toggle', () => { if (d.open) closedF.delete(key); else closedF.add(key); });
+        d.append(ps.length ? h('div', { class: 'pcards' }, ps.map(planCard)) : h('p', { class: 'empty-note pad', text: 'Dossier vide.' }));
+        box.append(d);
+      }
+      body.append(box);
+    }
+    function planCard(p) {
+      const g = GROUPS.get(p.main);
+      const nSets = p.items.reduce((n, it) => n + it.sets.length, 0);
+      return h('div', { class: 'pcard', style: g ? { '--c': g.color } : null },
+        h('button', { type: 'button', class: 'pmain', onclick: () => go('plan', p.id) },
+          h('div', { class: 'nm', text: planTitle(p) }),
+          g ? h('div', { class: 'tags' }, tag(p.main, true), p.sec.map((id) => tag(id))) : null,
+          h('div', { class: 'meta', text: plural(p.items.length, 'exercice', 'exercices') + (nSets ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · faite ' + ago(p.last) : '') })),
+        h('button', { type: 'button', class: 'pgo', 'aria-label': 'Faire « ' + planTitle(p) + ' » aujourd’hui', onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: 'Aujourd’hui' })));
+    }
+
+    function renderDone() {
+      const byDay = daysIndex();
+      const all = Object.keys(S.sessions).filter((k) => byDay.has(k)).sort().reverse()
+        .map((k) => ({ key: k, s: S.sessions[k], st: dayStats(byDay.get(k)) }));
+      if (!all.length) {
+        body.append(h('div', { class: 'card empty-card' },
+          h('strong', { text: 'Aucune séance nommée' }),
+          h('p', { text: 'Ouvre un jour d’entraînement dans le calendrier, puis touche « Nommer la séance ». Elle apparaîtra ici, classée par groupe musculaire.' }),
+          h('button', { type: 'button', class: 'btn primary', text: 'Ouvrir le calendrier', onclick: () => go('calendar') })));
+        return;
+      }
+      const works = (x, top) => topOf(x.s.main) === top || x.s.sec.some((id) => topOf(id) === top);
+      const tops = TREE.filter((t) => all.some((x) => works(x, t.id)));
+      if (filter !== 'all' && !tops.some((t) => t.id === filter)) filter = 'all';
+      body.append(chipsFor(tops, filter, (id) => (id === 'all' ? all.length : all.filter((x) => works(x, id)).length), (v) => { filter = v; }));
       const list = filter === 'all' ? all : all.filter((x) => works(x, filter));
       if (filter === 'all') {
         body.append(h('section', { class: 'sec tight' }, h('h2', { text: 'Dernière fois par groupe' }),
@@ -1088,7 +1804,142 @@
       }
       body.append(h('section', { class: 'sec tight' }, filter === 'all' ? h('h2', { text: 'Toutes les séances' }) : null, h('div', { class: 'scards' }, list.map(card))));
     }
+    function card(x) {
+      const g = GROUPS.get(x.s.main);
+      return h('button', { type: 'button', class: 'scard', style: { '--c': g.color }, onclick: () => go('session', x.key) },
+        h('div', { class: 'top' }, h('span', { class: 'date', text: dayLabel(keyDate(x.key)) }), h('span', { class: 'ago', text: ago(x.key) })),
+        h('div', { class: 'nm', text: sessionTitle(x.s) }),
+        h('div', { class: 'tags' }, tag(x.s.main, true), x.s.sec.map((id) => tag(id))),
+        h('div', { class: 'figs' },
+          h('div', {}, h('b', { text: String(x.st.nEx) }), h('span', { text: x.st.nEx > 1 ? 'exercices' : 'exercice' })),
+          h('div', {}, h('b', { text: String(x.st.nSets) }), h('span', { text: x.st.nSets > 1 ? 'séries' : 'série' })),
+          h('div', {}, h('b', { text: fmtNum(Math.round(x.st.load)) }), h('span', { text: 'kg soulevés' }))));
+    }
+    function render() {
+      renderTabs();
+      body.textContent = '';
+      if (tab === 'plans') renderPlans(); else renderDone();
+    }
     render();
+    return wrap;
+  }
+
+  /* ---------- une séance type ---------- */
+  function viewPlan(id, ui) {
+    const p = S.plans.find((x) => x.id === id);
+    const wrap = h('main', { class: 'page plan' });
+    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: 'Séance type' }), closeBtn()));
+    if (!p) { wrap.append(h('p', { class: 'empty-note', text: 'Cette séance type n’existe plus.' })); return wrap; }
+    const open = new Set(Array.isArray(ui.open) ? ui.open : []);
+    S.getUI = () => ({ open: [...open] });
+    let t = null;
+    const save = () => { clearTimeout(t); t = setTimeout(saveUser, 300); };
+    // Une séance créée puis laissée vide (sans nom ni exercice) est retirée en quittant la page.
+    S.cleanups.push(() => {
+      clearTimeout(t);
+      if (S.plans.includes(p) && !p.name.trim() && !p.items.length) S.plans = S.plans.filter((x) => x !== p);
+      saveUser();
+    });
+
+    const nameIn = h('input', { class: 'field left big', type: 'text', maxlength: '60', placeholder: 'Nom de la séance (ex. Push A)', 'aria-label': 'Nom de la séance', autocomplete: 'off', enterkeyhint: 'done' });
+    nameIn.value = p.name;
+    nameIn.addEventListener('input', () => { p.name = nameIn.value; save(); });
+
+    const folderSel = h('select', { class: 'field left', id: 'pl-folder' });
+    function fillFolders() {
+      folderSel.textContent = '';
+      const fs = [...new Set(S.folders.concat(S.plans.map((x) => x.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+      folderSel.append(h('option', { value: '', text: 'Sans dossier' }), ...fs.map((f) => h('option', { value: f, text: f })), h('option', { value: '__new', text: 'Nouveau dossier…' }));
+      folderSel.value = p.folder;
+    }
+    fillFolders();
+    folderSel.addEventListener('change', async () => {
+      if (folderSel.value === '__new') {
+        const n = await promptDialog('Nouveau dossier', 'Nom du dossier', '');
+        if (n) { p.folder = n; if (!S.folders.includes(n)) S.folders.push(n); save(); }
+        fillFolders();
+      } else { p.folder = folderSel.value; save(); }
+    });
+
+    const mainSel = h('select', { class: 'field left', id: 'pl-main' }, h('option', { value: '', text: 'Aucun' }), GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
+    mainSel.value = p.main;
+    const chipBox = h('div', { class: 'chips wrap', role: 'group', 'aria-label': 'Groupes secondaires' });
+    function renderChips() {
+      chipBox.textContent = '';
+      p.sec = p.sec.filter((x) => x !== p.main);
+      for (const g of GROUP_LIST) {
+        if (g.id === p.main) continue;
+        const b = h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(p.sec.includes(g.id)), text: g.label });
+        b.addEventListener('click', () => { if (p.sec.includes(g.id)) p.sec = p.sec.filter((x) => x !== g.id); else p.sec.push(g.id); b.setAttribute('aria-pressed', String(p.sec.includes(g.id))); save(); });
+        chipBox.append(b);
+      }
+    }
+    mainSel.addEventListener('change', () => { p.main = mainSel.value; renderChips(); save(); });
+    renderChips();
+
+    wrap.append(nameIn, h('div', { class: 'card pform' },
+      h('label', { class: 'lbl', for: 'pl-folder', text: 'Dossier' }), folderSel,
+      h('label', { class: 'lbl', for: 'pl-main', text: 'Groupe musculaire principal' }), mainSel,
+      h('div', { class: 'lbl', text: 'Groupes secondaires' }), chipBox));
+
+    const listBox = h('div');
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Exercices' }), listBox,
+      h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'plan', id: p.id }) }, icon('plus'), 'Ajouter des exercices')));
+
+    function setRows(it) {
+      const box = h('div', { class: 'psets' });
+      if (!it.sets.length) {
+        box.append(h('p', { class: 'empty-note', text: 'Pas de séries prévues : tu les choisiras le jour même.' }),
+          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push({ w: '', r: '' }); save(); renderList(); } }, 'Prévoir des séries'));
+        return box;
+      }
+      it.sets.forEach((st, j) => {
+        const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids prévu, série ' + (j + 1) });
+        const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions prévues, série ' + (j + 1), autocomplete: 'off' });
+        wIn.value = fin(st.w) ? fmtIn(st.w) : st.w || '';
+        rIn.value = fin(st.r) ? String(st.r) : st.r || '';
+        wIn.addEventListener('input', () => { st.w = wIn.value; save(); });
+        wIn.addEventListener('change', () => { st.w = numOrBlank(wIn.value); save(); });
+        rIn.addEventListener('input', () => { const n = parseNum(rIn.value); st.r = Number.isFinite(n) && n > 0 ? Math.round(n) : ''; save(); });
+        box.append(h('div', { class: 'srow' }, h('span', { class: 'n', text: String(j + 1) }), wIn, h('span', { class: 'times', text: '×' }), rIn,
+          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: numOrBlank(st.w), r: st.r }); save(); renderList(); } }, icon('copy')),
+          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); save(); renderList(); } }, icon('close'))));
+      });
+      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); save(); renderList(); } }, '+ Ajouter une série'));
+      return box;
+    }
+    function renderList() {
+      listBox.textContent = '';
+      if (!p.items.length) { listBox.append(h('p', { class: 'empty-note pad', text: 'Aucun exercice pour l’instant.' })); return; }
+      const list = h('div', { class: 'dlist' });
+      p.items.forEach((it) => {
+        const ex = getEx(it.ex);
+        const n = it.sets.length;
+        const isOpen = open.has(it.ex);
+        const head = h('div', { class: 'dhead' },
+          h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex) }, icon('grip')),
+          h('button', { type: 'button', class: 'open', 'aria-expanded': String(isOpen), onclick: () => { if (open.has(it.ex)) open.delete(it.ex); else open.add(it.ex); renderList(); } }, thumb(ex),
+            h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st', text: n ? plural(n, 'série prévue', 'séries prévues') : 'Séries libres' }))),
+          h('span', { class: 'chev' + (isOpen ? ' up' : '') }, icon('down')));
+        list.append(h('div', { class: 'sitem', 'data-id': it.ex },
+          h('article', { class: 'dcard' }, swipeable(head, () => {
+            const i = p.items.indexOf(it);
+            p.items.splice(i, 1); saveUser(); renderList();
+            toast('Exercice retiré', { ms: 6000, action: () => { p.items.splice(i, 0, it); saveUser(); renderList(); } });
+          }, 'Retirer ' + dn(ex)), isOpen ? setRows(it) : null)));
+      });
+      sortable(list, (ids) => { p.items = ids.map((x) => p.items.find((it) => it.ex === x)).filter(Boolean); saveUser(); });
+      listBox.append(list, h('p', { class: 'hint', text: 'Touche un exercice pour prévoir ses séries. Poignée : changer l’ordre. Glisser à gauche : retirer.' }));
+    }
+    renderList();
+
+    wrap.append(h('section', { class: 'sec plan-acts' },
+      h('button', { type: 'button', class: 'btn primary wide', onclick: () => startPlanToday(p) }, icon('play'), ' Faire cette séance aujourd’hui'),
+      h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette séance type', onclick: async () => {
+        const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
+        if (!ok) return;
+        S.plans = S.plans.filter((x) => x !== p); await saveUser(); goBack(); toast('Séance type supprimée');
+      } })));
     return wrap;
   }
 
