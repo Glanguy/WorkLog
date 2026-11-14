@@ -1031,10 +1031,14 @@
       const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
-      wrap.append(h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('calendar', { day: tk }) },
+      const card = h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('calendar', { day: tk }) },
         h('div', {}, h('span', { class: 'sub', text: 'Séance du jour' }), h('strong', { text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
           h('span', { class: 'prog', text: k + ' / ' + plural(tOrder.length, 'exercice fait', 'exercices faits') })),
-        h('span', { class: 'go' }, icon('right'))));
+        h('span', { class: 'go' }, icon('right')));
+      // Glisser vers la gauche : retirer la séance prévue (les séries déjà faites restent).
+      const sw = swipeable(card, () => clearPlanned(tk, () => { snapshot(); render(S.stack[S.stack.length - 1]); }), 'Retirer la séance prévue aujourd’hui');
+      sw.classList.add('today-swipe');
+      wrap.append(sw);
     }
 
     const last = lastEntry();
@@ -1786,6 +1790,11 @@
         body.append(list, h('p', { class: 'hint', text: 'Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.' }));
       }
       body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), 'Ajouter un exercice'));
+      const doneIds = new Set(entries.map((e) => e.exerciseId));
+      if (order.some((id) => !doneIds.has(id))) {
+        body.append(h('button', { type: 'button', class: 'textbtn danger center clearplan', onclick: () => clearPlanned(key, render) },
+          entries.length ? 'Retirer les exercices prévus non faits' : 'Retirer la séance prévue'));
+      }
       if (isToday && S.plans.length) body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => go('seances', { tab: 'plans' }) }, icon('folder'), 'Lancer une séance type'));
       if (entries.length) {
         body.append(h('section', { class: 'sec tight acts-day' },
@@ -1806,6 +1815,26 @@
     }
     build();
     return body;
+  }
+  /* Retire ce qui était prévu pour un jour (séance lancée avec « Aujourd'hui ») ;
+     les séries déjà enregistrées restent. Annulable quelques secondes. */
+  function clearPlanned(key, after) {
+    const oldD = S.days[key] ? JSON.parse(JSON.stringify(S.days[key])) : null;
+    const oldS = S.sessions[key] ? JSON.parse(JSON.stringify(S.sessions[key])) : null;
+    const done = new Set(dayEntries(key).map((e) => e.exerciseId));
+    const d = S.days[key];
+    if (d) {
+      d.order = d.order.filter((id) => done.has(id));
+      for (const id of Object.keys(d.plan)) if (!done.has(id)) delete d.plan[id];
+      if (!d.order.length && !d.note) delete S.days[key];
+    }
+    if (!done.size) delete S.sessions[key];
+    saveUser(); after();
+    toast(done.size ? 'Exercices prévus retirés' : 'Séance prévue retirée', { ms: 6000, action: () => {
+      if (oldD) S.days[key] = oldD; else delete S.days[key];
+      if (oldS) S.sessions[key] = oldS; else delete S.sessions[key];
+      saveUser(); after();
+    } });
   }
   function redoDay(key, select) {
     const tk = todayKey();

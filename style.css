@@ -575,3 +575,6 @@ details.loose.droptarget { background: var(--lav-soft); }
   * { transition: none !important; animation: none !important; }
 }
 .page.plan > .bar h1 { font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.swipe.today-swipe { border-radius: 22px; }
+.swipe.today-swipe .today-card { margin-bottom: 0; }
+.clearplan { margin-top: 12px; }
