@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.5.2';
+  const APP_VERSION = '0.5.3';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
@@ -370,7 +370,7 @@
       const plan = {};
       for (const [id, sets] of Object.entries(d.plan && typeof d.plan === 'object' ? d.plan : {})) { const c = cleanSets(sets); if (c.length) plan[id] = c; }
       const note = str(d.note, 4000);
-      if (order.length || note) out[k] = { order, plan, note };
+      if (order.length || note) { out[k] = { order, plan, note }; if (d.hidden === true) out[k].hidden = true; }
     }
     return out;
   }
@@ -1036,7 +1036,7 @@
 
     const tk = todayKey();
     const tOrder = dayOrder(tk);
-    if (S.days[tk] && tOrder.length) {
+    if (S.days[tk] && !S.days[tk].hidden && tOrder.length) {
       const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
@@ -1045,7 +1045,7 @@
           h('span', { class: 'prog', text: k + ' / ' + plural(tOrder.length, 'exercice fait', 'exercices faits') })),
         h('span', { class: 'go' }, icon('right')));
       // Glisser vers la gauche : retirer la séance prévue (les séries déjà faites restent).
-      const sw = swipeable(card, () => clearPlanned(tk, () => { snapshot(); render(S.stack[S.stack.length - 1]); }), 'Retirer la séance prévue aujourd’hui');
+      const sw = swipeable(card, () => clearPlanned(tk, () => { snapshot(); render(S.stack[S.stack.length - 1]); }, true), 'Retirer la séance du jour de l’accueil');
       sw.classList.add('today-swipe');
       wrap.append(sw);
     }
@@ -1678,6 +1678,7 @@
   /* Prépare une journée à partir d'une séance type ou d'une ancienne séance. */
   function startDay(key, src) {
     const d = dayMeta(key, true);
+    delete d.hidden;
     d.order = dayOrder(key);
     for (const it of src.items) {
       if (!d.order.includes(it.ex)) d.order.push(it.ex);
@@ -1827,7 +1828,7 @@
   }
   /* Retire ce qui était prévu pour un jour (séance lancée avec « Aujourd'hui ») ;
      les séries déjà enregistrées restent. Annulable quelques secondes. */
-  function clearPlanned(key, after) {
+  function clearPlanned(key, after, fromHome) {
     const oldD = S.days[key] ? JSON.parse(JSON.stringify(S.days[key])) : null;
     const oldS = S.sessions[key] ? JSON.parse(JSON.stringify(S.sessions[key])) : null;
     const done = new Set(dayEntries(key).map((e) => e.exerciseId));
@@ -1835,11 +1836,14 @@
     if (d) {
       d.order = d.order.filter((id) => done.has(id));
       for (const id of Object.keys(d.plan)) if (!done.has(id)) delete d.plan[id];
+      // Depuis l'accueil, la carte « Séance du jour » disparaît même si des séries sont déjà faites
+      // (elles restent dans le calendrier et l'historique).
+      if (fromHome) d.hidden = true;
       if (!d.order.length && !d.note) delete S.days[key];
     }
     if (!done.size) delete S.sessions[key];
     saveUser(); after();
-    toast(done.size ? 'Exercices prévus retirés' : 'Séance prévue retirée', { ms: 6000, action: () => {
+    toast(fromHome && done.size ? 'Séance du jour retirée de l’accueil, tes séries sont gardées' : done.size ? 'Exercices prévus retirés' : 'Séance prévue retirée', { ms: 6000, action: () => {
       if (oldD) S.days[key] = oldD; else delete S.days[key];
       if (oldS) S.sessions[key] = oldS; else delete S.sessions[key];
       saveUser(); after();
