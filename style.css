@@ -476,7 +476,8 @@ span.mini { width: 36px; }
 .bar .valbtn .ic { width: 18px; height: 18px; }
 
 /* transitions de page */
-#app { position: relative; z-index: 1; }
+#app { position: relative; z-index: 1; background: var(--paper); }
+.menu .ver { padding: 8px 14px 4px; font-size: 12.5px; color: var(--muted); }
 #app.enter { background: var(--paper); animation: page-in .28s cubic-bezier(.2, .8, .2, 1); box-shadow: -16px 0 32px -22px rgba(58, 51, 71, .5); }
 .pg-ghost { position: fixed; inset: 0; overflow: hidden; background: var(--paper); pointer-events: none; }
 .pg-ghost.under { z-index: 0; }

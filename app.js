@@ -14,6 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
+  const APP_VERSION = '0.5.2';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
@@ -855,8 +856,15 @@
   /* Transitions : nouvelle page qui arrive de la droite, flèche = page qui part vers la droite,
      croix = page qui descend. Le balayage depuis le bord garde l'animation du navigateur. */
   const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  /* Retire toute copie d'ancienne page restée à l'écran (animation interrompue). */
+  function clearGhosts() {
+    document.querySelectorAll('.pg-ghost').forEach((g) => g.remove());
+    app().classList.remove('enter');
+  }
+  window.addEventListener('pageshow', clearGhosts);
   function render(entry, anim) {
     const rootEl = app();
+    clearGhosts();
     let ghost = null;
     if (anim && !reduceMotion() && rootEl.firstElementChild) {
       const old = rootEl.firstElementChild;
@@ -1009,6 +1017,7 @@
       item('Calendrier', () => go('calendar')),
       item('Séances', () => go('seances')),
       item('Créer une séance', createPlan),
+      h('div', { class: 'ver', 'aria-hidden': 'true', text: 'Version ' + APP_VERSION }),
     );
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
