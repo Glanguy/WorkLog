@@ -1,7 +1,9 @@
 'use strict';
 (() => {
   /* =====================================================================
-     WorkLog V4 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     WorkLog V5 : suivi d'exercices et de charges, 100 % local sur le téléphone.
+     V5 : détail du jour sous le calendrier, séances types validées (brouillon), dossiers,
+     vignettes animées, glisser au doigt, bandeau qui réapparaît, transitions de page.
      V4 : séances types en dossiers, séance du jour (ordre, duplication), notes,
      calcul du poids, modification/suppression des séries, cardio, fichier d'activité.
      Exercices : liste fusionnée intégrée à l'app (data-v3.json), noms en anglais.
@@ -88,6 +90,8 @@
     copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 5.5H7A1.5 1.5 0 0 0 5.5 7v8.5"/>',
     grip: '<path d="M6 9h12M6 15h12"/>',
     play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+    dots: '<circle cx="5.5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18.5" cy="12" r="1.7"/>',
+    folderplus: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5V17A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17zM12 11v5M9.5 13.5h5"/>',
     folder: '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5V17A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17z"/>',
   };
   function icon(name, cls) {
@@ -161,6 +165,8 @@
     folders: [],         // noms des dossiers de séances types
     guard: null,         // saisie non validée sur la page en cours : { dirty(), save() }
     draft: null,         // saisie à remettre après « Annuler » : { id, rows }
+    planDraft: null,     // séance type en cours de création/modification : { p, isNew, base }
+    navAnim: null,       // animation de la prochaine page : 'back' (flèche) ou 'close' (croix)
     cal: null,
     alias: {},
     stack: [],
@@ -197,7 +203,37 @@
     img.src = mediaUrl(ex, kind);
     return img;
   }
-  const thumb = (ex) => photo(ex, 't', { class: 'thumb' + (ex.src === 0 ? ' sq' : ''), loading: 'lazy' });
+  /* Vignette : le gif (ExerciseDB) ou les deux photos (free-exercise-db) ne s'animent que
+     lorsque la vignette est à l'écran ; ailleurs, l'image fixe. opts.zoom : un appui l'agrandit. */
+  let thumbIO = null;
+  function watchThumb(el) {
+    if (!('IntersectionObserver' in window)) { el._play(true); return; }
+    if (!thumbIO) thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => en.target._play && en.target._play(en.isIntersecting)), { rootMargin: '40px 0px' });
+    thumbIO.observe(el);
+  }
+  function thumb(ex, opts) {
+    if (ex.missing) return h('span', { class: 'ph thumb' });
+    let el;
+    if (ex.src === 0) {
+      el = h('img', { class: 'thumb sq', alt: '', decoding: 'async', crossorigin: 'anonymous' });
+      let mode = 't'; let alt = false;
+      const set = () => { el.src = mediaUrl(ex, mode, alt); };
+      el.addEventListener('error', () => { if (!alt) { alt = true; set(); } else el.classList.add('broken'); });
+      el._play = (on) => { const m = on ? 'a' : 't'; if (m !== mode) { mode = m; alt = false; set(); } };
+      set();
+    } else {
+      el = h('span', { class: 'thumb tflip' }, photo(ex, 0, { loading: 'lazy' }));
+      let second = null;
+      el._play = (on) => { if (on && !second) { second = photo(ex, 1, { class: 'b' }); el.append(second); } el.classList.toggle('play', on); };
+    }
+    watchThumb(el);
+    if (opts && opts.zoom) {
+      el.classList.add('zoomable');
+      el.setAttribute('title', 'Agrandir');
+      el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); });
+    }
+    return el;
+  }
   /* Deux photos qui alternent (free-exercise-db). */
   function flip(ex, props) {
     const lazy = props && props.lazy ? 'lazy' : null;
@@ -618,41 +654,135 @@
     del.addEventListener('click', () => { shut(); onDelete(); });
     return wrap;
   }
-  /* ----- déplacer un élément de liste avec la poignée ----- */
-  function sortable(list, onDrop) {
-    list.addEventListener('pointerdown', (e) => {
-      const hd = e.target.closest('.handle');
-      if (!hd) return;
-      const item = hd.closest('.sitem');
-      if (!item || item.parentNode !== list) return;
+  /* ----- glisser au doigt ou à la souris depuis une poignée ----- */
+  /* Gestes tactiles natifs (le défilement et la sélection de texte sont bloqués dès que le doigt
+     touche la poignée) ; la page défile toute seule près des bords de l'écran. */
+  function dragTrack(handle, cb) {
+    let x = 0; let y = 0; let raf = 0; let on = false;
+    const loop = () => {
+      if (!on) return;
+      const H = window.innerHeight; const edge = 80;
+      let v = 0;
+      if (y < edge) v = -Math.ceil((edge - y) / 6); else if (y > H - edge) v = Math.ceil((y - (H - edge)) / 6);
+      if (v) window.scrollBy(0, v);
+      cb.move(x, y);
+      raf = requestAnimationFrame(loop);
+    };
+    const begin = (cx, cy) => { x = cx; y = cy; on = true; document.body.classList.add('dragging-now'); cb.start(x, y); raf = requestAnimationFrame(loop); };
+    const end = () => { if (!on) return; on = false; cancelAnimationFrame(raf); document.body.classList.remove('dragging-now'); cb.end(); };
+    handle.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
       e.preventDefault();
-      const pid = e.pointerId;
-      try { hd.setPointerCapture(pid); } catch (er) { /* ignoré */ }
-      const startY = e.clientY; const base = item.offsetTop;
-      item.classList.add('dragging');
-      const move = (ev) => {
-        if (ev.pointerId !== pid) return;
-        let dy = ev.clientY - startY - (item.offsetTop - base);
-        const prev = item.previousElementSibling; const next = item.nextElementSibling;
-        if (prev && dy < -prev.offsetHeight / 2) list.insertBefore(item, prev);
-        else if (next && dy > next.offsetHeight / 2) list.insertBefore(next, item);
-        dy = ev.clientY - startY - (item.offsetTop - base);
-        item.style.transform = 'translateY(' + dy + 'px)';
-      };
-      const up = (ev) => {
-        if (ev.pointerId !== pid) return;
-        hd.removeEventListener('pointermove', move); hd.removeEventListener('pointerup', up); hd.removeEventListener('pointercancel', up);
-        item.style.transform = ''; item.classList.remove('dragging');
-        onDrop([...list.children].map((c) => c.dataset.id));
-      };
-      hd.addEventListener('pointermove', move); hd.addEventListener('pointerup', up); hd.addEventListener('pointercancel', up);
+      const t = e.touches[0];
+      begin(t.clientX, t.clientY);
+      const mv = (ev) => { ev.preventDefault(); const t2 = ev.touches[0]; if (t2) { x = t2.clientX; y = t2.clientY; } };
+      const up = () => { document.removeEventListener('touchmove', mv); document.removeEventListener('touchend', up); document.removeEventListener('touchcancel', up); end(); };
+      document.addEventListener('touchmove', mv, { passive: false });
+      document.addEventListener('touchend', up);
+      document.addEventListener('touchcancel', up);
+    }, { passive: false });
+    handle.addEventListener('mousedown', (e) => {
+      if (e.button) return;
+      e.preventDefault();
+      begin(e.clientX, e.clientY);
+      const mv = (ev) => { x = ev.clientX; y = ev.clientY; };
+      const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); end(); };
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
     });
+  }
+  /* ----- changer l'ordre d'une liste avec la poignée ----- */
+  function sortable(list, onDrop) {
+    [...list.children].forEach((item) => {
+      const hd = item.querySelector('.handle');
+      if (!hd) return;
+      let startY = 0; let base = 0; let scroll0 = 0;
+      const pos = (cy) => cy - startY + (window.scrollY - scroll0) - (item.offsetTop - base);
+      dragTrack(hd, {
+        start: (cx, cy) => { startY = cy; base = item.offsetTop; scroll0 = window.scrollY; item.classList.add('dragging'); list.classList.add('sorting'); },
+        move: (cx, cy) => {
+          const dy = pos(cy);
+          const prev = item.previousElementSibling; const next = item.nextElementSibling;
+          if (prev && dy < -prev.offsetHeight / 2) list.insertBefore(item, prev);
+          else if (next && dy > next.offsetHeight / 2) list.insertBefore(next, item);
+          item.style.transform = 'translateY(' + pos(cy) + 'px)';
+        },
+        end: () => {
+          item.style.transform = ''; item.classList.remove('dragging'); list.classList.remove('sorting');
+          onDrop([...list.children].map((c) => c.dataset.id));
+        },
+      });
+    });
+  }
+  /* ----- feuille qui monte du bas de l'écran (au-dessus des fenêtres) ----- */
+  function bottomSheet(build) {
+    const scrim = h('div', { class: 'sheet-scrim' });
+    const box = h('div', { class: 'bsheet', role: 'dialog', 'aria-modal': 'true' }, h('span', { class: 'grab', 'aria-hidden': 'true' }));
+    let closed = false;
+    const close = (after) => {
+      if (closed) return; closed = true;
+      document.removeEventListener('keydown', onKey);
+      scrim.classList.add('out');
+      setTimeout(() => { scrim.remove(); if (typeof after === 'function') after(); }, 180);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(onCancel); };
+    let onCancel = null;
+    build(box, close, (fn) => { onCancel = fn; });
+    scrim.addEventListener('click', (e) => { if (e.target === scrim) close(onCancel); });
+    scrim.append(box);
+    document.body.append(scrim);
+    document.addEventListener('keydown', onKey);
+    const first = box.querySelector('button, input');
+    if (first) setTimeout(() => first.focus({ preventScroll: true }), 30);
+    return close;
+  }
+  /* Liste d'actions (menu « … »). */
+  function actionSheet(title, items) {
+    bottomSheet((box, close) => {
+      box.append(h('h2', { class: 'bs-title', text: title }));
+      for (const it of items) {
+        box.append(h('button', { type: 'button', class: 'bs-item' + (it.danger ? ' danger' : ''), onclick: () => close(it.run) },
+          it.icon ? icon(it.icon) : null, h('span', { text: it.label })));
+      }
+      box.append(h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: 'Annuler', onclick: () => close() }));
+    });
+  }
+  /* Choix des groupes secondaires : une ligne compacte qui ouvre une liste à cocher. */
+  function groupsField(get, set, getMain, id) {
+    const btn = h('button', { type: 'button', class: 'field left gfield', id, 'aria-haspopup': 'dialog' });
+    const paint = () => {
+      const v = get().filter((x) => GROUPS.has(x));
+      btn.textContent = '';
+      btn.append(h('span', { class: v.length ? 'v' : 'ph', text: v.length ? v.map((x) => GROUPS.get(x).label).join(', ') : 'Aucun' }), icon('down'));
+    };
+    btn.addEventListener('click', () => {
+      const sel = new Set(get());
+      const main = getMain();
+      bottomSheet((box, close, onCancel) => {
+        const done = () => close(() => { set(GROUP_LIST.map((g) => g.id).filter((x) => sel.has(x) && x !== main)); paint(); });
+        onCancel(() => { set(GROUP_LIST.map((g) => g.id).filter((x) => sel.has(x) && x !== main)); paint(); });
+        box.append(h('h2', { class: 'bs-title', text: 'Groupes secondaires' }));
+        const list = h('div', { class: 'gs-list' });
+        for (const g of GROUP_LIST) {
+          const isMain = g.id === main;
+          const cb = h('input', { type: 'checkbox', disabled: isMain });
+          cb.checked = sel.has(g.id) && !isMain;
+          cb.addEventListener('change', () => { if (cb.checked) sel.add(g.id); else sel.delete(g.id); });
+          list.append(h('label', { class: 'gs-row' + (g.sub ? ' sub' : '') + (isMain ? ' main' : '') },
+            cb, h('span', { class: 'dot', style: { '--c': g.color } }), h('span', { class: 'gl', text: g.label }), isMain ? h('span', { class: 'gm', text: 'principal' }) : null));
+        }
+        box.append(list, h('button', { type: 'button', class: 'btn primary wide', text: 'OK', onclick: done }));
+      });
+    });
+    paint();
+    btn.repaint = paint;
+    return btn;
   }
   /* ----- note libre, enregistrée au fil de la frappe ----- */
   function noteBox(get, set, placeholder, label) {
     const ta = h('textarea', { class: 'note', rows: '1', placeholder, 'aria-label': label });
     ta.value = get() || '';
-    const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    const fit = () => { ta.style.height = 'auto'; const b = ta.offsetHeight - ta.clientHeight; ta.style.height = (ta.scrollHeight + b) + 'px'; };
     let t = null; let dirty = false;
     const save = () => { clearTimeout(t); if (!dirty) return; dirty = false; set(ta.value.replace(/\s+$/, '')); saveUser(); };
     ta.addEventListener('input', () => { fit(); dirty = true; clearTimeout(t); t = setTimeout(save, 500); });
@@ -661,10 +791,10 @@
     requestAnimationFrame(fit);
     return h('div', { class: 'notebox' }, ta);
   }
-  function promptDialog(title, label, value) {
+  function promptDialog(title, label, value, max) {
     return new Promise((resolve) => {
       let close = null;
-      const inp = h('input', { class: 'field left', type: 'text', maxlength: '40', id: 'pr-in', autocomplete: 'off', enterkeyhint: 'done' });
+      const inp = h('input', { class: 'field left', type: 'text', maxlength: String(max || 40), id: 'pr-in', autocomplete: 'off', enterkeyhint: 'done' });
       inp.value = value || '';
       const ok = () => { const v = inp.value.trim(); close(); resolve(v || null); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
@@ -722,7 +852,22 @@
      navigateur : on revient sur la page précédente telle qu'on l'avait laissée. */
   const app = () => document.getElementById('app');
   const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan });
-  function render(entry) {
+  /* Transitions : nouvelle page qui arrive de la droite, flèche = page qui part vers la droite,
+     croix = page qui descend. Le balayage depuis le bord garde l'animation du navigateur. */
+  const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function render(entry, anim) {
+    const rootEl = app();
+    let ghost = null;
+    if (anim && !reduceMotion() && rootEl.firstElementChild) {
+      const old = rootEl.firstElementChild;
+      const inner = h('div', { class: 'ghost-in' });
+      inner.style.transform = 'translateY(' + (-window.scrollY) + 'px)';
+      old.remove();
+      inner.append(old);
+      ghost = h('div', { class: 'pg-ghost ' + (anim === 'fwd' ? 'under' : 'over'), 'aria-hidden': 'true' }, inner);
+      document.body.append(ghost);
+    }
+    if (thumbIO) { thumbIO.disconnect(); }
     S.cleanups.forEach((fn) => fn()); S.cleanups = [];
     S.getUI = null;
     S.guard = null;
@@ -733,10 +878,31 @@
     root.textContent = '';
     const fn = VIEWS()[entry.view] || viewHome;
     root.append(fn(entry.arg, entry.ui || {}));
+    if (S.planDraft && !S.stack.some((e) => e.view === 'plan')) S.planDraft = null;
     const y = (entry.ui && entry.ui.scroll) || 0;
     window.scrollTo(0, y);
     if (y) requestAnimationFrame(() => window.scrollTo(0, y));
+    lastScrollY = window.scrollY;
+    if (ghost) {
+      const cls = anim === 'fwd' ? 'enter' : anim === 'close' ? 'leave-down' : 'leave-right';
+      const done = () => { if (ghost) { ghost.remove(); ghost = null; } root.classList.remove('enter'); };
+      if (anim === 'fwd') { root.classList.add('enter'); root.addEventListener('animationend', done, { once: true }); } else { ghost.classList.add(cls); ghost.addEventListener('animationend', done, { once: true }); }
+      setTimeout(done, 700);
+    }
   }
+  /* Bandeau du haut : caché quand on descend, de retour dès qu'on remonte un peu. */
+  let lastScrollY = 0;
+  window.addEventListener('scroll', () => {
+    const bar = document.querySelector('#app > main > header.bar');
+    const yy = window.scrollY;
+    if (!bar) { lastScrollY = yy; return; }
+    bar.classList.toggle('stuck', yy > 6);
+    const dy = yy - lastScrollY;
+    if (Math.abs(dy) < 6) return;
+    if (dy > 0 && yy > 90 && !document.body.classList.contains('dragging-now')) bar.classList.add('hidebar');
+    else if (dy < 0 || yy <= 90) bar.classList.remove('hidebar');
+    lastScrollY = yy;
+  }, { passive: true });
   function snapshot() {
     const top = S.stack[S.stack.length - 1];
     if (top) top.ui = Object.assign({}, S.getUI ? S.getUI() : {}, { scroll: window.scrollY });
@@ -747,15 +913,35 @@
     const g = S.guard;
     let close = null;
     const stay = h('button', { type: 'button', class: 'btn ghost', text: 'Rester', onclick: () => close() });
+    const discard = () => { if (g.discard) g.discard(); S.guard = null; proceed(); };
     const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
-      h('h2', { id: 'dlg-t', text: 'Enregistrer ta saisie ?' }),
-      h('p', { text: 'Tu as rempli une série sans la valider.' }),
+      h('h2', { id: 'dlg-t', text: g.title || 'Enregistrer ta saisie ?' }),
+      h('p', { text: g.text || 'Tu as rempli une série sans la valider.' }),
       h('div', { class: 'acts col' },
-        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: async () => { close(); if (await g.save()) { S.guard = null; proceed(); } } }),
-        h('button', { type: 'button', class: 'btn ghost warn', text: 'Ne pas enregistrer', onclick: () => { close(); S.guard = null; proceed(); } }),
+        h('button', { type: 'button', class: 'btn primary', text: g.yes || 'Enregistrer', onclick: async () => {
+          close();
+          const miss = g.missing ? g.missing() : [];
+          if (miss.length) { if ((await missingDialog(miss, true)) === 'quit') discard(); return; }
+          if (await g.save()) { S.guard = null; proceed(); }
+        } }),
+        h('button', { type: 'button', class: 'btn ghost warn', text: g.no || 'Ne pas enregistrer', onclick: () => { close(); discard(); } }),
         stay));
     close = openModal(box);
     stay.focus();
+  }
+  /* Informations manquantes : revenir compléter, ou quitter sans enregistrer. */
+  function missingDialog(miss, withQuit) {
+    return new Promise((resolve) => {
+      let close = null;
+      const back = h('button', { type: 'button', class: 'btn primary', text: 'Compléter la séance', onclick: () => { close(); resolve('stay'); } });
+      const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+        h('h2', { id: 'dlg-t', text: 'Impossible de valider' }),
+        h('p', { text: 'Il manque ' + miss.join(' et ') + ' pour enregistrer cette séance.' }),
+        h('div', { class: 'acts col' }, back,
+          withQuit ? h('button', { type: 'button', class: 'btn ghost warn', text: 'Quitter sans enregistrer', onclick: () => { close(); resolve('quit'); } }) : null));
+      close = openModal(box, () => resolve('stay'));
+      back.focus();
+    });
   }
   const leave = (fn) => { if (guarded()) askLeave(fn); else fn(); };
   function goNow(view, arg) {
@@ -763,15 +949,24 @@
     const entry = { view, arg: arg == null ? null : arg, ui: null };
     S.stack.push(entry);
     history.pushState({ i: S.stack.length - 1, view, arg: entry.arg }, '');
-    render(entry);
+    render(entry, 'fwd');
+  }
+  /* Remplace la page en cours (après validation d'une séance type). */
+  function replaceNow(view, arg, anim) {
+    const entry = { view, arg: arg == null ? null : arg, ui: null };
+    S.stack[S.stack.length - 1] = entry;
+    history.replaceState({ i: S.stack.length - 1, view, arg: entry.arg }, '');
+    render(entry, anim);
   }
   const go = (view, arg) => leave(() => goNow(view, arg));
   const prevView = () => (S.stack.length > 1 ? S.stack[S.stack.length - 2].view : null);
   function homeNow() {
     const n = S.stack.length - 1;
-    if (n > 0) history.go(-n); else render(S.stack[0]);
+    S.navAnim = 'close';
+    if (n > 0) history.go(-n); else { S.navAnim = null; render(S.stack[0], 'close'); }
   }
-  const goBack = () => leave(() => { if (S.stack.length > 1) history.back(); else homeNow(); });
+  const backNow = () => { if (S.stack.length > 1) { S.navAnim = 'back'; history.back(); } else homeNow(); };
+  const goBack = () => leave(backNow);
   const goHome = () => leave(homeNow);
   window.addEventListener('popstate', (ev) => {
     const st = ev.state && typeof ev.state.i === 'number' ? ev.state : { i: 0, view: 'home', arg: null };
@@ -782,9 +977,11 @@
       const top = S.stack[cur];
       S.stack = S.stack.slice(0, i + 1).concat([top]);
       history.pushState({ i: i + 1, view: top.view, arg: top.arg }, '');
+      S.navAnim = null;
       askLeave(() => history.back());
       return;
     }
+    const anim = S.navAnim; S.navAnim = null;
     if (i < S.stack.length) {
       S.stack.length = i + 1;
     } else {
@@ -792,7 +989,7 @@
       while (S.stack.length < i) S.stack.push({ view: 'home', arg: null, ui: null });
       S.stack.push({ view: st.view || 'home', arg: st.arg == null ? null : st.arg, ui: null });
     }
-    render(S.stack[S.stack.length - 1]);
+    render(S.stack[S.stack.length - 1], anim);
   });
 
   /* ---------- accueil ---------- */
@@ -834,7 +1031,7 @@
       const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
-      wrap.append(h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('session', tk) },
+      wrap.append(h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('calendar', { day: tk }) },
         h('div', {}, h('span', { class: 'sub', text: 'Séance du jour' }), h('strong', { text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
           h('span', { class: 'prog', text: k + ' / ' + plural(tOrder.length, 'exercice fait', 'exercices faits') })),
         h('span', { class: 'go' }, icon('right'))));
@@ -904,7 +1101,7 @@
     wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
     wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
     wrap.append(noteBox(() => S.notes[id], (v) => { if (v.trim()) S.notes[id] = v; else delete S.notes[id]; },
-      'Ajouter une note : réglages, position de la machine…', 'Note sur l’exercice'));
+      'Note : réglages, position de la machine…', 'Note sur l’exercice'));
     if (!ex.missing) {
       wrap.append(visual(ex));
       const sec = [...new Set(ex.s.map(frMuscle))].filter((m) => m !== frMuscle(ex.p));
@@ -1203,7 +1400,7 @@
     const wrap = h('main', { class: 'page library' });
     // Mode « ajouter des exercices » à une séance du jour (pick: 'day') ou à une séance type (pick: 'plan').
     const pick = arg && arg.pick ? arg : null;
-    const pickPlan = pick && pick.pick === 'plan' ? S.plans.find((p) => p.id === pick.id) : null;
+    const pickPlan = pick && pick.pick === 'plan' ? (S.planDraft && S.planDraft.p.id === pick.id ? S.planDraft.p : S.plans.find((p) => p.id === pick.id)) : null;
     const picked = (id) => (pickPlan ? pickPlan.items.some((it) => it.ex === id) : pick ? dayOrder(pick.id).includes(id) : false);
     function togglePick(ex, row) {
       if (pickPlan) {
@@ -1215,8 +1412,9 @@
           d.order = d.order.filter((x) => x !== ex.id); delete d.plan[ex.id];
         } else if (!d.order.includes(ex.id)) d.order = dayOrder(pick.id).concat([ex.id]);
       }
-      saveUser();
+      if (!pickPlan) saveUser();
       row.classList.toggle('picked', picked(ex.id));
+      row.setAttribute('aria-checked', String(picked(ex.id)));
       countEl.textContent = pickPlan ? String(pickPlan.items.length) : String(dayOrder(pick.id).length);
     }
     const countEl = h('span', { class: 'pcount' });
@@ -1244,11 +1442,20 @@
       toast('Retiré des favoris', { ms: 5000, action: () => { S.favs.add(ex.id); saveUser(); render(); } });
     }
     const exRow = (ex, showKind) => {
-      const row = h('div', { class: 'exrow' + (pick && picked(ex.id) ? ' picked' : '') });
-      row.append(h('button', { type: 'button', class: 'open', 'aria-pressed': pick ? String(picked(ex.id)) : null, onclick: () => (pick ? togglePick(ex, row) : go('exercise', ex.id)) },
-        thumb(ex), h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: 'Étirement' }) : null)),
-      pick ? h('span', { class: 'pick', 'aria-hidden': 'true' }, icon('check')) : starBtn(ex.id, () => onStar(ex)));
-      return row;
+      const label = h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: 'Étirement' }) : null);
+      if (pick) {
+        // Toute la ligne sélectionne ; la loupe agrandit l'animation.
+        const row = h('div', { class: 'exrow pickrow' + (picked(ex.id) ? ' picked' : ''), role: 'checkbox', tabindex: '0', 'aria-checked': String(picked(ex.id)) });
+        row.addEventListener('click', () => togglePick(ex, row));
+        row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePick(ex, row); } });
+        row.append(h('span', { class: 'tw' }, thumb(ex),
+          ex.missing ? null : h('button', { type: 'button', class: 'loupe', 'aria-label': 'Agrandir l’animation de ' + dn(ex), onclick: (e) => { e.stopPropagation(); lightbox(ex); } }, icon('zoom'))),
+          label, h('span', { class: 'pick', 'aria-hidden': 'true' }, icon('check')));
+        return row;
+      }
+      return h('div', { class: 'exrow' },
+        h('button', { type: 'button', class: 'open', onclick: () => go('exercise', ex.id) }, thumb(ex, { zoom: true }), label),
+        starBtn(ex.id, () => onStar(ex)));
     };
 
     /* Un groupe repliable ; son contenu n'est construit qu'à la première ouverture. */
@@ -1470,12 +1677,16 @@
   const sessionTitle = (s) => s.name || GROUPS.get(s.main).label;
 
   /* ---------- calendrier ---------- */
-  function viewCalendar() {
+  function viewCalendar(arg, ui) {
     const wrap = h('main', { class: 'page sessions' });
     wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Calendrier' }), h('span')));
-    if (!S.cal) { const n = new Date(); S.cal = { y: n.getFullYear(), m: n.getMonth() }; }
+    let sel = /^\d{4}-\d{2}-\d{2}$/.test(ui.sel || '') ? ui.sel : (arg && arg.day) || todayKey();
+    if (!S.cal || (arg && arg.day && !ui.sel)) { const d = keyDate(sel); S.cal = { y: d.getFullYear(), m: d.getMonth() }; }
+    S.getUI = () => ({ sel });
     const box = h('div');
-    wrap.append(box);
+    const detail = h('div', { class: 'day-wrap' });
+    wrap.append(box, detail);
+    const select = (k) => { sel = k; const d = keyDate(k); S.cal = { y: d.getFullYear(), m: d.getMonth() }; render(); };
 
     function render() {
       box.textContent = '';
@@ -1501,29 +1712,33 @@
         const named = has && S.sessions[k];
         const isToday = isCurrent && d === now.getDate();
         grid.append(h('button', {
-          type: 'button', class: 'day' + (has ? ' has' : '') + (planned ? ' planned' : '') + (named ? ' named' : '') + (isToday ? ' today' : ''), disabled: !has && !planned, text: String(d),
-          style: named ? { '--c': GROUPS.get(named.main).color } : null,
-          'aria-label': has || planned ? (planned ? 'Séance prévue le ' : 'Séance du ') + d + ' ' + fMonth.format(new Date(y, m, 1)) + (named ? ' : ' + sessionTitle(named) : '') : null,
-          onclick: has || planned ? () => go('session', k) : null,
+          type: 'button', class: 'day' + (has ? ' has' : '') + (planned ? ' planned' : '') + (named ? ' named' : '') + (isToday ? ' today' : '') + (k === sel ? ' sel' : ''), text: String(d),
+          style: named ? { '--c': GROUPS.get(named.main).color } : null, 'aria-pressed': String(k === sel),
+          'aria-label': d + ' ' + fMonth.format(new Date(y, m, 1)) + (has ? ', séance' : planned ? ', séance prévue' : '') + (named ? ' : ' + sessionTitle(named) : ''),
+          onclick: () => select(k),
         }));
       }
       box.append(grid);
-      box.append(h('p', { class: 'cal-note', text: sessions ? plural(sessions, 'jour', 'jours') + ' d’entraînement ce mois-ci. Touche un carré pour revoir la séance et lui donner un nom.' : 'Aucune séance ce mois-ci.' }));
+      box.append(h('p', { class: 'cal-note', text: (sessions ? plural(sessions, 'jour', 'jours') + ' d’entraînement ce mois-ci. ' : 'Aucune séance ce mois-ci. ') + 'Touche un jour pour voir son détail en dessous.' }));
+      detail.textContent = '';
+      const sd = keyDate(sel);
+      if (sd.getFullYear() === y && sd.getMonth() === m) detail.append(dayDetail(sel, render, select));
     }
     render();
     return wrap;
   }
 
   /* ---------- une journée d'entraînement ---------- */
-  function viewSession(key) {
-    const wrap = h('main', { class: 'page session' });
-    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: dayLabel(keyDate(key)) }), closeBtn()));
-    const body = h('div');
-    wrap.append(body);
+  /* Ancien lien direct vers une journée : on ouvre le calendrier sur ce jour. */
+  function viewSession(key, ui) { return viewCalendar({ day: key }, ui || {}); }
+  function dayDetail(key, refresh, select) {
+    const body = h('section', { class: 'daydetail', 'aria-label': 'Détail du ' + dayLabel(keyDate(key)) });
     const isToday = key === todayKey();
+    const render = refresh;
 
-    function render() {
+    function build() {
       body.textContent = '';
+      body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? ' · aujourd’hui' : '') }));
       const entries = dayEntries(key);
       const order = dayOrder(key);
       const meta = S.days[key];
@@ -1556,7 +1771,7 @@
           const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? 'À faire · ' + plural(planned.length, 'série prévue', 'séries prévues') : 'À faire';
           const head = h('div', { class: 'dhead' },
             h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex), title: 'Maintenir et glisser pour déplacer' }, icon('grip')),
-            h('button', { type: 'button', class: 'open', onclick: () => go('exercise', { id, day: key }) }, thumb(ex),
+            h('button', { type: 'button', class: 'open', onclick: () => go('exercise', { id, day: key }) }, thumb(ex, { zoom: true }),
               h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st' + (sets.length ? '' : ' todo'), text: status }))),
             h('span', { class: 'chev' }, icon('right')));
           list.append(h('div', { class: 'sitem', 'data-id': id },
@@ -1574,7 +1789,7 @@
       if (isToday && S.plans.length) body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => go('seances', { tab: 'plans' }) }, icon('folder'), 'Lancer une séance type'));
       if (entries.length) {
         body.append(h('section', { class: 'sec tight acts-day' },
-          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key) }, icon('copy'), 'Refaire cette séance aujourd’hui'),
+          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key, select) }, icon('copy'), 'Refaire cette séance aujourd’hui'),
           h('button', { type: 'button', class: 'pill', onclick: () => dayToPlan(key) }, icon('folder'), 'Enregistrer comme séance type'),
           h('button', { type: 'button', class: 'pill', onclick: () => exportActivity(key) }, icon('export'), 'Exporter l’activité (Strava…)')));
       }
@@ -1589,17 +1804,17 @@
       toast(removed.length ? 'Exercice et ' + plural(removed.length, 'série supprimés', 'séries supprimés') : 'Exercice retiré', { ms: 6000,
         action: () => { S.entries.push(...removed); if (old) S.days[key] = old; saveUser(); render(); } });
     }
-    render();
-    return wrap;
+    build();
+    return body;
   }
-  function redoDay(key) {
+  function redoDay(key, select) {
     const tk = todayKey();
     const entries = dayEntries(key);
     const s = S.sessions[key];
     startDay(tk, { name: s ? s.name : '', main: s ? s.main : '', sec: s ? s.sec : [],
       items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })) });
     saveUser();
-    go('session', tk);
+    if (select) select(tk); else go('calendar', { day: tk });
     toast('Séance recopiée pour aujourd’hui : ajuste les charges si besoin.');
   }
   function dayToPlan(key) {
@@ -1607,10 +1822,9 @@
     const s = S.sessions[key];
     const p = { id: uid(), name: s ? sessionTitle(s) : 'Séance du ' + fDayShort.format(keyDate(key)), folder: '', main: s ? s.main : '', sec: s ? s.sec.slice() : [],
       items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })), created: Date.now(), last: key };
-    S.plans.push(p);
-    saveUser();
+    S.planDraft = { p, isNew: true, base: planSig(emptyPlan()) };
     go('plan', p.id);
-    toast('Séance type créée');
+    toast('Vérifie la séance puis touche « Valider »');
   }
   /* Fichier d'activité .tcx (format accepté par Strava, Garmin…) pour une journée faite. */
   function exportActivity(key) {
@@ -1660,20 +1874,9 @@
       h('option', { value: '', text: 'Choisir un groupe' }),
       GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
     sel.value = main;
-    const chipBox = h('div', { class: 'chips wrap', role: 'group', 'aria-label': 'Groupes secondaires' });
     const msg = h('p', { class: 'form-msg', role: 'alert' });
-    function renderChips() {
-      chipBox.textContent = '';
-      sec.delete(main);
-      for (const g of GROUP_LIST) {
-        if (g.id === main) continue;
-        const b = h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(sec.has(g.id)), text: g.label });
-        b.addEventListener('click', () => { if (sec.has(g.id)) sec.delete(g.id); else sec.add(g.id); b.setAttribute('aria-pressed', String(sec.has(g.id))); });
-        chipBox.append(b);
-      }
-    }
-    sel.addEventListener('change', () => { main = sel.value; msg.textContent = ''; renderChips(); });
-    renderChips();
+    const chipBox = groupsField(() => [...sec], (v) => { sec.clear(); v.forEach((x) => sec.add(x)); }, () => main, 'sess-sec');
+    sel.addEventListener('change', () => { main = sel.value; msg.textContent = ''; sec.delete(main); chipBox.repaint(); });
 
     let close = null;
     async function save() {
@@ -1691,7 +1894,7 @@
       h('h2', { id: 'dlg-t', text: cur ? 'Modifier la séance' : 'Nommer la séance' }),
       h('label', { class: 'lbl', for: 'sess-nm', text: 'Nom de la séance' }), nameIn,
       h('label', { class: 'lbl', for: 'sess-main', text: 'Groupe musculaire principal' }), sel,
-      h('div', { class: 'lbl', text: 'Groupes secondaires' }), chipBox,
+      h('label', { class: 'lbl', for: 'sess-sec', text: 'Groupes secondaires' }), chipBox,
       msg,
       h('div', { class: 'acts' },
         h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => close() }),
@@ -1701,11 +1904,28 @@
   }
 
   /* ---------- page Séances : séances types (en dossiers) et séances réalisées ---------- */
-  function createPlan() {
-    const p = { id: uid(), name: '', folder: '', main: '', sec: [], items: [], created: Date.now(), last: null };
-    S.plans.push(p);
-    saveUser();
+  const emptyPlan = () => ({ id: uid(), name: '', folder: '', main: '', sec: [], items: [], created: Date.now(), last: null });
+  const clonePlan = (p) => JSON.parse(JSON.stringify(p));
+  const planSig = (p) => JSON.stringify([p.name.trim(), p.folder, p.main, [...p.sec].sort(), p.items.map((it) => [it.ex, it.sets.map((x) => [numOrBlank(x.w), numOrBlank(x.r)])])]);
+  const planMissing = (p) => [!p.name.trim() ? 'un nom' : null, !p.items.length ? 'au moins un exercice' : null].filter(Boolean);
+  const allFolders = () => [...new Set(S.folders.concat(S.plans.map((x) => x.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
+  /* « Créer une séance » : un brouillon, enregistré seulement avec « Valider ». */
+  function createPlan(folder) {
+    const p = emptyPlan();
+    S.planDraft = { p, isNew: true, base: planSig(p) };
+    if (typeof folder === 'string') p.folder = folder;
     go('plan', p.id);
+  }
+  function commitPlan(d) {
+    const p = d.p;
+    p.name = p.name.trim();
+    p.items.forEach((it) => { it.sets = it.sets.map((x) => ({ w: numOrBlank(x.w), r: numOrBlank(x.r) })).filter((x) => x.w !== '' || x.r !== ''); });
+    if (p.folder && !S.folders.includes(p.folder)) S.folders.push(p.folder);
+    const copy = clonePlan(p);
+    const i = S.plans.findIndex((x) => x.id === p.id);
+    if (i >= 0) S.plans[i] = copy; else S.plans.push(copy);
+    d.isNew = false; d.base = planSig(p);
+    saveUser();
   }
   const planTitle = (p) => p.name.trim() || 'Séance sans nom';
   function startPlanToday(p) {
@@ -1714,8 +1934,17 @@
     startDay(tk, p);
     p.last = tk;
     saveUser();
-    go('session', tk);
+    go('calendar', { day: tk });
     toast('« ' + planTitle(p) + ' » ajoutée à aujourd’hui');
+  }
+  async function newFolder(after) {
+    const n = await promptDialog('Nouveau dossier', 'Nom du dossier', '');
+    if (!n) return null;
+    if (allFolders().some((f) => f.toLowerCase() === n.toLowerCase())) { toast('Ce dossier existe déjà.'); return allFolders().find((f) => f.toLowerCase() === n.toLowerCase()); }
+    S.folders.push(n);
+    await saveUser();
+    if (after) after(n);
+    return n;
   }
   function viewSeances(arg, ui) {
     let tab = ui.tab || (arg && arg.tab) || (S.plans.length ? 'plans' : 'done');
@@ -1738,9 +1967,66 @@
         'aria-selected': String(tab === id), text: label, onclick: () => { if (tab !== id) { tab = id; render(); window.scrollTo(0, 0); } } })));
     }
 
+    function movePlan(id, folder) {
+      const p = S.plans.find((x) => x.id === id);
+      if (!p || p.folder === folder) return;
+      p.folder = folder;
+      if (folder && !S.folders.includes(folder)) S.folders.push(folder);
+      if (folder) closedF.delete(folder); else closedF.delete('__none');
+      saveUser(); render();
+      toast('« ' + planTitle(p) + ' » déplacée dans ' + (folder ? '« ' + folder + ' »' : '« Sans dossier »'));
+    }
+    function moveMenu(p) {
+      const items = allFolders().filter((f) => f !== p.folder).map((f) => ({ label: f, icon: 'folder', run: () => movePlan(p.id, f) }));
+      if (p.folder) items.push({ label: 'Sans dossier', run: () => movePlan(p.id, '') });
+      items.push({ label: 'Nouveau dossier…', icon: 'folderplus', run: () => newFolder((n) => movePlan(p.id, n)) });
+      actionSheet('Déplacer « ' + planTitle(p) + ' » vers', items);
+    }
+    function planMenu(p) {
+      actionSheet(planTitle(p), [
+        { label: 'Déplacer vers…', icon: 'folder', run: () => moveMenu(p) },
+        { label: 'Renommer', icon: 'tag', run: async () => {
+          const n = await promptDialog('Renommer la séance', 'Nom de la séance', p.name, 60);
+          if (n) { p.name = n; await saveUser(); render(); toast('Séance renommée'); }
+        } },
+        { label: 'Dupliquer', icon: 'copy', run: () => {
+          const c = clonePlan(p); c.id = uid(); c.name = (p.name + ' (copie)').slice(0, 60); c.created = Date.now(); c.last = null;
+          S.plans.push(c); saveUser(); render(); toast('Séance dupliquée');
+        } },
+        { label: 'Supprimer', icon: 'trash', danger: true, run: async () => {
+          const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
+          if (!ok) return;
+          S.plans = S.plans.filter((x) => x !== p); await saveUser(); render(); toast('Séance supprimée');
+        } },
+      ]);
+    }
+    function folderMenu(f) {
+      actionSheet('Dossier « ' + f + ' »', [
+        { label: 'Renommer le dossier', icon: 'tag', run: async () => {
+          const n = await promptDialog('Renommer le dossier', 'Nom du dossier', f);
+          if (!n || n === f) return;
+          if (allFolders().some((x) => x !== f && x.toLowerCase() === n.toLowerCase())) { toast('Ce dossier existe déjà.'); return; }
+          S.folders = S.folders.map((x) => (x === f ? n : x));
+          if (!S.folders.includes(n)) S.folders.push(n);
+          S.plans.forEach((x) => { if (x.folder === f) x.folder = n; });
+          await saveUser(); render(); toast('Dossier renommé');
+        } },
+        { label: 'Supprimer le dossier', icon: 'trash', danger: true, run: async () => {
+          const n = S.plans.filter((x) => x.folder === f).length;
+          const ok = await confirmDialog({ title: 'Supprimer le dossier « ' + f + ' » ?', text: n ? plural(n, 'séance passe', 'séances passent') + ' dans « Sans dossier ». Aucune séance n’est supprimée.' : 'Le dossier est vide.', yes: 'Supprimer', no: 'Annuler' });
+          if (!ok) return;
+          S.folders = S.folders.filter((x) => x !== f);
+          S.plans.forEach((x) => { if (x.folder === f) x.folder = ''; });
+          await saveUser(); render(); toast('Dossier supprimé');
+        } },
+      ]);
+    }
+
     function renderPlans() {
-      body.append(h('button', { type: 'button', class: 'btn primary wide', onclick: createPlan }, icon('plus'), ' Créer une séance'));
-      if (!S.plans.length) {
+      body.append(h('div', { class: 'plan-btns' },
+        h('button', { type: 'button', class: 'btn primary wide', onclick: () => createPlan() }, icon('plus'), ' Créer une séance'),
+        h('button', { type: 'button', class: 'newfolder', onclick: () => newFolder(() => render()) }, icon('folderplus'), h('span', { text: 'Nouveau dossier' }))));
+      if (!S.plans.length && !allFolders().length) {
         body.append(h('div', { class: 'card empty-card' }, h('strong', { text: 'Aucune séance type' }),
           h('p', { text: 'Crée une séance (Push, Jambes…), ajoute ses exercices et, si tu veux, les séries et charges prévues. Range-la dans un dossier, puis lance-la le jour où tu la fais.' })));
         return;
@@ -1750,29 +2036,69 @@
       if (pfilter !== 'all' && !tops.some((t) => t.id === pfilter)) pfilter = 'all';
       if (tops.length) body.append(chipsFor(tops, pfilter, (id) => (id === 'all' ? S.plans.length : S.plans.filter((p) => works(p, id)).length), (v) => { pfilter = v; }));
       const list = pfilter === 'all' ? S.plans : S.plans.filter((p) => works(p, pfilter));
-      const folders = [...new Set(S.folders.concat(S.plans.map((p) => p.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
-      const box = h('div', { class: 'groups folders' });
-      for (const f of folders.concat([''])) {
-        const ps = list.filter((p) => p.folder === f).sort((a, b) => planTitle(a).localeCompare(planTitle(b), 'fr'));
-        if (!ps.length && (f === '' || pfilter !== 'all')) continue;
-        const key = f || '__none';
-        const d = h('details', { class: 'group' }, h('summary', {}, h('span', { class: 'fsum' }, icon('folder'), f || 'Sans dossier', h('span', { class: 'count', text: String(ps.length) })), icon('down')));
+      const sorted = (ps) => ps.sort((a, b) => planTitle(a).localeCompare(planTitle(b), 'fr'));
+      const box = h('div', { class: 'folders' });
+      const section = (key, cls, summary, ps, emptyText) => {
+        const d = h('details', { class: cls, 'data-folder': key === '__none' ? '' : key }, summary);
         d.open = !closedF.has(key);
         d.addEventListener('toggle', () => { if (d.open) closedF.delete(key); else closedF.add(key); });
-        d.append(ps.length ? h('div', { class: 'pcards' }, ps.map(planCard)) : h('p', { class: 'empty-note pad', text: 'Dossier vide.' }));
-        box.append(d);
+        d.append(ps.length ? h('div', { class: 'pcards' }, ps.map(planCard)) : h('p', { class: 'empty-note pad', text: emptyText }));
+        return d;
+      };
+      for (const f of allFolders()) {
+        const ps = sorted(list.filter((p) => p.folder === f));
+        if (!ps.length && pfilter !== 'all') continue;
+        box.append(section(f, 'group folder', h('summary', {},
+          h('span', { class: 'fsum' }, icon('folder'), h('span', { class: 'fname', text: f }), h('span', { class: 'count', text: String(ps.length) })),
+          h('button', { type: 'button', class: 'fmore', 'aria-label': 'Options du dossier ' + f, onclick: (e) => { e.preventDefault(); e.stopPropagation(); folderMenu(f); } }, icon('dots', 'fill')),
+          icon('down')), ps, 'Dossier vide : glisse une séance ici avec sa poignée, ou utilise « … » puis « Déplacer vers ».'));
+      }
+      const loose = sorted(list.filter((p) => !p.folder));
+      if (loose.length || S.plans.length) {
+        box.append(section('__none', 'loose', h('summary', {}, h('span', { class: 'lsum' }, 'Sans dossier', h('span', { class: 'count', text: String(loose.length) })), icon('down')),
+          loose, 'Aucune séance hors dossier.'));
       }
       body.append(box);
+      planDrag(box, movePlan);
     }
     function planCard(p) {
       const g = GROUPS.get(p.main);
       const nSets = p.items.reduce((n, it) => n + it.sets.length, 0);
-      return h('div', { class: 'pcard', style: g ? { '--c': g.color } : null },
+      return h('div', { class: 'pcard', 'data-id': p.id, style: g ? { '--c': g.color } : null },
+        h('span', { class: 'handle phandle', role: 'button', 'aria-label': 'Glisser « ' + planTitle(p) + ' » vers un autre dossier' }, icon('grip')),
         h('button', { type: 'button', class: 'pmain', onclick: () => go('plan', p.id) },
           h('div', { class: 'nm', text: planTitle(p) }),
           g ? h('div', { class: 'tags' }, tag(p.main, true), p.sec.map((id) => tag(id))) : null,
           h('div', { class: 'meta', text: plural(p.items.length, 'exercice', 'exercices') + (nSets ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · faite ' + ago(p.last) : '') })),
-        h('button', { type: 'button', class: 'pgo', 'aria-label': 'Faire « ' + planTitle(p) + ' » aujourd’hui', onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: 'Aujourd’hui' })));
+        h('button', { type: 'button', class: 'pgo', 'aria-label': 'Faire « ' + planTitle(p) + ' » aujourd’hui', onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: 'Aujourd’hui' })),
+        h('button', { type: 'button', class: 'pmore', 'aria-label': 'Options de « ' + planTitle(p) + ' »', onclick: () => planMenu(p) }, icon('dots', 'fill')));
+    }
+    /* Glisser une séance (poignée) et la lâcher sur un autre dossier. */
+    function planDrag(box, onDrop) {
+      box.querySelectorAll('.phandle').forEach((hd) => {
+        const card = hd.closest('.pcard');
+        let ghost = null; let target = null; let ox = 0; let oy = 0;
+        const place = (x, y) => { ghost.style.transform = 'translate(' + (x - ox) + 'px,' + (y - oy) + 'px)'; };
+        dragTrack(hd, {
+          start: (x, y) => {
+            const r = card.getBoundingClientRect(); ox = x - r.left; oy = y - r.top;
+            ghost = card.cloneNode(true); ghost.classList.add('pghost'); ghost.style.width = r.width + 'px';
+            document.body.append(ghost); card.classList.add('lifted'); place(x, y);
+          },
+          move: (x, y) => {
+            place(x, y);
+            const el = document.elementFromPoint(x, y);
+            const f = el && el.closest('[data-folder]');
+            if (f !== target) { if (target) target.classList.remove('droptarget'); target = f; if (f) f.classList.add('droptarget'); }
+          },
+          end: () => {
+            if (ghost) ghost.remove();
+            card.classList.remove('lifted');
+            if (target) { target.classList.remove('droptarget'); onDrop(card.dataset.id, target.dataset.folder || ''); }
+            target = null;
+          },
+        });
+      });
     }
 
     function renderDone() {
@@ -1806,7 +2132,7 @@
     }
     function card(x) {
       const g = GROUPS.get(x.s.main);
-      return h('button', { type: 'button', class: 'scard', style: { '--c': g.color }, onclick: () => go('session', x.key) },
+      return h('button', { type: 'button', class: 'scard', style: { '--c': g.color }, onclick: () => go('calendar', { day: x.key }) },
         h('div', { class: 'top' }, h('span', { class: 'date', text: dayLabel(keyDate(x.key)) }), h('span', { class: 'ago', text: ago(x.key) })),
         h('div', { class: 'nm', text: sessionTitle(x.s) }),
         h('div', { class: 'tags' }, tag(x.s.main, true), x.s.sec.map((id) => tag(id))),
@@ -1824,73 +2150,81 @@
     return wrap;
   }
 
-  /* ---------- une séance type ---------- */
+  /* ---------- une séance type ----------
+     On travaille sur un brouillon : rien n'est enregistré avant « Valider ». */
   function viewPlan(id, ui) {
-    const p = S.plans.find((x) => x.id === id);
+    let d = S.planDraft && S.planDraft.p.id === id ? S.planDraft : null;
+    if (!d) { const orig = S.plans.find((x) => x.id === id); if (orig) d = S.planDraft = { p: clonePlan(orig), isNew: false, base: planSig(orig) }; }
     const wrap = h('main', { class: 'page plan' });
-    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: 'Séance type' }), closeBtn()));
-    if (!p) { wrap.append(h('p', { class: 'empty-note', text: 'Cette séance type n’existe plus.' })); return wrap; }
+    const valBtn = h('button', { type: 'button', class: 'btn primary okbtn valbtn' }, icon('check'), ' Valider');
+    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: d && d.isNew ? 'Nouvelle séance' : 'Séance type' }), d ? valBtn : null, closeBtn()));
+    if (!d) { wrap.append(h('p', { class: 'empty-note', text: 'Cette séance type n’existe plus.' })); return wrap; }
+    const p = d.p;
     const open = new Set(Array.isArray(ui.open) ? ui.open : []);
     S.getUI = () => ({ open: [...open] });
-    let t = null;
-    const save = () => { clearTimeout(t); t = setTimeout(saveUser, 300); };
-    // Une séance créée puis laissée vide (sans nom ni exercice) est retirée en quittant la page.
-    S.cleanups.push(() => {
-      clearTimeout(t);
-      if (S.plans.includes(p) && !p.name.trim() && !p.items.length) S.plans = S.plans.filter((x) => x !== p);
-      saveUser();
+    const dirty = () => planSig(p) !== d.base;
+    const changed = () => { valBtn.hidden = !(d.isNew || dirty()); };
+    changed();
+
+    async function validate() {
+      const miss = planMissing(p);
+      if (miss.length) { await missingDialog(miss, false); return false; }
+      const isNew = d.isNew;
+      commitPlan(d);
+      toast(isNew ? 'Séance « ' + planTitle(p) + ' » créée' : 'Modifications enregistrées');
+      return true;
+    }
+    valBtn.addEventListener('click', async () => {
+      if (!(await validate())) return;
+      S.guard = null; S.planDraft = null;
+      if (prevView() === 'seances') backNow(); else replaceNow('seances', { tab: 'plans' }, 'back');
     });
+    S.guard = {
+      dirty, save: async () => { commitPlan(d); toast('Séance enregistrée'); S.planDraft = null; return true; },
+      missing: () => planMissing(p), discard: () => { S.planDraft = null; },
+      title: d.isNew ? 'Enregistrer la séance ?' : 'Enregistrer les changements ?',
+      text: d.isNew ? 'Cette séance n’est pas encore créée.' : 'Tu as modifié cette séance sans valider.',
+      no: d.isNew ? 'Ne pas enregistrer' : 'Ne pas enregistrer les changements',
+    };
 
     const nameIn = h('input', { class: 'field left big', type: 'text', maxlength: '60', placeholder: 'Nom de la séance (ex. Push A)', 'aria-label': 'Nom de la séance', autocomplete: 'off', enterkeyhint: 'done' });
     nameIn.value = p.name;
-    nameIn.addEventListener('input', () => { p.name = nameIn.value; save(); });
+    nameIn.addEventListener('input', () => { p.name = nameIn.value; changed(); });
 
     const folderSel = h('select', { class: 'field left', id: 'pl-folder' });
     function fillFolders() {
       folderSel.textContent = '';
-      const fs = [...new Set(S.folders.concat(S.plans.map((x) => x.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
-      folderSel.append(h('option', { value: '', text: 'Sans dossier' }), ...fs.map((f) => h('option', { value: f, text: f })), h('option', { value: '__new', text: 'Nouveau dossier…' }));
+      folderSel.append(h('option', { value: '', text: 'Sans dossier' }), ...allFolders().concat(p.folder && !allFolders().includes(p.folder) ? [p.folder] : []).map((f) => h('option', { value: f, text: f })), h('option', { value: '__new', text: '+ Nouveau dossier…' }));
       folderSel.value = p.folder;
     }
     fillFolders();
     folderSel.addEventListener('change', async () => {
       if (folderSel.value === '__new') {
-        const n = await promptDialog('Nouveau dossier', 'Nom du dossier', '');
-        if (n) { p.folder = n; if (!S.folders.includes(n)) S.folders.push(n); save(); }
-        fillFolders();
-      } else { p.folder = folderSel.value; save(); }
+        const n = await newFolder();
+        if (n) p.folder = n;
+        fillFolders(); changed();
+      } else { p.folder = folderSel.value; changed(); }
     });
 
     const mainSel = h('select', { class: 'field left', id: 'pl-main' }, h('option', { value: '', text: 'Aucun' }), GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
     mainSel.value = p.main;
-    const chipBox = h('div', { class: 'chips wrap', role: 'group', 'aria-label': 'Groupes secondaires' });
-    function renderChips() {
-      chipBox.textContent = '';
-      p.sec = p.sec.filter((x) => x !== p.main);
-      for (const g of GROUP_LIST) {
-        if (g.id === p.main) continue;
-        const b = h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(p.sec.includes(g.id)), text: g.label });
-        b.addEventListener('click', () => { if (p.sec.includes(g.id)) p.sec = p.sec.filter((x) => x !== g.id); else p.sec.push(g.id); b.setAttribute('aria-pressed', String(p.sec.includes(g.id))); save(); });
-        chipBox.append(b);
-      }
-    }
-    mainSel.addEventListener('change', () => { p.main = mainSel.value; renderChips(); save(); });
-    renderChips();
+    const secField = groupsField(() => p.sec, (v) => { p.sec = v; changed(); }, () => p.main, 'pl-sec');
+    mainSel.addEventListener('change', () => { p.main = mainSel.value; p.sec = p.sec.filter((x) => x !== p.main); secField.repaint(); changed(); });
 
     wrap.append(nameIn, h('div', { class: 'card pform' },
       h('label', { class: 'lbl', for: 'pl-folder', text: 'Dossier' }), folderSel,
       h('label', { class: 'lbl', for: 'pl-main', text: 'Groupe musculaire principal' }), mainSel,
-      h('div', { class: 'lbl', text: 'Groupes secondaires' }), chipBox));
+      h('label', { class: 'lbl', for: 'pl-sec', text: 'Groupes secondaires' }), secField));
 
     const listBox = h('div');
     wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Exercices' }), listBox,
-      h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'plan', id: p.id }) }, icon('plus'), 'Ajouter des exercices')));
+      h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => goNow('library', { pick: 'plan', id: p.id }) }, icon('plus'), 'Ajouter des exercices')));
 
     function setRows(it) {
       const box = h('div', { class: 'psets' });
       if (!it.sets.length) {
         box.append(h('p', { class: 'empty-note', text: 'Pas de séries prévues : tu les choisiras le jour même.' }),
-          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push({ w: '', r: '' }); save(); renderList(); } }, 'Prévoir des séries'));
+          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push({ w: '', r: '' }); changed(); renderList(); } }, 'Prévoir des séries'));
         return box;
       }
       it.sets.forEach((st, j) => {
@@ -1898,14 +2232,14 @@
         const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions prévues, série ' + (j + 1), autocomplete: 'off' });
         wIn.value = fin(st.w) ? fmtIn(st.w) : st.w || '';
         rIn.value = fin(st.r) ? String(st.r) : st.r || '';
-        wIn.addEventListener('input', () => { st.w = wIn.value; save(); });
-        wIn.addEventListener('change', () => { st.w = numOrBlank(wIn.value); save(); });
-        rIn.addEventListener('input', () => { const n = parseNum(rIn.value); st.r = Number.isFinite(n) && n > 0 ? Math.round(n) : ''; save(); });
+        wIn.addEventListener('input', () => { st.w = wIn.value; changed(); });
+        wIn.addEventListener('change', () => { st.w = numOrBlank(wIn.value); changed(); });
+        rIn.addEventListener('input', () => { const n = parseNum(rIn.value); st.r = Number.isFinite(n) && n > 0 ? Math.round(n) : ''; changed(); });
         box.append(h('div', { class: 'srow' }, h('span', { class: 'n', text: String(j + 1) }), wIn, h('span', { class: 'times', text: '×' }), rIn,
-          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: numOrBlank(st.w), r: st.r }); save(); renderList(); } }, icon('copy')),
-          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); save(); renderList(); } }, icon('close'))));
+          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: numOrBlank(st.w), r: st.r }); changed(); renderList(); } }, icon('copy')),
+          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))));
       });
-      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); save(); renderList(); } }, '+ Ajouter une série'));
+      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); changed(); renderList(); } }, '+ Ajouter une série'));
       return box;
     }
     function renderList() {
@@ -1918,28 +2252,36 @@
         const isOpen = open.has(it.ex);
         const head = h('div', { class: 'dhead' },
           h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex) }, icon('grip')),
-          h('button', { type: 'button', class: 'open', 'aria-expanded': String(isOpen), onclick: () => { if (open.has(it.ex)) open.delete(it.ex); else open.add(it.ex); renderList(); } }, thumb(ex),
+          h('button', { type: 'button', class: 'open', 'aria-expanded': String(isOpen), onclick: () => { if (open.has(it.ex)) open.delete(it.ex); else open.add(it.ex); renderList(); } }, thumb(ex, { zoom: true }),
             h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st', text: n ? plural(n, 'série prévue', 'séries prévues') : 'Séries libres' }))),
           h('span', { class: 'chev' + (isOpen ? ' up' : '') }, icon('down')));
         list.append(h('div', { class: 'sitem', 'data-id': it.ex },
           h('article', { class: 'dcard' }, swipeable(head, () => {
             const i = p.items.indexOf(it);
-            p.items.splice(i, 1); saveUser(); renderList();
-            toast('Exercice retiré', { ms: 6000, action: () => { p.items.splice(i, 0, it); saveUser(); renderList(); } });
+            p.items.splice(i, 1); changed(); renderList();
+            toast('Exercice retiré', { ms: 6000, action: () => { p.items.splice(i, 0, it); changed(); renderList(); } });
           }, 'Retirer ' + dn(ex)), isOpen ? setRows(it) : null)));
       });
-      sortable(list, (ids) => { p.items = ids.map((x) => p.items.find((it) => it.ex === x)).filter(Boolean); saveUser(); });
-      listBox.append(list, h('p', { class: 'hint', text: 'Touche un exercice pour prévoir ses séries. Poignée : changer l’ordre. Glisser à gauche : retirer.' }));
+      sortable(list, (ids) => { p.items = ids.map((x) => p.items.find((it) => it.ex === x)).filter(Boolean); changed(); });
+      listBox.append(list, h('p', { class: 'hint', text: 'Touche un exercice pour prévoir ses séries. Poignée ═ : changer l’ordre. Glisser à gauche : retirer.' }));
     }
     renderList();
 
-    wrap.append(h('section', { class: 'sec plan-acts' },
-      h('button', { type: 'button', class: 'btn primary wide', onclick: () => startPlanToday(p) }, icon('play'), ' Faire cette séance aujourd’hui'),
-      h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette séance type', onclick: async () => {
-        const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
-        if (!ok) return;
-        S.plans = S.plans.filter((x) => x !== p); await saveUser(); goBack(); toast('Séance type supprimée');
-      } })));
+    if (!d.isNew) {
+      wrap.append(h('section', { class: 'sec plan-acts' },
+        h('button', { type: 'button', class: 'btn ghost wide', onclick: async () => {
+          if (dirty() && !(await validate())) return;
+          S.guard = null; S.planDraft = null;
+          const saved = S.plans.find((x) => x.id === p.id);
+          if (saved) startPlanToday(saved);
+        } }, icon('play'), ' Faire cette séance aujourd’hui'),
+        h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette séance type', onclick: async () => {
+          const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
+          if (!ok) return;
+          S.plans = S.plans.filter((x) => x.id !== p.id); await saveUser();
+          S.guard = null; S.planDraft = null; backNow(); toast('Séance type supprimée');
+        } })));
+    }
     return wrap;
   }
 
