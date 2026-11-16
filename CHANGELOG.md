@@ -1,5 +1,12 @@
 # WorkLog : historique des versions
 
+## 0.6.1
+- Le mannequin 3D des 26 exercices d'étirements et de mobilité est remplacé par un corps réaliste (modèle « Male base muscular anatomy », CC BY 4.0).
+- Plus de sol ni d'ombre : on peut tourner autour du mannequin dans tous les sens, y compris par en dessous.
+- Animations plus fluides (plus d'à-coups) et contrôle automatique pour que les membres ne passent plus les uns dans les autres.
+- Nouveaux muscles colorés et nommés : psoas, piriforme, TFL, rhomboïdes, deltoïde postérieur, coiffe des rotateurs.
+- « Grand dorsal/triceps avec barre » refait d'après la vidéo (départ à genoux, puis assis sur les talons, coudes sur la caisse).
+
 ## 0.6.0
 - Nouveau : 26 exercices d'étirements et de mobilité « maison », en français, dans l'onglet Étirements de la bibliothèque.
 - Chaque exercice est montré par un mannequin 3D animé en boucle, avec les muscles ciblés colorés sur le corps et le matériel (caisse, bâton, élastique, haltère). Sur la fiche, on fait tourner le mannequin au doigt.

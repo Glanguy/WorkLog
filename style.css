@@ -591,3 +591,8 @@ canvas.m3d.m3d-thumb.big { touch-action: auto; cursor: inherit; pointer-events: 
 .vis3d .turn { margin: 0; text-align: center; font-size: 12.5px; color: var(--muted); }
 .lb-media canvas.m3d.big { height: 100%; }
 .srow.hold { grid-template-columns: auto 1fr auto auto auto; }
+
+/* ----- 0.6.1 : mannequin réaliste ----- */
+canvas.m3d { opacity: 0; transition: opacity .25s ease; }
+canvas.m3d.ready { opacity: 1; }
+canvas.m3d.ko { opacity: 1; background: var(--line, #EAE3F3); border-radius: 10px; }

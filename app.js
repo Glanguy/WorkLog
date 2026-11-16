@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.6.0';
+  const APP_VERSION = '0.6.1';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
@@ -109,6 +109,7 @@
     'abdominals': 'Abdominaux', 'glutes': 'Fessiers', 'hamstrings': 'Ischio-jambiers', 'abductors': 'Abducteurs', 'adductors': 'Adducteurs',
     'quadriceps': 'Quadriceps', 'calves': 'Mollets',
     'obliques': 'Obliques', 'hip flexors': 'Fléchisseurs de hanche', 'tibialis': 'Tibial antérieur', 'serratus': 'Dentelé antérieur', 'cardio': 'Système cardiovasculaire',
+    'psoas': 'Psoas', 'piriformis': 'Piriforme', 'tfl': 'Tenseur du fascia lata (TFL)', 'rhomboids': 'Rhomboïdes', 'rear delts': 'Deltoïde postérieur', 'rotator cuff': 'Coiffe des rotateurs',
   };
   /* Zones du schéma colorées pour chaque muscle. */
   const SLUGS = {
@@ -116,6 +117,7 @@
     'lower back': ['lower-back'], 'biceps': ['biceps'], 'triceps': ['triceps'], 'forearms': ['forearm'], 'abdominals': ['abs', 'obliques'], 'obliques': ['obliques'],
     'serratus': ['obliques'], 'glutes': ['gluteal'], 'hamstrings': ['hamstring'], 'abductors': ['gluteal'], 'adductors': ['adductors'], 'quadriceps': ['quadriceps'],
     'hip flexors': [], 'calves': ['calves'], 'tibialis': ['tibialis'], 'cardio': [],
+    'psoas': [], 'piriformis': ['gluteal'], 'tfl': ['gluteal'], 'rhomboids': ['upper-back'], 'rear delts': ['deltoids'], 'rotator cuff': ['deltoids'],
   };
   const SKIN = new Set(['head', 'hair', 'hands', 'feet', 'ankles', 'knees']);
   const frMuscle = (s) => MUSCLES[s] || cap(String(s));
@@ -276,7 +278,7 @@
     const zoom = !(opts && opts.static);
     if (ex.src === 2) {
       return h('div', { class: 'vis vis3d' }, view3d(ex, zoom, 'big'),
-        zoom ? h('p', { class: 'turn', text: 'Fais glisser le doigt sur le mannequin pour le tourner.' }) : null);
+        zoom ? h('p', { class: 'turn', text: 'Fais glisser le doigt sur le mannequin pour le tourner dans tous les sens.' }) : null);
     }
     const maps = muscleMaps(ex);
     if (ex.src === 0) {
@@ -1151,6 +1153,7 @@
         h('p', {}, h('i', { class: 'p' }), h('span', { text: 'Muscle principal : ' }), h('b', { text: frMuscle(ex.p) })),
         sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: 'Muscles secondaires : ' }), sec.join(', ')) : null));
       if (ex.src === 0) wrap.append(h('p', { class: 'credit', text: 'Animation © Gym visual' }));
+      if (ex.src === 2 && W3 && W3.credit) wrap.append(h('p', { class: 'credit', text: W3.credit }));
     }
 
     const recent = h('div', { class: 'recent' });

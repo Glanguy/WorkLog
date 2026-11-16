@@ -5,3 +5,6 @@ WorkLog - crédits des données et des images
 - free-exercise-db : données et photos dans le domaine public (github.com/yuhonas/free-exercise-db).
 - Schéma du corps (bodymap.json) : tracés issus de react-native-body-highlighter,
   Copyright (c) 2022 ELABBASSI Hicham, licence MIT (github.com/HichamELBSI/react-native-body-highlighter).
+- Mannequin 3D des exercices maison (mannequin.bin, mannequin-peau.jpg) : modèle « Male base muscular anatomy »
+  par Harshit Prajapati (sketchfab.com/harshit77), licence CC BY 4.0 (creativecommons.org/licenses/by/4.0/).
+  Modifié : squelette, zones musculaires peintes (psoas, piriforme, TFL, rhomboïdes, deltoïde postérieur), format allégé.

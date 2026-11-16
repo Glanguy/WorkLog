@@ -1,16 +1,18 @@
 'use strict';
 /* =====================================================================
    WorkLog : mannequin 3D des exercices « maison » (étirements, mobilité).
-   Tout est dessiné par le téléphone (WebGL), sans image ni réseau :
-   - un mannequin articulé, les muscles étirés colorés sur le corps ;
-   - une animation en boucle entre les positions de l'exercice ;
-   - on fait tourner le mannequin au doigt (gauche-droite, haut-bas), sans zoom.
-   Les exercices eux-mêmes sont décrits dans exercices-3d.js.
+   Le corps est un modèle réaliste articulé (mannequin.bin, mannequin-peau.jpg), dessiné par
+   le téléphone (WebGL), sans réseau :
+   - les muscles ciblés sont colorés sur le corps ;
+   - l'animation tourne en boucle entre les positions de l'exercice ;
+   - on fait tourner le mannequin au doigt dans tous les sens, y compris par en dessous, sans zoom.
+   Il n'y a ni sol ni ombre à l'écran : un repère de sol invisible sert seulement à poser les
+   mains, les genoux et les pieds. Les exercices sont décrits dans exercices-3d.js.
+   Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, licence CC BY 4.0, modifié.
    ===================================================================== */
 (function () {
   const PI = Math.PI; const D2R = PI / 180;
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-  const sstep = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
   /* ---------- vecteurs et quaternions ---------- */
   const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -23,15 +25,10 @@
   const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   const nlerp = (a, b, t) => norm(lerp(a, b, t), a);
   const perp = (v, n) => sub(v, mul(n, dot(v, n)));       // v privé de sa composante sur n (n unitaire)
-  function slerpV(a, b, t) {
-    const d = clamp(dot(a, b), -1, 1);
-    if (d > 0.9995) return nlerp(a, b, t);
-    const th = Math.acos(d); const s = Math.sin(th);
-    if (s < 1e-4) return nlerp(a, b, t);
-    return add(mul(a, Math.sin((1 - t) * th) / s), mul(b, Math.sin(t * th) / s));
-  }
+  const QI = [0, 0, 0, 1];
   const qAxis = (ax, ang) => { const s = Math.sin(ang / 2); return [ax[0] * s, ax[1] * s, ax[2] * s, Math.cos(ang / 2)]; };
   const qX = (d) => qAxis([1, 0, 0], d * D2R); const qY = (d) => qAxis([0, 1, 0], d * D2R); const qZ = (d) => qAxis([0, 0, 1], d * D2R);
+  const qConj = (q) => [-q[0], -q[1], -q[2], q[3]];
   const qMul = (a, b) => [
     a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
     a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
@@ -39,18 +36,34 @@
     a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
   function qRot(q, v) {
     const x = q[0], y = q[1], z = q[2], w = q[3];
-    const ix = w * v[0] + y * v[2] - z * v[1], iy = w * v[1] + z * v[0] - x * v[2], iz = w * v[2] + x * v[1] - y * v[0], iw = -x * v[0] - y * v[1] - z * v[2];
-    return [ix * w + iw * -x + iy * -z - iz * -y, iy * w + iw * -y + iz * -x - ix * -z, iz * w + iw * -z + ix * -y - iy * -x];
+    const tx = 2 * (y * v[2] - z * v[1]), ty = 2 * (z * v[0] - x * v[2]), tz = 2 * (x * v[1] - y * v[0]);
+    return [v[0] + w * tx + (y * tz - z * ty), v[1] + w * ty + (z * tx - x * tz), v[2] + w * tz + (x * ty - y * tx)];
   }
+  function qNorm(q) { const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0] / l, q[1] / l, q[2] / l, q[3] / l]; }
   function qSlerp(a, b, t) {
     let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
     let bb = b; if (d < 0) { d = -d; bb = [-b[0], -b[1], -b[2], -b[3]]; }
     let s0 = 1 - t, s1 = t;
     if (d < 0.9995) { const th = Math.acos(d); const s = Math.sin(th); s0 = Math.sin((1 - t) * th) / s; s1 = Math.sin(t * th) / s; }
-    const q = [a[0] * s0 + bb[0] * s1, a[1] * s0 + bb[1] * s1, a[2] * s0 + bb[2] * s1, a[3] * s0 + bb[3] * s1];
-    const l = Math.hypot(q[0], q[1], q[2], q[3]); return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
+    return qNorm([a[0] * s0 + bb[0] * s1, a[1] * s0 + bb[1] * s1, a[2] * s0 + bb[2] * s1, a[3] * s0 + bb[3] * s1]);
   }
-  const qBasis = (q) => [qRot(q, [1, 0, 0]), qRot(q, [0, 1, 0]), qRot(q, [0, 0, 1])];
+  /* Quaternion d'un repère orthonormé (trois vecteurs colonnes). */
+  function qBasis(x, y, z) {
+    const m00 = x[0], m10 = x[1], m20 = x[2], m01 = y[0], m11 = y[1], m21 = y[2], m02 = z[0], m12 = z[1], m22 = z[2];
+    const tr = m00 + m11 + m22; let q;
+    if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; q = [(m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, s / 4]; }
+    else if (m00 > m11 && m00 > m22) { const s = Math.sqrt(1 + m00 - m11 - m22) * 2; q = [s / 4, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s]; }
+    else if (m11 > m22) { const s = Math.sqrt(1 + m11 - m00 - m22) * 2; q = [(m01 + m10) / s, s / 4, (m12 + m21) / s, (m02 - m20) / s]; }
+    else { const s = Math.sqrt(1 + m22 - m00 - m11) * 2; q = [(m02 + m20) / s, (m12 + m21) / s, s / 4, (m10 - m01) / s]; }
+    return qNorm(q);
+  }
+  /* Plus petite rotation qui amène la direction a sur la direction b. */
+  function qArc(a, b) {
+    const d = dot(a, b);
+    if (d > 0.999999) return QI;
+    if (d < -0.999999) { const ax = norm(cross(Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0], a)); return [ax[0], ax[1], ax[2], 0]; }
+    const c = cross(a, b); return qNorm([c[0], c[1], c[2], 1 + d]);
+  }
 
   /* ---------- matrices 4x4 (colonnes) ---------- */
   function mMul(a, b) {
@@ -77,243 +90,93 @@
     m[8] = z[0] * sz; m[9] = z[1] * sz; m[10] = z[2] * sz;
     m[12] = o[0]; m[13] = o[1]; m[14] = o[2]; m[15] = 1; return m;
   }
-  const IDENT = mFrame([0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]);
 
-  /* ---------- maillages ---------- */
-  /* Anneaux de contrôle { y, rx, rz, zo, xo } lissés (Catmull-Rom) puis fermés par des calottes. */
-  function refine(ctrl, sub) {
-    const out = []; const g = (i) => ctrl[clamp(i, 0, ctrl.length - 1)];
-    const keys = ['y', 'rx', 'rz', 'zo', 'xo'];
-    for (let i = 0; i < ctrl.length - 1; i++) {
-      for (let k = 0; k < sub; k++) {
-        const t = k / sub; const r = {};
-        for (const key of keys) {
-          const p0 = g(i - 1)[key] || 0, p1 = g(i)[key] || 0, p2 = g(i + 1)[key] || 0, p3 = g(i + 2)[key] || 0;
-          r[key] = 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t * t * t);
-        }
-        out.push(r);
-      }
-    }
-    const l = ctrl[ctrl.length - 1]; out.push({ y: l.y, rx: l.rx, rz: l.rz, zo: l.zo || 0, xo: l.xo || 0 });
-    return out;
-  }
-  function withCaps(rings, capA, capB) {
-    const out = []; const n = 4;
-    const a = rings[0], b = rings[rings.length - 1]; const dir = Math.sign(b.y - a.y) || 1;
-    if (capA) for (let k = n; k >= 1; k--) { const ph = (k / n) * PI / 2; const c = Math.max(Math.cos(ph), 0.02); out.push({ y: a.y - dir * capA * Math.sin(ph), rx: a.rx * c, rz: a.rz * c, zo: a.zo, xo: a.xo, cap: true }); }
-    rings.forEach((r) => out.push(r));
-    if (capB) for (let k = 1; k <= n; k++) { const ph = (k / n) * PI / 2; const c = Math.max(Math.cos(ph), 0.02); out.push({ y: b.y + dir * capB * Math.sin(ph), rx: b.rx * c, rz: b.rz * c, zo: b.zo, xo: b.xo, cap: true }); }
-    return out;
-  }
-  /* Surface de révolution à section elliptique. t0/t1 : hauteurs qui valent 0 et 1 dans la coordonnée « longueur ». */
-  function lathe(rings, segs, t0, t1, map) {
-    const R = rings.length; const W = segs + 1;
-    const pos = new Float32Array(R * W * 3), uv = new Float32Array(R * W * 2);
-    for (let r = 0; r < R; r++) {
-      const g = rings[r];
-      for (let j = 0; j < W; j++) {
-        const th = -PI + (2 * PI * j) / segs; const i = r * W + j;
-        let p = [(g.xo || 0) + g.rx * Math.sin(th), g.y, (g.zo || 0) + g.rz * Math.cos(th)];
-        if (map) p = map(p);
-        pos[i * 3] = p[0]; pos[i * 3 + 1] = p[1]; pos[i * 3 + 2] = p[2];
-        uv[i * 2] = th; uv[i * 2 + 1] = (g.y - t0) / (t1 - t0);
-      }
-    }
-    const idx = new Uint16Array((R - 1) * segs * 6); let k = 0;
-    for (let r = 0; r < R - 1; r++) for (let j = 0; j < segs; j++) {
-      const a = r * W + j, b = a + 1, c = a + W, d = c + 1;
-      idx[k++] = a; idx[k++] = c; idx[k++] = b; idx[k++] = b; idx[k++] = c; idx[k++] = d;
-    }
-    const m = { pos, uv, idx, nrm: new Float32Array(R * W * 3), R, W, segs };
-    orient(m); normals(m);
-    return m;
-  }
-  function orient(m) {   // faces vers l'extérieur (volume signé positif)
-    let vol = 0; const p = m.pos; const ix = m.idx;
-    for (let i = 0; i < ix.length; i += 3) {
-      const a = ix[i] * 3, b = ix[i + 1] * 3, c = ix[i + 2] * 3;
-      vol += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
-    }
-    if (vol < 0) for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
-  }
-  function normals(m) {
-    const p = m.pos, n = m.nrm, ix = m.idx; n.fill(0);
-    for (let i = 0; i < ix.length; i += 3) {
-      const a = ix[i] * 3, b = ix[i + 1] * 3, c = ix[i + 2] * 3;
-      const ux = p[b] - p[a], uy = p[b + 1] - p[a + 1], uz = p[b + 2] - p[a + 2];
-      const vx = p[c] - p[a], vy = p[c + 1] - p[a + 1], vz = p[c + 2] - p[a + 2];
-      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-      n[a] += nx; n[a + 1] += ny; n[a + 2] += nz; n[b] += nx; n[b + 1] += ny; n[b + 2] += nz; n[c] += nx; n[c + 1] += ny; n[c + 2] += nz;
-    }
-    if (m.W) {   // couture : les deux bords partagent la même normale
-      for (let r = 0; r < m.R; r++) {
-        const a = (r * m.W) * 3, b = (r * m.W + m.segs) * 3;
-        for (let k = 0; k < 3; k++) { const s = n[a + k] + n[b + k]; n[a + k] = s; n[b + k] = s; }
-      }
-      // calottes : tous les points d'un anneau quasi ponctuel prennent la même normale
-      for (const r of [0, m.R - 1]) {
-        let sx = 0, sy = 0, sz = 0;
-        for (let j = 0; j < m.W; j++) { const a = (r * m.W + j) * 3; sx += n[a]; sy += n[a + 1]; sz += n[a + 2]; }
-        for (let j = 0; j < m.W; j++) { const a = (r * m.W + j) * 3; n[a] = sx; n[a + 1] = sy; n[a + 2] = sz; }
-      }
-    }
-    for (let i = 0; i < n.length; i += 3) { const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1; n[i] /= l; n[i + 1] /= l; n[i + 2] /= l; }
-  }
-  function merge(list) {
-    let nv = 0, ni = 0; list.forEach((m) => { nv += m.pos.length / 3; ni += m.idx.length; });
-    const o = { pos: new Float32Array(nv * 3), nrm: new Float32Array(nv * 3), uv: new Float32Array(nv * 2), idx: new Uint16Array(ni) };
-    let v = 0, i = 0;
-    for (const m of list) {
-      o.pos.set(m.pos, v * 3); o.nrm.set(m.nrm, v * 3); o.uv.set(m.uv, v * 2);
-      for (let k = 0; k < m.idx.length; k++) o.idx[i + k] = m.idx[k] + v;
-      v += m.pos.length / 3; i += m.idx.length;
-    }
-    return o;
-  }
-  function ellipsoid(c, r, segs, rings) {
-    const rs = [];
-    for (let k = 0; k <= rings; k++) { const ph = -PI / 2 + (PI * k) / rings; const s = Math.max(Math.cos(ph), 0.015); rs.push({ y: c[1] + r[1] * Math.sin(ph), rx: r[0] * s, rz: r[2] * s, xo: c[0], zo: c[2] }); }
-    return lathe(rs, segs, c[1] - r[1], c[1] + r[1]);
-  }
-  function tilt(m, ax, deg, piv) {   // incline un maillage autour d'un pivot
-    const q = qAxis(ax, deg * D2R);
-    for (let i = 0; i < m.pos.length; i += 3) {
-      const p = add(qRot(q, sub([m.pos[i], m.pos[i + 1], m.pos[i + 2]], piv)), piv); m.pos[i] = p[0]; m.pos[i + 1] = p[1]; m.pos[i + 2] = p[2];
-      const n = qRot(q, [m.nrm[i], m.nrm[i + 1], m.nrm[i + 2]]); m.nrm[i] = n[0]; m.nrm[i + 1] = n[1]; m.nrm[i + 2] = n[2];
-    }
-    return m;
-  }
-  function boxMesh() {   // cube unité centré, arêtes vives
-    const pos = [], nrm = [], idx = [];
-    const F = [[[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], [[0, 1, 0], [0, 0, 1], [1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]], [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]]];
-    for (const [n, u, v] of F) {
-      const b = pos.length / 3;
-      for (const [a, c] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const p = add(mul(n, 0.5), add(mul(u, a * 0.5), mul(v, c * 0.5))); pos.push(p[0], p[1], p[2]); nrm.push(n[0], n[1], n[2]); }
-      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
-    }
-    const m = { pos: new Float32Array(pos), nrm: new Float32Array(nrm), uv: new Float32Array(pos.length / 3 * 2), idx: new Uint16Array(idx) };
-    orient(m); return m;
-  }
-  function cylMesh(segs) {   // cylindre unité : rayon 1, de y = 0 à y = 1
-    return lathe(withCaps([{ y: 0, rx: 1, rz: 1 }, { y: 1, rx: 1, rz: 1 }], 0.001, 0.001), segs, 0, 1);
-  }
-
-  /* ---------- morphologie (mètres) ---------- */
-  const B = { hipX: 0.098, thigh: 0.43, shin: 0.42, ankle: 0.07, lum: 0.106, tho: 0.17, neck: 0.265, neckL: 0.085, shX: 0.202, shY: 0.212, upper: 0.29, fore: 0.26, hand: 0.165 };
-  const TS = 1.06;   // les hauteurs du tronc ci-dessous sont multipliées par TS
-  const TORSO_CTRL = [
-    { y: -0.105, rx: 0.090, rz: 0.080, zo: -0.005 }, { y: -0.05, rx: 0.168, rz: 0.114, zo: -0.012 }, { y: 0.0, rx: 0.186, rz: 0.122, zo: -0.016 },
-    { y: 0.07, rx: 0.172, rz: 0.112, zo: -0.010 }, { y: 0.15, rx: 0.150, rz: 0.097, zo: -0.002 }, { y: 0.22, rx: 0.156, rz: 0.100, zo: 0 },
-    { y: 0.30, rx: 0.176, rz: 0.112, zo: 0.005 }, { y: 0.38, rx: 0.192, rz: 0.122, zo: 0.008 }, { y: 0.45, rx: 0.190, rz: 0.112, zo: 0 },
-    { y: 0.495, rx: 0.150, rz: 0.094, zo: -0.004 }, { y: 0.53, rx: 0.080, rz: 0.070, zo: -0.008 }].map((r) => Object.assign(r, { y: r.y * TS }));
-  const T0 = -0.105 * TS, T1 = 0.53 * TS;
-  const ty = (y) => (y * TS - T0) / (T1 - T0);
-  const SEG = 28;
-  const M = {};
-  function buildMeshes() {
-    const torsoRings = withCaps(refine(TORSO_CTRL, 3), 0.03, 0.02);
-    M.torso = lathe(torsoRings, SEG, T0, T1); M.torso.rings = torsoRings; M.torso.dynamic = true;
-    M.neck = lathe(withCaps([{ y: -0.03, rx: 0.064, rz: 0.060 }, { y: 0.04, rx: 0.054, rz: 0.055 }, { y: 0.11, rx: 0.052, rz: 0.053 }], 0.01, 0.01), 18, 0, 0.1);
-    const head = ellipsoid([0, 0.108, 0.014], [0.086, 0.116, 0.102], 22, 14);
-    const nose = ellipsoid([0, 0.088, 0.113], [0.013, 0.022, 0.016], 8, 6);
-    const earL = ellipsoid([0.085, 0.10, 0.008], [0.010, 0.026, 0.016], 8, 6), earR = ellipsoid([-0.085, 0.10, 0.008], [0.010, 0.026, 0.016], 8, 6);
-    [nose, earL, earR].forEach((m) => m.uv.fill(9));   // hors des zones colorées
-    M.head = merge([head, nose, earL, earR]);
-    M.upper = lathe(withCaps(refine([{ y: 0, rx: 0.066, rz: 0.068 }, { y: -0.07, rx: 0.060, rz: 0.062 }, { y: -0.15, rx: 0.053, rz: 0.058 }, { y: -0.24, rx: 0.045, rz: 0.047 }, { y: -B.upper, rx: 0.042, rz: 0.043 }], 3), 0.06, 0.03), 18, 0, -B.upper);
-    M.fore = lathe(withCaps(refine([{ y: 0, rx: 0.040, rz: 0.040 }, { y: -0.07, rx: 0.047, rz: 0.045 }, { y: -0.16, rx: 0.038, rz: 0.035 }, { y: -B.fore, rx: 0.030, rz: 0.025 }], 3), 0.03, 0.015), 16, 0, -B.fore);
-    const palm = () => lathe(withCaps(refine([{ y: 0.01, rx: 0.029, rz: 0.021 }, { y: -0.04, rx: 0.041, rz: 0.018 }, { y: -0.09, rx: 0.042, rz: 0.015 }, { y: -0.14, rx: 0.035, rz: 0.012 }, { y: -0.165, rx: 0.024, rz: 0.009 }], 2), 0.012, 0.01), 14, 0, -0.165);
-    const thumb = (s) => tilt(ellipsoid([s * 0.044, -0.062, 0.006], [0.013, 0.036, 0.012], 8, 6), [0, 0, 1], s * 22, [s * 0.03, -0.03, 0]);
-    M.handL = merge([palm(), thumb(1)]); M.handR = merge([palm(), thumb(-1)]);
-    M.fist = ellipsoid([0, -0.048, 0.004], [0.040, 0.050, 0.034], 14, 10);
-    M.thigh = lathe(withCaps(refine([{ y: 0.01, rx: 0.086, rz: 0.098 }, { y: -0.08, rx: 0.091, rz: 0.099 }, { y: -0.20, rx: 0.083, rz: 0.089 }, { y: -0.33, rx: 0.067, rz: 0.071 }, { y: -B.thigh, rx: 0.058, rz: 0.061 }], 3), 0.075, 0.04), 22, 0, -B.thigh);
-    M.shin = lathe(withCaps(refine([{ y: 0, rx: 0.057, rz: 0.060, zo: 0 }, { y: -0.10, rx: 0.059, rz: 0.066, zo: -0.013 }, { y: -0.22, rx: 0.049, rz: 0.053, zo: -0.008 }, { y: -0.35, rx: 0.036, rz: 0.039, zo: 0 }, { y: -B.shin, rx: 0.034, rz: 0.038, zo: 0 }], 3), 0.04, 0.03), 20, 0, -B.shin);
-    // Pied : origine à la cheville, +Z vers les orteils, +Y vers le dessus du pied, semelle plate à y = -0.07.
-    M.foot = lathe(withCaps(refine([{ y: -0.055, rx: 0.028, rz: 0.030, zo: -0.038 }, { y: -0.02, rx: 0.036, rz: 0.040, zo: -0.032 }, { y: 0.04, rx: 0.040, rz: 0.034, zo: -0.038 },
-      { y: 0.10, rx: 0.045, rz: 0.026, zo: -0.046 }, { y: 0.155, rx: 0.045, rz: 0.019, zo: -0.052 }, { y: 0.19, rx: 0.034, rz: 0.014, zo: -0.057 }], 2), 0.012, 0.014), 16, 0, 1,
-    (p) => [p[0], Math.max(p[2], -B.ankle), p[1]]);
-    M.ball = ellipsoid([0, 0, 0], [1, 1, 1], 14, 9);
-    M.box = boxMesh(); M.cyl = cylMesh(14);
-    const q = new Float32Array([-1, 0, -1, 1, 0, -1, 1, 0, 1, -1, 0, 1]);
-    M.ground = { pos: q, nrm: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]), uv: new Float32Array(8), idx: new Uint16Array([0, 2, 1, 0, 3, 2]) };
-  }
-
-  /* ---------- zones musculaires ----------
-     Chaque zone est une tache sur une partie du corps : angle autour du membre (0° = devant,
-     90° = côté gauche du corps, 180° = derrière), position sur la longueur, demi-largeurs.
-     Les clés finissent par L (gauche) ou R (droite) ; « mir » retourne l'angle pour le côté droit. */
-  const deg = (d) => d * D2R;
-  function zone(key, th, t, a, b, sq) { return { key, th: deg(th), t, ia: 1 / deg(a), ib: 1 / b, sq: sq || 0 }; }
-  function sides(base, th, t, a, b, sq) { return [zone(base + 'L', th, t, a, b, sq), zone(base + 'R', -th, t, a, b, sq)]; }
-  const hy = (h) => h * TS / (T1 - T0);
-  const ZONES = {
-    torsoLow: [].concat(
-      [zone('abs', 0, ty(0.20), 21, hy(0.125), 0.8)], sides('obl', 62, ty(0.19), 24, hy(0.105), 0.4), sides('low', 166, ty(0.14), 14, hy(0.10), 0.5),
-      sides('lat', 124, ty(0.27), 30, hy(0.13), 0.3), sides('glute', 146, ty(-0.018), 32, hy(0.088), 0.35), sides('pir', 142, ty(0.008), 17, hy(0.027), 0),
-      sides('hipf', 31, ty(0.03), 17, hy(0.062), 0.2), sides('tfl', 84, ty(-0.005), 13, hy(0.055), 0.2)),
-    torsoUp: [].concat(
-      [zone('abs', 0, ty(0.20), 21, hy(0.125), 0.8)], sides('obl', 62, ty(0.19), 24, hy(0.105), 0.4), sides('low', 166, ty(0.14), 14, hy(0.10), 0.5),
-      sides('lat', 124, ty(0.27), 30, hy(0.13), 0.3), sides('pec', 30, ty(0.385), 29, hy(0.064), 0.6), sides('mid', 163, ty(0.345), 16, hy(0.065), 0.4),
-      sides('trap', 158, ty(0.465), 27, hy(0.055), 0.3), sides('cuff', 138, ty(0.405), 15, hy(0.045), 0.2)),
-    neckL: [zone('trapL', 115, 0.35, 60, 0.75, 0.3), zone('trapR', -115, 0.35, 60, 0.75, 0.3)],
-    upperL: [zone('bicepsL', 0, 0.62, 52, 0.26, 0.4), zone('tricepsL', 180, 0.6, 58, 0.30, 0.4), zone('deltAL', 28, 0.10, 44, 0.22, 0.2), zone('deltML', 92, 0.10, 34, 0.22, 0.2), zone('deltPL', 156, 0.10, 44, 0.22, 0.2)],
-    foreL: [zone('forearmL', 0, 0.36, 130, 0.33, 0.3)],
-    thighL: [zone('quadL', 8, 0.52, 58, 0.41, 0.5), zone('hamL', 180, 0.56, 50, 0.36, 0.5), zone('addL', -102, 0.38, 36, 0.33, 0.3), zone('tflL', 92, 0.22, 20, 0.24, 0.3), zone('gluteL', 172, 0.05, 78, 0.17, 0.3)],
-    shinL: [zone('calfL', 180, 0.29, 64, 0.27, 0.4), zone('tibL', 24, 0.42, 22, 0.32, 0.3)],
+  /* ---------- squelette du modèle ---------- */
+  const NB = 26;
+  const BN = ['Hips', 'Spine1', 'Spine2', 'Spine3', 'Spine4', 'Spine5', 'Neck1', 'Neck2', 'Neck3', 'Head', 'Clavicle_L', 'UpperArm_L', 'LowerArm_L', 'Hand_L',
+    'Clavicle_R', 'UpperArm_R', 'LowerArm_R', 'Hand_R', 'UpperLeg_L', 'LowerLeg_L', 'Foot_L', 'Toes_L', 'UpperLeg_R', 'LowerLeg_R', 'Foot_R', 'Toes_R'];
+  const X = {}; BN.forEach((n, i) => { X[n] = i; });
+  const LIMBS = ['lL', 'lR', 'aL', 'aR'];
+  const LB = {   // os de chaque membre : racine, milieu, extrémité (et orteils)
+    lL: [X.UpperLeg_L, X.LowerLeg_L, X.Foot_L, X.Toes_L], lR: [X.UpperLeg_R, X.LowerLeg_R, X.Foot_R, X.Toes_R],
+    aL: [X.UpperArm_L, X.LowerArm_L, X.Hand_L], aR: [X.UpperArm_R, X.LowerArm_R, X.Hand_R],
   };
-  const mir = (list) => list.map((z) => ({ key: z.key.replace(/L$/, 'R'), th: -z.th, t: z.t, ia: z.ia, ib: z.ib, sq: z.sq }));
-  ZONES.upperR = mir(ZONES.upperL); ZONES.foreR = mir(ZONES.foreL); ZONES.thighR = mir(ZONES.thighL); ZONES.shinR = mir(ZONES.shinL);
-  ZONES.head = [{ key: 'hair', th: PI, t: 0.80, ia: 1 / deg(150), ib: 1 / 0.36, sq: 0.2 }];
-
-  const COL = {
-    body: [0.874, 0.846, 0.930], skin: [0.918, 0.900, 0.952], zone: [0.800, 0.762, 0.886], hair: [0.560, 0.510, 0.690],
-    prim: [0.416, 0.310, 0.753], sec: [0.733, 0.659, 0.925], ink: [0.200, 0.170, 0.300],
-    wood: [0.905, 0.800, 0.640], woodDark: [0.800, 0.660, 0.450], band: [0.250, 0.640, 0.560], steel: [0.420, 0.400, 0.480],
-  };
-  const MAXZ = 16;
-  /* Tableaux d'uniformes des zones d'une partie du corps pour un exercice donné. */
-  function zoneUniforms(list, mus) {
-    const order = (list || []).slice().sort((a, b) => rank(a) - rank(b));
-    function rank(z) { const l = mus[z.key]; return z.key === 'hair' ? 0 : l === 1 ? 3 : l === 2 ? 2 : 1; }
-    const n = Math.min(order.length, MAXZ);
-    const pa = new Float32Array(MAXZ * 4), pc = new Float32Array(MAXZ * 4), ps = new Float32Array(MAXZ);
-    for (let i = 0; i < n; i++) {
-      const z = order[i]; const l = mus[z.key];
-      const c = z.key === 'hair' ? COL.hair : l === 1 ? COL.prim : l === 2 ? COL.sec : COL.zone;
-      pa.set([z.th, z.t, z.ia, z.ib], i * 4); pc.set([c[0], c[1], c[2], l || z.key === 'hair' ? 1 : 0.5], i * 4); ps[i] = z.sq;
+  let RIG = null;   // { bones, bw (repos monde), dims, repères de repos des membres, tableaux du maillage }
+  const B = { thigh: 0.434, shin: 0.405, ankle: 0.1, upper: 0.3, fore: 0.31 };
+  function parseRig(buf) {
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x314d4c57) throw new Error('fichier mannequin inattendu');
+    const hl = dv.getUint32(4, true);
+    const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, hl)));
+    const base = 8 + hl; const view = (k, T, n) => new T(buf, base + head.views[k][0], n);
+    const r = { head, nv: head.nv, ni: head.ni, groups: head.groups, zones: head.zones, credit: head.credit };
+    r.pos = view('pos', Uint16Array, head.nv * 3); r.nrm = view('nrm', Int8Array, head.nv * 4); r.uv = view('uv', Uint16Array, head.nv * 2);
+    r.jnt = view('jnt', Uint8Array, head.nv * 4); r.wgt = view('wgt', Uint8Array, head.nv * 4); r.zone = view('zone', Uint8Array, head.nv * 4); r.idx = view('idx', Uint16Array, head.ni);
+    const bones = head.bones; if (bones.length !== NB || bones.some((b, i) => b.n !== BN[i])) throw new Error('squelette inattendu');
+    r.bones = bones; r.bw = [];
+    for (let i = 0; i < NB; i++) {
+      const b = bones[i]; const p = b.p >= 0 ? r.bw[b.p] : { p: [0, 0, 0], q: QI };
+      r.bw.push({ p: add(p.p, qRot(p.q, b.t)), q: qNorm(qMul(p.q, b.r)) });
     }
-    return { n, pa, pc, ps };
+    const bp = (n) => r.bw[X[n]].p; const dirOf = (a, b) => norm(sub(bp(b), bp(a)));
+    B.thigh = len(sub(bp('LowerLeg_L'), bp('UpperLeg_L'))); B.shin = len(sub(bp('Foot_L'), bp('LowerLeg_L'))); B.ankle = bp('Foot_L')[1];
+    B.upper = len(sub(bp('LowerArm_L'), bp('UpperArm_L'))); B.fore = len(sub(bp('Hand_L'), bp('LowerArm_L')));
+    r.hipMid = mul(add(bp('UpperLeg_L'), bp('UpperLeg_R')), 0.5); r.hipOff = sub(r.hipMid, bp('Hips'));
+    const shMid = mul(add(bp('UpperArm_L'), bp('UpperArm_R')), 0.5);
+    r.cOff = sub(sub(shMid, [0, 0.212, -0.005]), bp('Spine5'));   // origine du repère « thorax » des poses, 21 cm sous les épaules
+    // Repère anatomique de chaque segment dans la pose de repos du modèle (jambes écartées, bras en croix, paumes vers le bas).
+    r.mb = {};
+    const seg = (bone, d, ax) => { const y = mul(d, -1); const x = norm(perp(ax, y)); r.mb[bone] = qBasis(x, y, cross(x, y)); };
+    for (const s of ['L', 'R']) {
+      const sg = s === 'L' ? 1 : -1;
+      seg(X['UpperLeg_' + s], dirOf('UpperLeg_' + s, 'LowerLeg_' + s), [1, 0, 0]); seg(X['LowerLeg_' + s], dirOf('LowerLeg_' + s, 'Foot_' + s), [1, 0, 0]);
+      seg(X['UpperArm_' + s], dirOf('UpperArm_' + s, 'LowerArm_' + s), [0, sg, 0]); seg(X['LowerArm_' + s], dirOf('LowerArm_' + s, 'Hand_' + s), [0, sg, 0]);
+      const toe = norm(perp(dirOf('Foot_' + s, 'Toes_' + s), [0, 1, 0])); r.mb[X['Foot_' + s]] = qBasis(cross([0, 1, 0], toe), [0, 1, 0], toe);
+      const fing = qRot(r.bw[X['Hand_' + s]].q, [0, 1, 0]); const hy = mul(fing, -1); const hz = norm(perp([0, -1, 0], hy)); r.mb[X['Hand_' + s]] = qBasis(cross(hy, hz), hy, hz);
+    }
+    return r;
   }
 
   /* ---------- pose : de la description aux articulations ----------
      Repère : le personnage debout regarde vers +Z, sa gauche est +X, le haut est +Y.
      Une pose donne le bassin (position, orientation), la colonne, la tête, puis pour chaque
      membre soit une cible (main ou cheville posée quelque part), soit des directions. */
-  const LIMBS = ['lL', 'lR', 'aL', 'aR'];
   function jq(e) { e = e || [0, 0, 0]; return qMul(qMul(qY(e[2] || 0), qZ(-(e[1] || 0))), qX(e[0] || 0)); }
   function prep(s) {
     const r = s.rot || [0, 0, 0, 0];
     const half = s.spine ? s.spine.map((v) => v / 2) : null;
     const k = {
-      pos: (s.pelvis || [0, B.thigh + B.shin + B.ankle, 0]).slice(),
+      pos: (s.pelvis || [0, 0.94, 0]).slice(),
       pq: qMul(qMul(qMul(qY(r[1] || 0), qX(r[0] || 0)), qZ(-(r[2] || 0))), qY(r[3] || 0)),
-      lq: jq(s.lumbar || half), cq: jq(s.chest || half), nq: jq(s.neck), hq: jq(s.head),
-      free: !!s.free, limbs: {},
+      lq: jq(s.lumbar || half), cq: jq(s.chest || half), nq: jq(s.neck), hq: jq(s.head), limbs: {},
     };
     for (const id of LIMBS) k.limbs[id] = Object.assign({}, s[id] || {});
     return k;
   }
-  function torsoFrames(pos, pq, lq, cq, nq, hq) {
-    const P = { o: pos, q: pq };
-    const A = { o: add(P.o, qRot(P.q, [0, B.lum, 0])), q: qMul(P.q, lq) };
-    const C = { o: add(A.o, qRot(A.q, [0, B.tho, 0])), q: qMul(A.q, cq) };
-    const N = { o: add(C.o, qRot(C.q, [0, B.neck, 0])), q: qMul(C.q, nq) };
-    const H = { o: add(N.o, qRot(N.q, [0, B.neckL, 0])), q: qMul(N.q, hq) };
-    return { P, A, C, N, H };
-  }
   const toW = (f, v) => add(f.o, qRot(f.q, v));
   const dirW = (f, v) => qRot(f.q, v);
+  const part = (q, f) => qSlerp(QI, q, f);
+  /* Tronc : la flexion des lombaires est répartie sur 2 vertèbres du modèle, celle du thorax sur 3, celle du cou sur 3. */
+  function torso(pos, pq, lq, cq, nq, hq, W, P) {
+    const R = RIG; const D = new Array(10);
+    D[0] = pq; D[1] = qMul(pq, part(lq, 0.5)); D[2] = qMul(pq, lq);
+    D[3] = qMul(D[2], part(cq, 1 / 3)); D[4] = qMul(D[2], part(cq, 2 / 3)); D[5] = qMul(D[2], cq);
+    D[6] = qMul(D[5], part(nq, 1 / 3)); D[7] = qMul(D[5], part(nq, 2 / 3)); D[8] = qMul(D[5], nq); D[9] = qMul(D[8], hq);
+    for (let i = 0; i < 10; i++) W[i] = qMul(D[i], R.bw[i].q);
+    P[0] = sub(pos, qRot(pq, R.hipOff));
+    for (let i = 1; i < 10; i++) P[i] = add(P[i - 1], qRot(W[i - 1], R.bones[i].t));
+    for (const c of [X.Clavicle_L, X.Clavicle_R]) { W[c] = qMul(D[5], R.bw[c].q); P[c] = add(P[5], qRot(W[5], R.bones[c].t)); }
+  }
+  /* Repères « bassin » et « thorax » des poses, et points utiles, d'après les os. */
+  function frames(W, P) {
+    const R = RIG;
+    const dP = qMul(W[0], qConj(R.bw[0].q)), dC = qMul(W[5], qConj(R.bw[5].q)), dH = qMul(W[9], qConj(R.bw[9].q));
+    const Pf = { o: add(P[0], qRot(dP, R.hipOff)), q: dP }; const Cf = { o: add(P[5], qRot(dC, R.cOff)), q: dC };
+    return { P: Pf, C: Cf, A: { o: P[2], q: qMul(W[2], qConj(R.bw[2].q)) }, H: { o: P[9], q: dH } };
+  }
+  function rootOf(id, W, P) { const c = id === 'aL' ? X.Clavicle_L : id === 'aR' ? X.Clavicle_R : 0; return add(P[c], qRot(W[c], RIG.bones[LB[id][0]].t)); }
   function ik(a, c, l1, l2, pole) {
-    let d = sub(c, a); let dl = len(d);
+    const d = sub(c, a); let dl = len(d);
     const max = (l1 + l2) * 0.9995, min = Math.abs(l1 - l2) + 0.01;
     const n = norm(d, [0, -1, 0]); dl = clamp(dl, min, max);
     const x = (l1 * l1 - l2 * l2 + dl * dl) / (2 * dl); const hgt = Math.sqrt(Math.max(l1 * l1 - x * x, 0));
@@ -322,18 +185,23 @@
     const end = add(a, mul(n, dl));
     return { d1: norm(sub(mid, a)), d2: norm(sub(end, mid)), pole: pp };
   }
-  /* Un membre pour une pose : directions du premier et du second segment, et côté du pli. */
-  function limbOf(id, L, F, J) {
+  /* Cible d'un membre dans une pose : fixe dans l'espace (at), attachée au corps (atb) ou à une articulation (on). */
+  /* Repère d'un os : pour un segment de membre, X = axe du pli, Y = vers la racine du membre, Z = devant ; sinon l'orientation du corps. */
+  function boneQ(name, W) { const i = X[name]; const d = qMul(W[i], qConj(RIG.bw[i].q)); return RIG.mb[i] ? qMul(d, RIG.mb[i]) : d; }
+  function onTarget(on, off, J, W) { return add(J[on[0]], on[2] ? qRot(boneQ(on[2], W), off) : off); }
+  function targetOf(id, L, F, J, W) {
+    const arm = id[0] === 'a'; const base = arm ? F.C : F.P;
+    if (L.at) return L.at;
+    if (L.atb) return toW(base, L.atb);
+    if (L.on) return onTarget(L.on, L.on[1] || [0, 0, 0], J, W);
+    return null;
+  }
+  function limbOf(id, L, F, J, root, W) {
     const arm = id[0] === 'a'; const side = id[1] === 'L' ? 1 : -1;
     const base = arm ? F.C : F.P;
-    const root = arm ? toW(F.C, add([side * B.shX, B.shY, -0.005], L.sh || [0, 0, 0])) : toW(F.P, [side * B.hipX, 0, 0]);
     const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
-    let pole = L.p ? L.p : L.pb ? dirW(base, L.pb) : dirW(base, arm ? [side * 0.5, -0.6, -0.8] : [side * 0.1, 0.1, 1]);
-    pole = norm(pole);
-    let tgt = null;
-    if (L.at) tgt = L.at;
-    else if (L.atb) tgt = toW(base, L.atb);
-    else if (L.on) tgt = add(J[L.on[0]], L.on[1] || [0, 0, 0]);
+    const pole = norm(L.p ? L.p : L.pb ? dirW(base, L.pb) : dirW(base, arm ? [side * 0.5, -0.6, -0.8] : [side * 0.1, 0.1, 1]));
+    const tgt = targetOf(id, L, F, J, W);
     if (tgt) { const r = ik(root, tgt, l1, l2, pole); return { root, ik: true, tgt, pole: r.pole, d1: r.d1, d2: r.d2 }; }
     let d1 = L.d ? L.d : L.db ? dirW(base, L.db) : dirW(base, [0, -1, 0]);
     let d2 = L.e ? L.e : L.eb ? dirW(base, L.eb) : d1;
@@ -353,12 +221,12 @@
     return { root: r.root, mid, end, x1, y1, z1, x2, y2, z2 };
   }
   /* Orientation du pied (orteils, dessus) ou de la main (doigts, paume). */
-  function endOf(id, L, fr, F) {
+  function endOf(id, L, fr, F, W) {
     const arm = id[0] === 'a'; const side = id[1] === 'L' ? 1 : -1;
     const d2 = mul(fr.y2, -1);
     if (!arm) {
       let mode = L.foot;
-      if (mode == null) mode = (fr.end[1] < 0.11 && d2[1] < -0.45) ? 'flat' : 28;
+      if (mode == null) mode = (fr.end[1] < B.ankle + 0.04 && d2[1] < -0.45) ? 'flat' : 28;
       if (mode === 'flat') {
         let toe = L.toe ? L.toe : perp(fr.z2, [0, 1, 0]);
         if (len(toe) < 0.2) toe = perp(dirW(F.P, [0, 0, 1]), [0, 1, 0]);
@@ -376,83 +244,199 @@
       if (len(dir) < 0.3) dir = perp(dirW(F.P, [0, 0, 1]), [0, 1, 0]);
       return { a: norm(perp(dir, [0, 1, 0]), [0, 0, 1]), b: [0, -1, 0] };
     }
-    if (typeof mode === 'object') { const a = norm(mode.d || d2); return { a, b: norm(perp(mode.n, a)) }; }
+    if (typeof mode === 'object') {
+      if (mode.bone) { const q = boneQ(mode.bone, W); const a = norm(qRot(q, mode.dl)); return { a, b: norm(perp(qRot(q, mode.nl), a)) }; }
+      const a = norm(mode.db ? dirW(F.C, mode.db) : mode.d || d2); return { a, b: norm(perp(mode.nb ? dirW(F.C, mode.nb) : mode.n, a)) };
+    }
     const pr = (L.pron == null ? 90 : L.pron) * D2R * -side;   // 0 : paume vers l'avant du bras ; 90 : paume vers le corps
     const n = add(mul(fr.z2, Math.cos(pr)), mul(fr.x2, Math.sin(pr)));
     let a = d2;
     if (L.wrist) a = norm(add(mul(d2, Math.cos(L.wrist * D2R)), mul(n, -Math.sin(L.wrist * D2R))));   // + : poignet en extension
     return { a, b: norm(perp(n, a)) };
   }
-  function solve(A, Bp, t) {
-    const pos = lerp(A.pos, Bp.pos, t);
-    const pq = qSlerp(A.pq, Bp.pq, t), lq = qSlerp(A.lq, Bp.lq, t), cq = qSlerp(A.cq, Bp.cq, t), nq = qSlerp(A.nq, Bp.nq, t), hq = qSlerp(A.hq, Bp.hq, t);
-    let out = null;
-    for (let pass = 0; pass < 2; pass++) {
-      const F = torsoFrames(pos, pq, lq, cq, nq, hq);
-      const J = { pelvis: F.P.o, chest: F.C.o, neck: F.N.o, head: toW(F.H, [0, 0.108, 0.014]) };
-      const limbs = {};
+  /* Points nommés (pour les accessoires, les mains posées sur un genou, le cadrage). */
+  function joints(W, P) {
+    const J = { pelvis: P[0], chest: P[5], neck: P[6], head: add(P[9], qRot(W[9], [0, 0.09, 0.02])), top: add(P[9], qRot(W[9], [0, 0.215, 0.02])) };
+    for (const s of ['L', 'R']) {
+      const h = X['Hand_' + s], f = X['Foot_' + s];
+      J['sh' + s] = P[X['UpperArm_' + s]]; J['elbow' + s] = P[X['LowerArm_' + s]]; J['wrist' + s] = P[h];
+      const fy = qRot(W[h], [0, 1, 0]); J['hand' + s] = add(P[h], mul(fy, 0.085)); J['tip' + s] = add(P[h], mul(fy, 0.18));
+      J['hip' + s] = P[X['UpperLeg_' + s]]; J['knee' + s] = P[X['LowerLeg_' + s]]; J['ankle' + s] = P[f];
+      const mb = qMul(qMul(W[f], qConj(RIG.bw[f].q)), RIG.mb[f]);   // repère du pied : Z orteils, Y dessus
+      const ez = qRot(mb, [0, 0, 1]), ey = qRot(mb, [0, 1, 0]);
+      const tb = X['Toes_' + s]; J['toe' + s] = add(P[tb], add(mul(qRot(W[tb], [0, 1, 0]), 0.07), mul(qRot(W[tb], [0, 0, 1]), 0.005))); J['heel' + s] = add(P[f], add(mul(ez, -0.055), mul(ey, 0.022 - B.ankle))); J['ball' + s] = add(P[f], add(mul(ez, 0.15), mul(ey, 0.016 - B.ankle)));
+    }
+    return J;
+  }
+  /* Pose complète : orientation et position de chaque os, le point le plus bas du corps posé sur le sol invisible. */
+  function solvePose(K) {
+    const R = RIG; const pos = K.pos.slice(); let out = null;
+    for (let pass = 0; pass < 3; pass++) {
+      const W = new Array(NB), P = new Array(NB);
+      torso(pos, K.pq, K.lq, K.cq, K.nq, K.hq, W, P);
+      const F = frames(W, P); const J = {}; const lim = {};
+      const put = (i, parent) => { P[i] = add(P[parent], qRot(W[parent], R.bones[i].t)); };
       for (const id of LIMBS) {
-        const arm = id[0] === 'a'; const sfx = id[1];
-        const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
-        const la = A.limbs[id], lb = Bp.limbs[id];
-        const ra = limbOf(id, la, F, J); const rb = t > 0 && Bp !== A ? limbOf(id, lb, F, J) : ra;
-        let r;
-        if (ra === rb) r = ra;
-        else if (ra.ik && rb.ik) { const k = ik(ra.root, lerp(ra.tgt, rb.tgt, t), l1, l2, nlerp(ra.pole, rb.pole, t)); r = { root: ra.root, pole: k.pole, d1: k.d1, d2: k.d2 }; }
-        else r = { root: ra.root, pole: nlerp(ra.pole, rb.pole, t), d1: slerpV(ra.d1, rb.d1, t), d2: slerpV(ra.d2, rb.d2, t) };
-        const fr = limbFrames(id, r, l1, l2);
-        const ea = endOf(id, la, fr, F); const eb = ra === rb ? ea : endOf(id, lb, fr, F);
-        const ea2 = ra === rb ? ea : { a: nlerp(ea.a, eb.a, t), b: nlerp(ea.b, eb.b, t) };
-        const ya = arm ? mul(ea2.a, -1) : null;
-        // main : Y = -doigts, Z = paume ; pied : Z = orteils, Y = dessus
-        fr.ex = arm ? norm(cross(ya, norm(perp(ea2.b, ea2.a)))) : norm(cross(norm(perp(ea2.b, ea2.a)), ea2.a));
-        fr.ey = arm ? ya : norm(perp(ea2.b, ea2.a)); fr.ez = arm ? norm(perp(ea2.b, ea2.a)) : ea2.a;
-        fr.grip = (t < 0.5 ? la.grip : lb.grip) || false;
-        limbs[id] = fr;
-        if (arm) { J['sh' + sfx] = fr.root; J['elbow' + sfx] = fr.mid; J['wrist' + sfx] = fr.end; J['hand' + sfx] = add(fr.end, mul(fr.ey, -0.075)); J['tip' + sfx] = add(fr.end, mul(fr.ey, fr.grip ? -0.09 : -0.17)); }
-        else { J['hip' + sfx] = fr.root; J['knee' + sfx] = fr.mid; J['ankle' + sfx] = fr.end; J['toe' + sfx] = add(fr.end, add(mul(fr.ez, 0.19), mul(fr.ey, -0.055))); J['heel' + sfx] = add(fr.end, add(mul(fr.ez, -0.05), mul(fr.ey, -0.05))); J['ball' + sfx] = add(fr.end, add(mul(fr.ez, 0.13), mul(fr.ey, -0.055))); }
+        const arm = id[0] === 'a'; const sfx = id[1]; const [u, l, e, toes] = LB[id];
+        const L = K.limbs[id]; const root = rootOf(id, W, P);
+        const r = limbOf(id, L, F, J, root, W);
+        const fr = limbFrames(id, r, arm ? B.upper : B.thigh, arm ? B.fore : B.shin);
+        const en = endOf(id, L, fr, F, W); const eb = norm(perp(en.b, en.a));
+        const qe = arm ? qBasis(cross(mul(en.a, -1), eb), mul(en.a, -1), eb) : qBasis(cross(eb, en.a), eb, en.a);
+        const setB = (i, q) => { W[i] = qNorm(qMul(qMul(q, qConj(R.mb[i])), R.bw[i].q)); };
+        P[u] = root; setB(u, qBasis(fr.x1, fr.y1, fr.z1)); put(l, u); setB(l, qBasis(fr.x2, fr.y2, fr.z2)); put(e, l); setB(e, qe);
+        if (toes != null) { W[toes] = qMul(qMul(qMul(W[e], qConj(R.bw[e].q)), R.bw[toes].q), qX(L.toes || 0)); put(toes, e); }
+        lim[id] = { ik: r.ik, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik };
+        if (arm) { J['wrist' + sfx] = P[e]; J['elbow' + sfx] = P[l]; J['sh' + sfx] = P[u]; J['hand' + sfx] = add(P[e], mul(en.a, 0.085)); }
+        else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
-      out = { F, J, limbs };
-      if (pass === 1 || (A.free && Bp.free)) break;
-      // Le point le plus bas du corps touche le sol.
+      const JJ = joints(W, P);
+      out = { hp: P[0], W, P, J: JJ, lim };
+      if (pass === 2) break;
+      const C = F.C;
       const probes = [
-        [J.heelL, 0.02], [J.heelR, 0.02], [J.ballL, 0.015], [J.ballR, 0.015], [J.toeL, 0.012], [J.toeR, 0.012], [J.ankleL, 0.034], [J.ankleR, 0.034],
-        [J.kneeL, 0.054], [J.kneeR, 0.054], [toW(F.P, [0.09, -0.03, -0.035]), 0.105], [toW(F.P, [-0.09, -0.03, -0.035]), 0.105], [toW(F.P, [0, -0.01, 0.02]), 0.1], [toW(F.P, [0, -0.07, 0]), 0.075],
-        [toW(F.A, [0, 0.07, 0]), 0.094], [toW(F.C, [0, 0.10, 0.005]), 0.114], [toW(F.C, [0.07, 0.17, 0]), 0.105], [toW(F.C, [-0.07, 0.17, 0]), 0.105],
-        [J.shL, 0.062], [J.shR, 0.062], [J.elbowL, 0.038], [J.elbowR, 0.038], [J.wristL, 0.026], [J.wristR, 0.026], [J.handL, 0.018], [J.handR, 0.018], [J.tipL, 0.01], [J.tipR, 0.01], [J.head, 0.1],
+        [JJ.heelL, 0.022], [JJ.heelR, 0.022], [JJ.ballL, 0.016], [JJ.ballR, 0.016], [JJ.toeL, 0.012], [JJ.toeR, 0.012], [JJ.ankleL, 0.04], [JJ.ankleR, 0.04],
+        [JJ.kneeL, 0.058], [JJ.kneeR, 0.058], [toW(F.P, [0.09, -0.02, -0.06]), 0.1], [toW(F.P, [-0.09, -0.02, -0.06]), 0.1], [toW(F.P, [0, 0.01, 0.02]), 0.1], [toW(F.P, [0, -0.07, 0]), 0.075],
+        [toW(F.A, [0, 0.03, 0]), 0.105], [toW(C, [0, 0.08, 0.005]), 0.125], [toW(C, [0.1, 0.17, -0.02]), 0.1], [toW(C, [-0.1, 0.17, -0.02]), 0.1],
+        [JJ.shL, 0.07], [JJ.shR, 0.07], [JJ.elbowL, 0.045], [JJ.elbowR, 0.045], [JJ.wristL, 0.028], [JJ.wristR, 0.028], [JJ.handL, 0.02], [JJ.handR, 0.02], [JJ.tipL, 0.011], [JJ.tipR, 0.011], [JJ.head, 0.105],
       ];
-      let low = Infinity; for (const [p, r] of probes) low = Math.min(low, p[1] - r);
+      let low = Infinity; for (const [p, rr] of probes) low = Math.min(low, p[1] - rr);
       if (Math.abs(low) < 1e-4) break;
       pos[1] -= low;
     }
+    // Rotations de chaque os par rapport à son parent : c'est elles qu'on fait varier d'une pose à l'autre.
+    for (const id of ['lL', 'lR']) { const m = out.lim[id]; if (m.free && out.P[LB[id][2]][1] < 0.135) { m.ik = true; m.kind = 'at'; m.tgt = out.P[LB[id][2]]; } }
+    out.ql = out.W.map((q, i) => (R.bones[i].p >= 0 ? qNorm(qMul(qConj(out.W[R.bones[i].p]), q)) : q));
     return out;
   }
-
-  /* Tronc : anneaux portés par le bassin, la taille et le thorax, mélangés près des articulations. */
-  function skinTorso(mesh, F) {
-    const fr = [F.P, F.A, F.C].map((f) => ({ o: f.o, b: qBasis(f.q) }));
-    const rest = [0, B.lum, B.lum + B.tho];
-    const p = mesh.pos; const W = mesh.W; let i = 0;
-    for (let r = 0; r < mesh.R; r++) {
-      const g = mesh.rings[r];
-      const s1 = sstep(B.lum - 0.075, B.lum + 0.075, g.y), s2 = sstep(B.lum + B.tho - 0.075, B.lum + B.tho + 0.075, g.y);
-      const w = [1 - s1, s1 * (1 - s2), s1 * s2];
-      let c = [0, 0, 0], X = [0, 0, 0], Y = [0, 0, 0], Z = [0, 0, 0];
-      for (let k = 0; k < 3; k++) {
-        if (w[k] < 1e-4) continue; const f = fr[k];
-        c = add(c, mul(add(f.o, mul(f.b[1], g.y - rest[k])), w[k]));
-        X = add(X, mul(f.b[0], w[k])); Y = add(Y, mul(f.b[1], w[k])); Z = add(Z, mul(f.b[2], w[k]));
-      }
-      Y = norm(Y); X = norm(perp(X, Y)); Z = cross(X, Y);
-      for (let j = 0; j < W; j++) {
-        const th = -PI + (2 * PI * j) / mesh.segs; const sx = g.rx * Math.sin(th), sz = (g.zo || 0) + g.rz * Math.cos(th);
-        p[i++] = c[0] + X[0] * sx + Z[0] * sz; p[i++] = c[1] + X[1] * sx + Z[1] * sz; p[i++] = c[2] + X[2] * sx + Z[2] * sz;
+  /* Entre deux poses : chaque articulation tourne en douceur, puis les mains et les pieds posés
+     quelque part sont ramenés exactement sur leur appui. Aucun seuil, donc aucun à-coup. */
+  function blend(A, Bp, t) {
+    const R = RIG; const W = new Array(NB), P = new Array(NB);
+    for (let i = 0; i < NB; i++) {
+      const p = R.bones[i].p; const ql = A === Bp ? A.ql[i] : qSlerp(A.ql[i], Bp.ql[i], t);
+      if (p < 0) { W[i] = ql; P[i] = A === Bp ? A.hp : lerp(A.hp, Bp.hp, t); } else { W[i] = qNorm(qMul(W[p], ql)); P[i] = add(P[p], qRot(W[p], R.bones[i].t)); }
+    }
+    if (A !== Bp) {
+      let F = null; const J = {};
+      for (const id of LIMBS) {
+        const arm = id[0] === 'a'; const sfx = id[1]; const [u, l, e, toes] = LB[id];
+        const a = A.lim[id], b = Bp.lim[id];
+        if (a.ik && b.ik) {
+          if (!F) F = frames(W, P);
+          let tgt;
+          if (a.kind === 'on' && b.kind === 'on' && a.on[0] === b.on[0] && a.on[2] === b.on[2] && J[a.on[0]]) tgt = onTarget(a.on, lerp(a.on[1] || [0, 0, 0], b.on[1] || [0, 0, 0], t), J, W);
+          else if (a.kind === 'atb' && b.kind === 'atb') tgt = toW(arm ? F.C : F.P, lerp(a.atb, b.atb, t));
+          else tgt = lerp(a.tgt, b.tgt, t);
+          const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
+          const root = P[u]; const n = norm(sub(tgt, root), [0, -1, 0]);
+          let pole = perp(sub(P[l], root), n); if (len(pole) < 0.004) pole = nlerp(a.pole, b.pole, t);
+          const k = ik(root, tgt, l1, l2, pole);
+          const q1 = qArc(norm(sub(P[l], root)), k.d1); const d2 = qRot(q1, norm(sub(P[e], P[l]))); const q2 = qArc(d2, k.d2); const q21 = qMul(q2, q1);
+          const wToes = toes != null ? qMul(qConj(W[e]), W[toes]) : null;
+          W[u] = qNorm(qMul(q1, W[u])); W[l] = qNorm(qMul(q21, W[l]));
+          W[e] = (a.kind === 'at' && b.kind === 'at') ? qSlerp(A.W[e], Bp.W[e], t) : qNorm(qMul(q21, W[e]));
+          P[l] = add(root, mul(k.d1, l1)); P[e] = add(P[l], mul(k.d2, l2));
+          if (toes != null) { W[toes] = qNorm(qMul(W[e], wToes)); P[toes] = add(P[e], qRot(W[e], R.bones[toes].t)); }
+        }
+        if (arm) { J['wrist' + sfx] = P[e]; J['elbow' + sfx] = P[l]; J['sh' + sfx] = P[u]; J['hand' + sfx] = add(P[e], mul(qRot(W[e], [0, 1, 0]), 0.085)); }
+        else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
     }
-    normals(mesh);
+    return { W, P, J: joints(W, P), grip: { L: (t < 0.5 ? A : Bp).lim.aL.grip, R: (t < 0.5 ? A : Bp).lim.aR.grip } };
+  }
+
+  /* ---------- exercices ---------- */
+  const EX = new Map();
+  /* Clés des muscles dans les exercices -> groupe du modèle (g) ou zone peinte (z). */
+  const MG = { quad: 'quadriceps', ham: 'ischios', add: 'adducteurs', abd: 'abducteurs', calf: 'mollets', tib: 'jambiers', glute: 'fessiers', obl: 'obliques', low: 'lombaires',
+    lat: 'dorsaux', pec: 'pectoraux', trap: 'trapezes', neck: 'cou', cuff: 'coiffe', delt: 'deltoides', biceps: 'biceps', triceps: 'triceps', forearm: 'avant_bras', serr: 'dentele', abs: 'abdominaux' };
+  const MZ = { psoas: 'psoas', pir: 'piriforme', tfl: 'tfl', rhomb: 'rhomboides', deltP: 'deltpost' };
+  function define(list) { for (const e of list) EX.set(e.id, Object.assign({}, e, { K: null, S: null, fit: null, tint: null })); }
+  function ready(ex) {
+    if (ex.S) return;
+    ex.K = {}; ex.S = {};
+    for (const [k, v] of Object.entries(ex.poses)) { ex.K[k] = prep(v); ex.S[k] = solvePose(ex.K[k]); }
+  }
+  function timeline(ex, time) {
+    const seq = ex.seq; let total = 0; for (const s of seq) total += s[1] + s[2];
+    let t = (time * (ex.speed || 1)) % total;
+    for (let i = 0; i < seq.length; i++) {
+      const [k, hold, move] = seq[i];
+      if (t < hold) return [ex.S[k], ex.S[k], 0];
+      t -= hold;
+      if (t < move) { const u = t / move; return [ex.S[k], ex.S[seq[(i + 1) % seq.length][0]], u * u * (3 - 2 * u)]; }
+      t -= move;
+    }
+    return [ex.S[seq[0][0]], ex.S[seq[0][0]], 0];
+  }
+  function fitOf(ex) {
+    if (ex.fit) return ex.fit;
+    ready(ex); const pts = [];
+    for (const s of Object.values(ex.S)) {
+      for (const [n, p] of Object.entries(s.J)) pts.push([p, /^(tip|toe|heel|ball|hand|wrist|top)/.test(n) ? 0.035 : 0.1]);
+      for (const pr of ex.props || []) {
+        if (pr.type === 'box') for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const sy of [0, 1]) pts.push([add(pr.pos, [sx * pr.size[0] / 2, sy * pr.size[1], sz * pr.size[2] / 2]), 0]);
+        if (pr.type === 'dumbbell') pts.push([add(pr.pos, [0.17, 0.05, 0]), 0.05], [add(pr.pos, [-0.17, 0.05, 0]), 0.05]);
+        if (pr.type === 'post') pts.push([pr.a, 0.03], [pr.b, 0.03]);
+      }
+    }
+    const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (const [p, r] of pts) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k] - r); hi[k] = Math.max(hi[k], p[k] + r); }
+    const c = mul(add(lo, hi), 0.5); let rad = 0;
+    for (const [p, r] of pts) rad = Math.max(rad, len(sub(p, c)) + r);
+    ex.fit = { c, rad: Math.max(rad, 0.5) };
+    return ex.fit;
+  }
+  const COL = { prim: [0.416, 0.310, 0.753, 0.92], sec: [0.700, 0.610, 0.930, 0.80], ink: [0.22, 0.15, 0.2],
+    wood: [0.905, 0.800, 0.640], woodDark: [0.800, 0.660, 0.450], band: [0.250, 0.640, 0.560], steel: [0.420, 0.400, 0.480] };
+  /* Teinte de chaque groupe du modèle et de chaque zone peinte pour un exercice. */
+  function tintOf(ex) {
+    if (ex.tint) return ex.tint;
+    const R = RIG; const g = R.groups.map(() => null); const z = new Float32Array(11 * 4);
+    for (const [key, lvl] of Object.entries(ex.mus || {})) {
+      const m = /^(.*?)(L|R)?$/.exec(key); const base = m[1]; const sides = m[2] ? [m[2]] : ['L', 'R'];
+      const c = lvl === 1 ? COL.prim : COL.sec;
+      for (const s of sides) {
+        if (MG[base]) { const i = R.groups.findIndex((x) => x.n === MG[base] + '_' + s); if (i >= 0 && !(g[i] === COL.prim)) g[i] = c; }
+        else if (MZ[base]) { const zi = 1 + (s === 'L' ? 0 : R.zones.length) + R.zones.indexOf(MZ[base]); if (!(z[zi * 4 + 3] > c[3])) z.set(c, zi * 4); }
+      }
+    }
+    ex.tint = { g, z }; return ex.tint;
   }
 
   /* ---------- accessoires ---------- */
+  const M = {};
+  function buildProps() {
+    // cube unité centré
+    const pos = [], nrm = [], idx = [];
+    const Fc = [[[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, 0, 1], [0, 1, 0]], [[0, 1, 0], [0, 0, 1], [1, 0, 0]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]], [[0, 0, 1], [1, 0, 0], [0, 1, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]]];
+    for (const [n, u, v] of Fc) {
+      const b = pos.length / 3;
+      for (const [a, c] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const p = add(mul(n, 0.5), add(mul(u, a * 0.5), mul(v, c * 0.5))); pos.push(p[0], p[1], p[2]); nrm.push(n[0], n[1], n[2]); }
+      idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    }
+    M.box = { pos: new Float32Array(pos), nrm: new Float32Array(nrm), idx: new Uint16Array(idx) };
+    // cylindre unité : rayon 1, de y = 0 à y = 1, fermé
+    const cp = [], cn = [], ci = []; const S = 14;
+    for (let j = 0; j <= S; j++) { const a = (2 * PI * j) / S; const x = Math.sin(a), z = Math.cos(a); cp.push(x, 0, z, x, 1, z); cn.push(x, 0, z, x, 0, z); }
+    for (let j = 0; j < S; j++) { const a = j * 2; ci.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+    for (const y of [0, 1]) {
+      const c = cp.length / 3; cp.push(0, y, 0); cn.push(0, y ? 1 : -1, 0);
+      for (let j = 0; j <= S; j++) { const a = (2 * PI * j) / S; cp.push(Math.sin(a), y, Math.cos(a)); cn.push(0, y ? 1 : -1, 0); }
+      for (let j = 0; j < S; j++) { if (y) ci.push(c, c + 1 + j, c + 2 + j); else ci.push(c, c + 2 + j, c + 1 + j); }
+    }
+    M.cyl = { pos: new Float32Array(cp), nrm: new Float32Array(cn), idx: new Uint16Array(ci) };
+    for (const m of Object.values(M)) fixWinding(m);
+  }
+  function fixWinding(m) {   // faces vers l'extérieur
+    let vol = 0; const p = m.pos; const ix = m.idx;
+    for (let i = 0; i < ix.length; i += 3) {
+      const a = ix[i] * 3, b = ix[i + 1] * 3, c = ix[i + 2] * 3;
+      vol += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1]) - p[a + 1] * (p[b] * p[c + 2] - p[b + 2] * p[c]) + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+    }
+    if (vol < 0) for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+  }
   function propParts(props, J) {
     const out = [];
     const cyl = (a, b, r, col) => {
@@ -466,10 +450,9 @@
       else if (p.type === 'stick') {   // bâton tenu par les deux mains, qui dépasse de chaque côté
         const a = pt(p.a), b = pt(p.b); const d = norm(sub(b, a)); const ext = p.ext || [0.15, 0.15];
         cyl(sub(a, mul(d, ext[0])), add(b, mul(d, ext[1])), p.r || 0.014, p.col || COL.woodDark);
-      } else if (p.type === 'band') {   // élastique entre un point fixe et la main
-        cyl(pt(p.a), pt(p.b), 0.009, COL.band);
-      } else if (p.type === 'post') cyl(p.a, p.b, p.r || 0.03, COL.steel);
-      else if (p.type === 'dumbbell') {   // haltère posé au sol, manche le long de X
+      } else if (p.type === 'band') cyl(pt(p.a), pt(p.b), 0.009, COL.band);   // élastique entre un point fixe et la main
+      else if (p.type === 'post') cyl(p.a, p.b, p.r || 0.03, COL.steel);
+      else if (p.type === 'dumbbell') {   // haltère posé, manche le long de X
         const c = p.pos; const r = p.r || 0.07; const hw = 0.11;
         cyl([c[0] - hw, r, c[2]], [c[0] + hw, r, c[2]], 0.016, COL.steel);
         cyl([c[0] - hw - 0.06, r, c[2]], [c[0] - hw, r, c[2]], r, COL.steel); cyl([c[0] + hw, r, c[2]], [c[0] + hw + 0.06, r, c[2]], r, COL.steel);
@@ -478,184 +461,137 @@
     return out;
   }
 
-  /* ---------- exercices ---------- */
-  const EX = new Map();
-  function define(list) {
-    for (const e of list) {
-      const poses = {}; for (const [k, v] of Object.entries(e.poses)) poses[k] = prep(v);
-      EX.set(e.id, Object.assign({}, e, { K: poses, fit: null, zu: null }));
-    }
-  }
-  function timeline(ex, time) {
-    const seq = ex.seq; let total = 0; for (const s of seq) total += s[1] + s[2];
-    let t = (time * (ex.speed || 1)) % total;
-    for (let i = 0; i < seq.length; i++) {
-      const [k, hold, move] = seq[i];
-      if (t < hold) return [ex.K[k], ex.K[k], 0];
-      t -= hold;
-      if (t < move) { const u = t / move; return [ex.K[k], ex.K[seq[(i + 1) % seq.length][0]], u * u * (3 - 2 * u)]; }
-      t -= move;
-    }
-    return [ex.K[seq[0][0]], ex.K[seq[0][0]], 0];
-  }
-  function fitOf(ex) {
-    if (ex.fit) return ex.fit;
-    const pts = [];
-    for (const k of Object.values(ex.K)) {
-      const s = solve(k, k, 0);
-      for (const [n, p] of Object.entries(s.J)) pts.push([p, /^(tip|toe|heel|ball|hand|wrist)/.test(n) ? 0.03 : 0.08]);
-      pts.push([toW(s.F.H, [0, 0.215, 0.01]), 0.02]);
-      for (const pr of ex.props || []) {
-        if (pr.type === 'box') for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const sy of [0, 1]) pts.push([add(pr.pos, [sx * pr.size[0] / 2, sy * pr.size[1], sz * pr.size[2] / 2]), 0]);
-        if (pr.type === 'dumbbell') pts.push([add(pr.pos, [0.17, 0.05, 0]), 0.05], [add(pr.pos, [-0.17, 0.05, 0]), 0.05]);
-        if (pr.type === 'post') pts.push([pr.a, 0.03], [pr.b, 0.03]);
-      }
-    }
-    const lo = [1e9, 0, 1e9], hi = [-1e9, -1e9, -1e9];
-    for (const [p, r] of pts) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p[k] - r); hi[k] = Math.max(hi[k], p[k] + r); }
-    const c = mul(add(lo, hi), 0.5); let rad = 0;
-    for (const [p, r] of pts) rad = Math.max(rad, len(sub(p, c)) + r);
-    ex.fit = { c, rad: Math.max(rad, 0.5) };
-    return ex.fit;
-  }
-  function zonesOf(ex) {
-    if (ex.zu) return ex.zu;
-    const mus = ex.mus || {}; const z = {};
-    for (const k of Object.keys(ZONES)) z[k] = zoneUniforms(ZONES[k], mus);
-    z.none = zoneUniforms([], mus);
-    ex.zu = z; return z;
-  }
-
   /* ---------- rendu ---------- */
-  const VS = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;uniform mat4 uVP;uniform mat4 uM;uniform float uOut;uniform vec4 uSh;uniform mediump vec3 uCam;varying vec3 vN;varying vec3 vW;varying vec2 vU;'
-    + 'void main(){vec3 n=normalize(mat3(uM)*aN);vec4 w=uM*vec4(aP,1.0);w.xyz+=n*uOut;if(uOut>0.0){w.xyz+=normalize(w.xyz-uCam)*uOut*5.0;}'
-    + 'if(uSh.w>0.5){w.xz-=uSh.xz*(w.y/uSh.y);w.y=0.002;}vN=n;vW=w.xyz;vU=aU;gl_Position=uVP*w;}';
-  const FS = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;uniform vec3 uBase;uniform mediump vec3 uCam;uniform vec3 uL;uniform float uMode;uniform vec4 uFlat;uniform vec4 uG;'
-    + 'uniform int uZn;uniform vec4 uZa[16];uniform vec4 uZc[16];uniform float uZs[16];'
-    + 'void main(){'
-    + 'if(uMode>1.5){vec2 d=vW.xz-uG.xy;float r=length(d)/uG.z;float a=(1.0-smoothstep(0.55,1.0,r));'
-    + 'vec2 g=abs(fract(vW.xz/0.25)-0.5);float ln=1.0-smoothstep(0.0,uG.w,min(g.x,g.y));'
-    + 'vec3 c=mix(vec3(0.925,0.905,0.972),vec3(0.84,0.80,0.93),ln*0.55);gl_FragColor=vec4(c*a*0.9,a*0.9);return;}'
-    + 'if(uMode>0.5){gl_FragColor=uFlat;return;}'
-    + 'vec3 col=uBase;'
-    + 'for(int i=0;i<16;i++){if(i>=uZn)break;vec4 a=uZa[i];float dt=mod(vU.x-a.x+3.14159265,6.2831853)-3.14159265;'
-    + 'float x=dt*a.z;float y=(vU.y-a.y)*a.w;float x2=x*x;float y2=y*y;float d=mix(x2+y2,sqrt(x2*x2+y2*y2),uZs[i]);'
-    + 'float m=1.0-smoothstep(0.78,1.0,d);col=mix(col,uZc[i].rgb,m*uZc[i].a);}'
-    + 'vec3 n=normalize(vN);vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;float hemi=n.y*0.5+0.5;'
-    + 'float rim=pow(1.0-max(dot(n,v),0.0),2.2);'
-    + 'vec3 c=col*(0.60+0.36*nl*nl+0.09*hemi);c=mix(c,col*0.62,rim*0.5);'
-    + 'c+=vec3(pow(max(dot(n,normalize(uL+v)),0.0),30.0)*0.07);gl_FragColor=vec4(c,1.0);}';
+  const VS_BODY = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;attribute vec4 aJ;attribute vec4 aW;attribute vec4 aZ;'
+    + 'uniform mat4 uVP;uniform vec4 uB[78];uniform vec3 uLo;uniform vec3 uSc;uniform vec4 uZc[11];uniform float uOut;uniform mediump vec3 uCam;'
+    + 'varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
+    + 'void bone(float j,float w,vec4 p,vec3 n,inout vec3 op,inout vec3 on){int i=int(j+0.5)*3;vec4 a=uB[i];vec4 b=uB[i+1];vec4 c=uB[i+2];'
+    + 'op+=w*vec3(dot(a,p),dot(b,p),dot(c,p));on+=w*vec3(dot(a.xyz,n),dot(b.xyz,n),dot(c.xyz,n));}'
+    + 'void main(){vec4 p=vec4(aP*uSc+uLo,1.0);vec3 op=vec3(0.0);vec3 on=vec3(0.0);'
+    + 'bone(aJ.x,aW.x,p,aN,op,on);bone(aJ.y,aW.y,p,aN,op,on);bone(aJ.z,aW.z,p,aN,op,on);bone(aJ.w,aW.w,p,aN,op,on);'
+    + 'vec3 n=normalize(on);op+=n*uOut;if(uOut>0.0){op+=normalize(op-uCam)*uOut*4.0;}'
+    + 'vN=n;vW=op;vU=aU;vec4 zc=uZc[int(aZ.x*255.0+0.5)];vZ=vec4(zc.rgb,1.0)*(step(0.01,zc.a)*aZ.y);gl_Position=uVP*vec4(op,1.0);}';
+  const FS_BODY = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
+    + 'uniform sampler2D uTex;uniform vec4 uTint;uniform vec3 uL;uniform mediump vec3 uCam;uniform float uMode;uniform vec4 uFlat;'
+    + 'void main(){if(uMode>0.5){gl_FragColor=uFlat;return;}'
+    + 'vec3 tex=texture2D(uTex,vU).rgb;float lum=dot(tex,vec3(0.3,0.5,0.2));float k=0.5+0.8*lum;'
+    + 'vec3 col=mix(tex,uTint.rgb*k,uTint.a);col=mix(col,vZ.rgb/max(vZ.a,0.001)*k,smoothstep(0.05,0.6,vZ.a)*0.9);'
+    + 'vec3 n=normalize(vN);if(!gl_FrontFacing)n=-n;vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;float hemi=n.y*0.5+0.5;'
+    + 'float rim=pow(1.0-max(dot(n,v),0.0),2.4);'
+    + 'vec3 c=col*(0.50+0.50*nl*nl+0.10*hemi);c=mix(c,col*0.50,rim*0.55);'
+    + 'c+=vec3(pow(max(dot(n,normalize(uL+v)),0.0),26.0)*0.10);gl_FragColor=vec4(c,1.0);}';
+  const VS_PROP = 'attribute vec3 aP;attribute vec3 aN;uniform mat4 uVP;uniform mat4 uM;uniform float uOut;uniform mediump vec3 uCam;varying vec3 vN;varying vec3 vW;'
+    + 'void main(){vec3 n=normalize(mat3(uM)*aN);vec4 w=uM*vec4(aP,1.0);w.xyz+=n*uOut;if(uOut>0.0){w.xyz+=normalize(w.xyz-uCam)*uOut*4.0;}vN=n;vW=w.xyz;gl_Position=uVP*w;}';
+  const FS_PROP = 'precision mediump float;varying vec3 vN;varying vec3 vW;uniform vec3 uBase;uniform vec3 uL;uniform mediump vec3 uCam;uniform float uMode;uniform vec4 uFlat;'
+    + 'void main(){if(uMode>0.5){gl_FragColor=uFlat;return;}vec3 n=normalize(vN);vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;'
+    + 'vec3 c=uBase*(0.58+0.40*nl*nl+0.08*(n.y*0.5+0.5));c=mix(c,uBase*0.6,pow(1.0-max(dot(n,v),0.0),2.2)*0.45);gl_FragColor=vec4(c,1.0);}';
 
-  let GL = null;   // { canvas, gl, prog, loc, size }
-  function initGL() {
-    if (GL) return GL.ok ? GL : null;
-    GL = { ok: false };
-    try {
-      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
-      const gl = canvas.getContext('webgl', { alpha: true, antialias: true, stencil: true, depth: true, premultipliedAlpha: true });
-      if (!gl) return null;
-      const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-      const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-      gl.bindAttribLocation(prog, 0, 'aP'); gl.bindAttribLocation(prog, 1, 'aN'); gl.bindAttribLocation(prog, 2, 'aU');
-      gl.linkProgram(prog); if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-      const loc = {}; ['uVP', 'uM', 'uOut', 'uSh', 'uBase', 'uCam', 'uL', 'uMode', 'uFlat', 'uG', 'uZn', 'uZa', 'uZc', 'uZs'].forEach((n) => { loc[n] = gl.getUniformLocation(prog, n); });
-      buildMeshes();
-      for (const m of Object.values(M)) {
-        m.vp = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, m.vp); gl.bufferData(gl.ARRAY_BUFFER, m.pos, m.dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
-        m.vn = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, m.vn); gl.bufferData(gl.ARRAY_BUFFER, m.nrm, m.dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
-        m.vu = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, m.vu); gl.bufferData(gl.ARRAY_BUFFER, m.uv, gl.STATIC_DRAW);
-        m.vi = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.vi); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, m.idx, gl.STATIC_DRAW);
-      }
-      // Tronc : moitié basse (bassin, taille) et moitié haute (thorax), chacune avec ses zones.
-      const cut = Math.floor(M.torso.R * 0.5) * M.torso.segs * 6;
-      M.torso.ranges = [[0, cut], [cut, M.torso.idx.length - cut]];
-      canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); GL = null; });
-      Object.assign(GL, { ok: true, canvas, gl, prog, loc });
-      return GL;
-    } catch (e) { if (window.console) console.warn('WL3D', e); return null; }
+  let GL = null;   // { canvas, gl, body, prop }
+  let ASSET = null;   // promesse du chargement ; 'ok' ou 'ko' une fois réglé
+  let state = 'wait';
+  function program(gl, vs, fs, attrs, unis) {
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    attrs.forEach((a, i) => gl.bindAttribLocation(p, i, a));
+    gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    const loc = {}; unis.forEach((n) => { loc[n] = gl.getUniformLocation(p, n); });
+    return { p, loc };
   }
-  function bindMesh(gl, m) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.vp); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.vn); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, m.vu); gl.vertexAttribPointer(2, 2, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.vi);
+  function initGL(img) {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+    const gl = canvas.getContext('webgl', { alpha: true, antialias: true, depth: true, premultipliedAlpha: true });
+    if (!gl) throw new Error('WebGL indisponible');
+    const body = program(gl, VS_BODY, FS_BODY, ['aP', 'aN', 'aU', 'aJ', 'aW', 'aZ'], ['uVP', 'uB', 'uLo', 'uSc', 'uZc', 'uOut', 'uCam', 'uTex', 'uTint', 'uL', 'uMode', 'uFlat']);
+    const prop = program(gl, VS_PROP, FS_PROP, ['aP', 'aN'], ['uVP', 'uM', 'uOut', 'uCam', 'uBase', 'uL', 'uMode', 'uFlat']);
+    const R = RIG; const buf = (target, data) => { const b = gl.createBuffer(); gl.bindBuffer(target, b); gl.bufferData(target, data, gl.STATIC_DRAW); return b; };
+    R.vb = { pos: buf(gl.ARRAY_BUFFER, R.pos), nrm: buf(gl.ARRAY_BUFFER, R.nrm), uv: buf(gl.ARRAY_BUFFER, R.uv), jnt: buf(gl.ARRAY_BUFFER, R.jnt), wgt: buf(gl.ARRAY_BUFFER, R.wgt), zone: buf(gl.ARRAY_BUFFER, R.zone), idx: buf(gl.ELEMENT_ARRAY_BUFFER, R.idx) };
+    buildProps();
+    for (const m of Object.values(M)) { m.vp = buf(gl.ARRAY_BUFFER, m.pos); m.vn = buf(gl.ARRAY_BUFFER, m.nrm); m.vi = buf(gl.ELEMENT_ARRAY_BUFFER, m.idx); }
+    const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+    gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); state = 'ko'; });
+    GL = { canvas, gl, body, prop, tex, bones: new Float32Array(78 * 4) };
   }
-  /* Liste des pièces à dessiner pour une pose résolue. */
-  function partsOf(ex, s) {
-    const z = zonesOf(ex); const parts = []; const { F, limbs } = s;
-    const fm = (f, off) => { const b = qBasis(f.q); return mFrame(off ? toW(f, off) : f.o, b[0], b[1], b[2]); };
-    parts.push({ mesh: M.torso, model: IDENT, base: COL.body, zones: z.torsoLow, range: 0 }, { mesh: M.torso, model: IDENT, base: COL.body, zones: z.torsoUp, range: 1 });
-    parts.push({ mesh: M.neck, model: fm(F.N), base: COL.body, zones: z.neckL }, { mesh: M.head, model: fm(F.H), base: COL.skin, zones: z.head });
-    for (const id of LIMBS) {
-      const f = limbs[id]; const arm = id[0] === 'a'; const sfx = id[1];
-      parts.push({ mesh: arm ? M.upper : M.thigh, model: mFrame(f.root, f.x1, f.y1, f.z1), base: COL.body, zones: z[(arm ? 'upper' : 'thigh') + sfx] });
-      parts.push({ mesh: arm ? M.fore : M.shin, model: mFrame(f.mid, f.x2, f.y2, f.z2), base: COL.body, zones: z[(arm ? 'fore' : 'shin') + sfx] });
-      const jr = arm ? 0.039 : 0.055;
-      parts.push({ mesh: M.ball, model: mFrame(f.mid, f.x2, f.y2, f.z2, [jr, jr, jr]), base: COL.body, zones: z.none });
-      if (arm) parts.push({ mesh: f.grip ? M.fist : (sfx === 'L' ? M.handL : M.handR), model: mFrame(f.end, f.ex, f.ey, f.ez), base: COL.skin, zones: z.none });
-      else {
-        parts.push({ mesh: M.ball, model: mFrame(f.end, f.x2, f.y2, f.z2, [0.035, 0.035, 0.038]), base: COL.body, zones: z.none });
-        parts.push({ mesh: M.foot, model: mFrame(f.end, f.ex, f.ey, f.ez), base: COL.skin, zones: z.none });
-      }
-    }
-    for (const p of propParts(ex.props, s.J)) { p.zones = z.none; p.prop = true; parts.push(p); }
-    return parts;
+  function load() {
+    if (ASSET) return ASSET;
+    ASSET = Promise.all([
+      fetch('mannequin.bin').then((r) => { if (!r.ok) throw new Error('mannequin.bin ' + r.status); return r.arrayBuffer(); }),
+      new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('mannequin-peau.jpg')); im.src = 'mannequin-peau.jpg'; }),
+    ]).then(([buf, img]) => { RIG = parseRig(buf); initGL(img); state = 'ok'; kick(); return true; })
+      .catch((e) => { state = 'ko'; views.forEach((v) => v.canvas.classList.add('ko')); if (window.console) console.warn('WL3D', e); return false; });
+    return ASSET;
   }
   function drawScene(ex, time, cam, w, h, thick) {
-    const g = GL; const gl = g.gl; const L = g.loc;
-    const [ka, kb, t] = timeline(ex, time);
-    const s = solve(ka, kb, t);
-    skinTorso(M.torso, s.F);
-    gl.bindBuffer(gl.ARRAY_BUFFER, M.torso.vp); gl.bufferSubData(gl.ARRAY_BUFFER, 0, M.torso.pos);
-    gl.bindBuffer(gl.ARRAY_BUFFER, M.torso.vn); gl.bufferSubData(gl.ARRAY_BUFFER, 0, M.torso.nrm);
-    const parts = partsOf(ex, s);
+    const g = GL; const gl = g.gl; const R = RIG;
+    ready(ex);
+    const [sa, sb, t] = timeline(ex, time);
+    const s = blend(sa, sb, t);
     const fit = fitOf(ex);
     const fov = 26 * D2R; const asp = w / h;
-    const dist = fit.rad / Math.sin(Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * asp)) / 2) * 1.0;
+    const dist = fit.rad / Math.sin(Math.min(fov, 2 * Math.atan(Math.tan(fov / 2) * asp)) / 2);
     const cy = Math.cos(cam.pitch), sy = Math.sin(cam.pitch);
     const eye = add(fit.c, [Math.sin(cam.yaw) * cy * dist, sy * dist, Math.cos(cam.yaw) * cy * dist]);
     const view = mLook(eye, fit.c, [0, 1, 0]);
-    const vp = mMul(mPersp(fov, asp, Math.max(0.05, dist - fit.rad * 2.2), dist + fit.rad * 3), view);
+    const vp = mMul(mPersp(fov, asp, Math.max(0.05, dist - fit.rad * 1.6), dist + fit.rad * 1.6), view);
     const right = [view[0], view[4], view[8]], up = [view[1], view[5], view[9]], back = [view[2], view[6], view[10]];
     const light = norm(add(add(mul(right, -0.5), mul(up, 0.72)), mul(back, 0.62)));
-
-    gl.viewport(0, 0, w, h); gl.enable(gl.SCISSOR_TEST); gl.scissor(0, 0, w, h);
-    gl.clearColor(0, 0, 0, 0); gl.clearStencil(0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-    gl.useProgram(g.prog); gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1); gl.enableVertexAttribArray(2);
-    gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
-    gl.uniform1f(L.uOut, 0); gl.uniform4f(L.uSh, 0, 1, 0, 0); gl.uniform1i(L.uZn, 0);
-
-    // sol
-    gl.disable(gl.CULL_FACE); gl.depthMask(false); gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    const gr = fit.rad * 1.5;
-    gl.uniform1f(L.uMode, 2); gl.uniform4f(L.uG, fit.c[0], fit.c[2], gr, 0.035);
-    gl.uniformMatrix4fv(L.uM, false, mFrame([fit.c[0], 0, fit.c[2]], [1, 0, 0], [0, 1, 0], [0, 0, 1], [gr, 1, gr]));
-    bindMesh(gl, M.ground); gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
-    // ombres portées au sol (une seule couche grâce au pochoir)
-    gl.enable(gl.STENCIL_TEST); gl.stencilFunc(gl.EQUAL, 0, 255); gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
-    gl.uniform1f(L.uMode, 1); gl.uniform4f(L.uFlat, 0.29 * 0.17, 0.24 * 0.17, 0.43 * 0.17, 0.17); gl.uniform4f(L.uSh, 0.32, 1, 0.22, 1);
-    for (const p of parts) drawPart(gl, L, p, true);
-    gl.disable(gl.STENCIL_TEST); gl.uniform4f(L.uSh, 0, 1, 0, 0); gl.disable(gl.BLEND);
-    // corps
-    gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
-    gl.uniform1f(L.uMode, 0);
-    for (const p of parts) drawPart(gl, L, p, false);
-    // contour
-    gl.cullFace(gl.FRONT); gl.uniform1f(L.uMode, 1); gl.uniform4f(L.uFlat, COL.ink[0], COL.ink[1], COL.ink[2], 1); gl.uniform1f(L.uOut, dist * thick);
-    for (const p of parts) drawPart(gl, L, p, true);
-    gl.uniform1f(L.uOut, 0); gl.cullFace(gl.BACK); gl.disable(gl.SCISSOR_TEST);
-    return s;
-  }
-  function drawPart(gl, L, p, flat) {
-    bindMesh(gl, p.mesh);
-    gl.uniformMatrix4fv(L.uM, false, p.model);
-    if (!flat) {
-      gl.uniform3fv(L.uBase, p.base);
-      const z = p.zones; gl.uniform1i(L.uZn, z.n);
-      if (z.n) { gl.uniform4fv(L.uZa, z.pa); gl.uniform4fv(L.uZc, z.pc); gl.uniform1fv(L.uZs, z.ps); }
+    // matrices des os : rotation et translation qui amènent le repos sur la pose
+    const bm = g.bones;
+    for (let i = 0; i < NB; i++) {
+      const q = qMul(s.W[i], qConj(R.bw[i].q)); const tr = sub(s.P[i], qRot(q, R.bw[i].p));
+      const x = qRot(q, [1, 0, 0]), y = qRot(q, [0, 1, 0]), z = qRot(q, [0, 0, 1]); const o = i * 12;
+      bm[o] = x[0]; bm[o + 1] = y[0]; bm[o + 2] = z[0]; bm[o + 3] = tr[0];
+      bm[o + 4] = x[1]; bm[o + 5] = y[1]; bm[o + 6] = z[1]; bm[o + 7] = tr[1];
+      bm[o + 8] = x[2]; bm[o + 9] = y[2]; bm[o + 10] = z[2]; bm[o + 11] = tr[2];
     }
-    if (p.range != null) { const r = p.mesh.ranges[p.range]; gl.drawElements(gl.TRIANGLES, r[1], gl.UNSIGNED_SHORT, r[0] * 2); }
-    else gl.drawElements(gl.TRIANGLES, p.mesh.idx.length, gl.UNSIGNED_SHORT, 0);
+    gl.viewport(0, 0, w, h); gl.enable(gl.SCISSOR_TEST); gl.scissor(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE);
+    const tint = tintOf(ex);
+    // --- corps
+    let L = g.body.loc; gl.useProgram(g.body.p);
+    for (let i = 0; i < 6; i++) gl.enableVertexAttribArray(i);
+    const vb = R.vb;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.pos); gl.vertexAttribPointer(0, 3, gl.UNSIGNED_SHORT, true, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.nrm); gl.vertexAttribPointer(1, 3, gl.BYTE, true, 4, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.uv); gl.vertexAttribPointer(2, 2, gl.UNSIGNED_SHORT, true, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.jnt); gl.vertexAttribPointer(3, 4, gl.UNSIGNED_BYTE, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.wgt); gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.zone); gl.vertexAttribPointer(5, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, vb.idx);
+    gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform4fv(L.uB, bm); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
+    const hd = R.head; gl.uniform3fv(L.uLo, hd.lo); gl.uniform3f(L.uSc, hd.hi[0] - hd.lo[0], hd.hi[1] - hd.lo[1], hd.hi[2] - hd.lo[2]);
+    gl.uniform4fv(L.uZc, tint.z); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, g.tex); gl.uniform1i(L.uTex, 0);
+    gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, 0); gl.cullFace(gl.BACK);
+    for (let i = 0; i < R.groups.length; i++) {
+      const gr = R.groups[i]; const c = tint.g[i];
+      if (c) gl.uniform4fv(L.uTint, c); else gl.uniform4f(L.uTint, 0, 0, 0, 0);
+      gl.drawElements(gl.TRIANGLES, gr.ic, gl.UNSIGNED_SHORT, gr.i0 * 2);
+    }
+    if (thick > 0) {   // fin contour
+      gl.cullFace(gl.FRONT); gl.uniform1f(L.uMode, 1); gl.uniform4f(L.uFlat, COL.ink[0], COL.ink[1], COL.ink[2], 1); gl.uniform1f(L.uOut, dist * thick);
+      gl.drawElements(gl.TRIANGLES, R.ni, gl.UNSIGNED_SHORT, 0);
+    }
+    for (let i = 2; i < 6; i++) gl.disableVertexAttribArray(i);
+    // --- accessoires
+    const parts = propParts(ex.props, s.J);
+    if (parts.length) {
+      L = g.prop.loc; gl.useProgram(g.prop.p);
+      gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
+      for (const pass of [0, 1]) {
+        gl.cullFace(pass ? gl.FRONT : gl.BACK); gl.uniform1f(L.uMode, pass); gl.uniform1f(L.uOut, pass ? dist * Math.max(thick, 0.0012) : 0);
+        if (pass) gl.uniform4f(L.uFlat, COL.ink[0], COL.ink[1], COL.ink[2], 1);
+        for (const p of parts) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, p.mesh.vp); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ARRAY_BUFFER, p.mesh.vn); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 0, 0);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, p.mesh.vi);
+          gl.uniformMatrix4fv(L.uM, false, p.model); if (!pass) gl.uniform3fv(L.uBase, p.base);
+          gl.drawElements(gl.TRIANGLES, p.mesh.idx.length, gl.UNSIGNED_SHORT, 0);
+        }
+      }
+    }
+    gl.cullFace(gl.BACK); gl.disable(gl.SCISSOR_TEST);
   }
 
   /* ---------- vues : chaque vue est un <canvas> 2D qui reçoit l'image du rendu commun ---------- */
@@ -672,19 +608,21 @@
     if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
     ensureSize(Math.max(w, h));
     const time = v.fixed != null ? v.fixed : (now - T0ms) / 1000;
-    drawScene(v.ex, time, v.cam, w, h, c.clientWidth < 200 ? 0.0030 : 0.0016);
+    drawScene(v.ex, time, v.cam, w, h, c.clientWidth < 200 ? 0.0022 : 0.0009);
     const ctx = v.ctx; ctx.clearRect(0, 0, w, h);
     ctx.drawImage(GL.canvas, 0, GL.canvas.height - h, w, h, 0, 0, w, h);
+    if (!v.shown) { v.shown = true; c.classList.add('ready'); }
   }
   function loop(now) {
     raf = 0;
-    if (!initGL()) { views.clear(); return; }
+    if (state === 'ko') { views.clear(); return; }
     let alive = false;
     for (const v of [...views]) {
       if (!v.canvas.isConnected) { if (v.seen || now - v.born > 4000) { views.delete(v); continue; } alive = true; continue; }
       v.seen = true;
       if (!v.on) continue;
       alive = true;
+      if (state !== 'ok') continue;
       if (v.thumb && now - v.last < 45) continue;
       v.last = now;
       try { paint(v, now); } catch (e) { views.delete(v); if (window.console) console.warn('WL3D', e); }
@@ -695,13 +633,15 @@
   let io = null;
   /* Crée la vue d'un exercice. opts.thumb : vignette (angle fixe) ; sinon grande vue qu'on fait tourner au doigt. */
   function view(id, opts) {
-    const ex = EX.get(id); if (!ex || !initGL()) return null;
+    const ex = EX.get(id); if (!ex || state === 'ko') return null;
+    try { const t = document.createElement('canvas'); if (!window.WebGLRenderingContext || !t.getContext) return null; } catch (e) { return null; }
+    load();
     opts = opts || {};
     const canvas = document.createElement('canvas');
     canvas.className = 'm3d' + (opts.thumb ? ' m3d-thumb' : '') + (opts.cls ? ' ' + opts.cls : '');
     canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', (opts.thumb ? 'Animation : ' : 'Animation en 3D, à faire tourner au doigt : ') + ex.name);
     const c0 = ex.cam || {};
-    const v = { canvas, ctx: canvas.getContext('2d'), ex, thumb: !!opts.thumb, on: !opts.thumb, last: 0, seen: false, born: performance.now(), fixed: opts.time,
+    const v = { canvas, ctx: canvas.getContext('2d'), ex, thumb: !!opts.thumb, on: !opts.thumb, last: 0, seen: false, shown: false, born: performance.now(), fixed: opts.time,
       cam: { yaw: (c0.yaw == null ? 60 : c0.yaw) * D2R, pitch: (c0.pitch == null ? 14 : c0.pitch) * D2R } };
     canvas._play = (on) => { v.on = !!on; if (on) kick(); };
     canvas._view = v;
@@ -710,7 +650,8 @@
       canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, id: e.pointerId }; try { canvas.setPointerCapture(e.pointerId); } catch (er) { /* ignoré */ } canvas.classList.add('drag'); });
       canvas.addEventListener('pointermove', (e) => {
         if (!drag || e.pointerId !== drag.id) return;
-        v.cam.yaw -= (e.clientX - drag.x) * 0.011; v.cam.pitch = clamp(v.cam.pitch + (e.clientY - drag.y) * 0.009, -0.12, 1.45);
+        // gauche-droite : tour complet ; haut-bas : du dessus jusqu'au dessous du mannequin
+        v.cam.yaw -= (e.clientX - drag.x) * 0.011; v.cam.pitch = clamp(v.cam.pitch + (e.clientY - drag.y) * 0.010, -1.5, 1.5);
         drag.x = e.clientX; drag.y = e.clientY; e.preventDefault();
       });
       const end = (e) => { if (drag && e.pointerId === drag.id) { drag = null; canvas.classList.remove('drag'); } };
@@ -727,7 +668,8 @@
 
   window.WL3D = {
     define, view, has: (id) => EX.has(id),
+    credit: 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
     list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
-    _dbg: { solve, EX, timeline, fitOf, B },
+    _dbg: { EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();
