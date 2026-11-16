@@ -14,11 +14,12 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.5.3';
+  const APP_VERSION = '0.6.0';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
   let BODY = null;      // schéma du corps (face et dos)
+  const W3 = window.WL3D || null;   // exercices maison en 3D (mannequin.js, exercices-3d.js)
 
   /* ---------- utilitaires ---------- */
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
@@ -212,9 +213,19 @@
     if (!thumbIO) thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => en.target._play && en.target._play(en.isIntersecting)), { rootMargin: '40px 0px' });
     thumbIO.observe(el);
   }
+  /* Exercice maison (src 2) : le mannequin 3D animé. big : grande vue qu'on fait tourner au doigt. */
+  function view3d(ex, big, cls) {
+    const c = W3 && W3.view(ex.id, { thumb: !big, cls });
+    return c || h('span', { class: 'ph ' + (cls || '') });
+  }
   function thumb(ex, opts) {
     if (ex.missing) return h('span', { class: 'ph thumb' });
     let el;
+    if (ex.src === 2) {
+      el = view3d(ex, false, 'thumb sq');
+      if (opts && opts.zoom) { el.classList.add('zoomable'); el.setAttribute('title', 'Agrandir'); el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); }); }
+      return el;
+    }
     if (ex.src === 0) {
       el = h('img', { class: 'thumb sq', alt: '', decoding: 'async', crossorigin: 'anonymous' });
       let mode = 't'; let alt = false;
@@ -263,6 +274,10 @@
      (un appui l'agrandit). Pour free-exercise-db : le schéma puis les photos en grand. */
   function visual(ex, opts) {
     const zoom = !(opts && opts.static);
+    if (ex.src === 2) {
+      return h('div', { class: 'vis vis3d' }, view3d(ex, zoom, 'big'),
+        zoom ? h('p', { class: 'turn', text: 'Fais glisser le doigt sur le mannequin pour le tourner.' }) : null);
+    }
     const maps = muscleMaps(ex);
     if (ex.src === 0) {
       const media = photo(ex, 'a', { alt: 'Animation : ' + dn(ex) });
@@ -278,7 +293,8 @@
   }
   function lightbox(ex) {
     let close = null;
-    const media = ex.src === 0
+    const media = ex.src === 2 ? h('div', { class: 'lb-media sq' }, view3d(ex, true, 'big'))
+      : ex.src === 0
       ? h('div', { class: 'lb-media sq' }, photo(ex, 'a', { alt: 'Animation : ' + dn(ex) }))
       : h('div', { class: 'lb-media' }, flip(ex, { alt: 'Démonstration : ' + dn(ex) }));
     const box = h('div', { class: 'dialog lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': dn(ex) },
@@ -347,7 +363,11 @@
     if (typeof v === 'string' && v.trim()) { const n = calcEval(v); return Number.isFinite(n) && n > 0 ? n : ''; }
     return '';
   }
-  const cleanSets = (a) => (Array.isArray(a) ? a.slice(0, 30).map((x) => ({ w: numOrBlank(x && x.w), r: numOrBlank(x && x.r) })) : []);
+  /* Série prévue : { w, r } ; pour un exercice à la durée (étirement, mobilité) : { w: '', r: '', dur } en secondes, dur vide = durée libre. */
+  const durOrBlank = (v) => { const n = numOrBlank(v); return n === '' ? '' : Math.round(n); };
+  const cleanSet = (x) => (x && x.dur !== undefined ? { w: '', r: '', dur: durOrBlank(x.dur) } : { w: numOrBlank(x && x.w), r: numOrBlank(x && x.r) });
+  const keepSet = (x) => x.w !== '' || x.r !== '' || x.dur !== undefined;
+  const cleanSets = (a) => (Array.isArray(a) ? a.slice(0, 30).map(cleanSet) : []);
   function cleanPlans(arr) {
     const out = []; const seen = new Set();
     for (const p of Array.isArray(arr) ? arr : []) {
@@ -427,6 +447,12 @@
         id: it[0], name: String(it[1]), src: it[2] === 0 ? 0 : 1, st: it[3] === 1, leaf: it[4], top: topOf(it[4]),
         p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null, key: skey(it[1]),
       }));
+      // Exercices maison en 3D : ils remplacent leurs doublons de la liste (l'historique suit, voir migrateAliases).
+      const own = W3 ? W3.list().filter((o) => GROUPS.has(o.leaf)) : [];
+      const dups = new Map();
+      own.forEach((o) => o.dup.forEach((d) => dups.set(d, o.id)));
+      if (dups.size) { S.exercises = S.exercises.filter((e) => !dups.has(e.id)); S.alias = Object.assign({}, S.alias); dups.forEach((to, from) => { S.alias[from] = to; }); }
+      own.forEach((o) => S.exercises.push({ id: o.id, name: o.name, src: 2, st: true, leaf: o.leaf, top: topOf(o.leaf), p: o.p, s: o.s, media: null, key: skey(o.name), side: o.side }));
       S.loadError = false;
     } catch (e) {
       S.exercises = []; S.loadError = true;
@@ -543,6 +569,7 @@
 
   /* ----- cardio : les données suivies dépendent de l'activité ----- */
   function cardioKind(ex) {
+    if (ex && ex.src === 2) return 'hold';   // exercice maison : on note seulement la durée de chaque série
     if (!ex || ex.leaf !== 'cardio') return null;
     const n = ex.key || skey(ex.name);
     if (/jump rope|rope jump/.test(n)) return 'rope';
@@ -559,6 +586,7 @@
     ellip: { fields: ['lvl', 'kcal'], metrics: ['dur', 'lvl'] },
     rope: { fields: ['rounds', 'kcal'], metrics: ['dur', 'rounds'] },
     other: { fields: ['rounds', 'kcal'], metrics: ['dur', 'rounds'] },
+    hold: { fields: [], metrics: ['hold'] },
   };
   const CFIELD = {
     dist: { label: 'Distance', ph: 'km' }, incl: { label: 'Pente', ph: '%' }, lvl: { label: 'Niveau', ph: 'niv.' },
@@ -566,6 +594,7 @@
   };
   function fmtDur(sec) {
     const m = Math.floor(sec / 60); const s2 = Math.round(sec % 60);
+    if (m === 0) return s2 + ' s';
     if (m >= 60) return Math.floor(m / 60) + ' h ' + pad2(m % 60);
     return s2 ? m + ' min ' + pad2(s2) : m + ' min';
   }
@@ -1056,7 +1085,7 @@
       const mine = S.entries.filter((e) => e.exerciseId === last.exerciseId);
       const latest = mine.reduce((a, b) => ((b.created || b.ts) > (a.created || a.ts) ? b : a));
       wrap.append(h('button', { type: 'button', class: 'hero', onclick: () => go('exercise', ex.id) },
-        ex.missing ? null : (ex.src === 0 ? visual(ex, { static: true }) : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) }))),
+        ex.missing ? null : (ex.src !== 1 ? visual(ex, { static: true }) : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) }))),
         h('h2', { text: dn(ex) }),
         latest.c === 1 ? h('p', { class: 'last' }, h('strong', { text: fmtDur(latest.dur) }), latest.dist > 0 ? ' · ' + fmtNum(latest.dist) + ' km' : '')
           : h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
@@ -1176,6 +1205,8 @@
       detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
     speed: { label: 'Vitesse', note: 'Vitesse moyenne (km/h)', val: (e) => speedOf(e), tick: (v) => fmtNum(Math.round(v)),
       detail: (e) => [fmtNum(Math.round(speedOf(e) * 10) / 10) + ' km/h', entryText(e) + ' · ' + fDateTime.format(e.ts)] },
+    hold: { label: 'Durée', note: 'Durée de chaque série (secondes)', val: (e) => e.dur, tick: (v) => fmtNum(Math.round(v)),
+      detail: (e) => [fmtDur(e.dur), fDateTime.format(e.ts)] },
     lvl: { label: 'Niveau', note: 'Niveau', val: (e) => e.lvl, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
     rounds: { label: 'Tours', note: 'Nombre de tours', val: (e) => e.rounds, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
   };
@@ -1296,6 +1327,7 @@
     }
     if (ctx.draft && ctx.draft.length) ctx.draft.forEach((d) => rows.push(Object.assign(newRow(d), { dt: d.dt, manual: d.manual })));
     else if (ctx.planned && ctx.planned.length && !kind) ctx.planned.forEach((p) => rows.push(newRow({ w: toStr(p.w), r: toStr(p.r) })));
+    else if (ctx.planned && ctx.planned.length && kind === 'hold') ctx.planned.forEach((p) => rows.push(newRow(fin(p.dur) ? { min: p.dur >= 60 ? Math.floor(p.dur / 60) : '', sec: p.dur % 60 || '' } : null)));
     else rows.push(newRow());
     renderRows();
 
@@ -1339,7 +1371,7 @@
     S.guard = { dirty: () => rows.some(isFilled), save };
 
     return h('section', { class: 'sec' },
-      h('h2', { text: 'Nouvelle série' + (fixedDay ? ' · ' + cap(fDayLong.format(keyDate(fixedDay))) : '') }),
+      h('h2', { text: 'Nouvelle série' + (ex.side ? ' · durée par côté' : '') + (fixedDay ? ' · ' + cap(fDayLong.format(keyDate(fixedDay))) : '') }),
       h('div', { class: 'card' }, list,
         h('div', { class: 'form-actions' },
           msg,
@@ -1682,8 +1714,8 @@
     d.order = dayOrder(key);
     for (const it of src.items) {
       if (!d.order.includes(it.ex)) d.order.push(it.ex);
-      const sets = (it.sets || []).filter((x) => x.w !== '' || x.r !== '');
-      if (sets.length) d.plan[it.ex] = sets.map((x) => ({ w: x.w, r: x.r }));
+      const sets = (it.sets || []).filter(keepSet);
+      if (sets.length) d.plan[it.ex] = sets.map(cleanSet);
     }
     const main = GROUPS.has(src.main) ? src.main : guessMain(src.items.map((it) => it.ex));
     if (main && !S.sessions[key]) S.sessions[key] = { name: (src.name || '').trim(), main, sec: (src.sec || []).filter((x) => GROUPS.has(x) && x !== main) };
@@ -1794,7 +1826,7 @@
               sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': 'Modifier la série ' + entryText(e), onclick: () => editEntry(e, render) },
                 h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: entryText(e) }), e.c === 1 ? null : h('span', { class: 'tot', text: fmtNum(e.w * e.r) })),
                 () => deleteEntry(e, render), 'Supprimer la série')),
-              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: (p.w !== '' ? fmtNum(p.w) + ' kg' : '… kg') + ' × ' + (p.r !== '' ? fmtNum(p.r) : '…') }))) : null)));
+              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: p.dur !== undefined ? (p.dur !== '' ? fmtDur(p.dur) : '… s') : (p.w !== '' ? fmtNum(p.w) + ' kg' : '… kg') + ' × ' + (p.r !== '' ? fmtNum(p.r) : '…') }))) : null)));
         }
         sortable(list, (ids) => { const d = dayMeta(key, true); d.order = ids; saveUser(); });
         body.append(list, h('p', { class: 'hint', text: 'Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.' }));
@@ -1849,12 +1881,15 @@
       saveUser(); after();
     } });
   }
+  /* Séries faites d'un exercice, sous forme de séries prévues (charges, ou durée pour un exercice tenu). */
+  const isHold = (id) => cardioKind(S.byId.get(id)) === 'hold';
+  const doneSets = (entries, id) => entries.filter((e) => e.exerciseId === id && (e.c !== 1 || isHold(id))).map((e) => (e.c === 1 ? { w: '', r: '', dur: e.dur } : { w: e.w, r: e.r }));
   function redoDay(key, select) {
     const tk = todayKey();
     const entries = dayEntries(key);
     const s = S.sessions[key];
     startDay(tk, { name: s ? s.name : '', main: s ? s.main : '', sec: s ? s.sec : [],
-      items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })) });
+      items: dayOrder(key).map((id) => ({ ex: id, sets: doneSets(entries, id) })) });
     saveUser();
     if (select) select(tk); else go('calendar', { day: tk });
     toast('Séance recopiée pour aujourd’hui : ajuste les charges si besoin.');
@@ -1863,7 +1898,7 @@
     const entries = dayEntries(key);
     const s = S.sessions[key];
     const p = { id: uid(), name: s ? sessionTitle(s) : 'Séance du ' + fDayShort.format(keyDate(key)), folder: '', main: s ? s.main : '', sec: s ? s.sec.slice() : [],
-      items: dayOrder(key).map((id) => ({ ex: id, sets: entries.filter((e) => e.exerciseId === id && e.c !== 1).map((e) => ({ w: e.w, r: e.r })) })), created: Date.now(), last: key };
+      items: dayOrder(key).map((id) => ({ ex: id, sets: doneSets(entries, id) })), created: Date.now(), last: key };
     S.planDraft = { p, isNew: true, base: planSig(emptyPlan()) };
     go('plan', p.id);
     toast('Vérifie la séance puis touche « Valider »');
@@ -1948,7 +1983,7 @@
   /* ---------- page Séances : séances types (en dossiers) et séances réalisées ---------- */
   const emptyPlan = () => ({ id: uid(), name: '', folder: '', main: '', sec: [], items: [], created: Date.now(), last: null });
   const clonePlan = (p) => JSON.parse(JSON.stringify(p));
-  const planSig = (p) => JSON.stringify([p.name.trim(), p.folder, p.main, [...p.sec].sort(), p.items.map((it) => [it.ex, it.sets.map((x) => [numOrBlank(x.w), numOrBlank(x.r)])])]);
+  const planSig = (p) => JSON.stringify([p.name.trim(), p.folder, p.main, [...p.sec].sort(), p.items.map((it) => [it.ex, it.sets.map((x) => [numOrBlank(x.w), numOrBlank(x.r), x.dur === undefined ? null : durOrBlank(x.dur)])])]);
   const planMissing = (p) => [!p.name.trim() ? 'un nom' : null, !p.items.length ? 'au moins un exercice' : null].filter(Boolean);
   const allFolders = () => [...new Set(S.folders.concat(S.plans.map((x) => x.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   /* « Créer une séance » : un brouillon, enregistré seulement avec « Valider ». */
@@ -1961,7 +1996,7 @@
   function commitPlan(d) {
     const p = d.p;
     p.name = p.name.trim();
-    p.items.forEach((it) => { it.sets = it.sets.map((x) => ({ w: numOrBlank(x.w), r: numOrBlank(x.r) })).filter((x) => x.w !== '' || x.r !== ''); });
+    p.items.forEach((it) => { it.sets = it.sets.map(cleanSet).filter(keepSet); });
     if (p.folder && !S.folders.includes(p.folder)) S.folders.push(p.folder);
     const copy = clonePlan(p);
     const i = S.plans.findIndex((x) => x.id === p.id);
@@ -2264,12 +2299,23 @@
 
     function setRows(it) {
       const box = h('div', { class: 'psets' });
+      const hold = isHold(it.ex);
+      const blank = () => (hold ? { w: '', r: '', dur: '' } : { w: '', r: '' });
       if (!it.sets.length) {
         box.append(h('p', { class: 'empty-note', text: 'Pas de séries prévues : tu les choisiras le jour même.' }),
-          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push({ w: '', r: '' }); changed(); renderList(); } }, 'Prévoir des séries'));
+          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push(blank()); changed(); renderList(); } }, 'Prévoir des séries'));
         return box;
       }
       it.sets.forEach((st, j) => {
+        if (hold) {   // exercice à la durée : une durée prévue en secondes (vide = libre)
+          const dIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'secondes', 'aria-label': 'Durée prévue en secondes, série ' + (j + 1), autocomplete: 'off' });
+          dIn.value = fin(st.dur) ? String(st.dur) : '';
+          dIn.addEventListener('input', () => { st.dur = durOrBlank(dIn.value); changed(); });
+          box.append(h('div', { class: 'srow hold' }, h('span', { class: 'n', text: String(j + 1) }), dIn, h('span', { class: 'times', text: 's' }),
+            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: '', r: '', dur: durOrBlank(st.dur) }); changed(); renderList(); } }, icon('copy')),
+            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))));
+          return;
+        }
         const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids prévu, série ' + (j + 1) });
         const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions prévues, série ' + (j + 1), autocomplete: 'off' });
         wIn.value = fin(st.w) ? fmtIn(st.w) : st.w || '';
@@ -2281,7 +2327,7 @@
           h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: numOrBlank(st.w), r: st.r }); changed(); renderList(); } }, icon('copy')),
           h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))));
       });
-      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); changed(); renderList(); } }, '+ Ajouter une série'));
+      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(hold ? { w: '', r: '', dur: l ? durOrBlank(l.dur) : '' } : l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); changed(); renderList(); } }, '+ Ajouter une série'));
       return box;
     }
     function renderList() {

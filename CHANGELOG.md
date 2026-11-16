@@ -1,5 +1,12 @@
 # WorkLog : historique des versions
 
+## 0.6.0
+- Nouveau : 26 exercices d'étirements et de mobilité « maison », en français, dans l'onglet Étirements de la bibliothèque.
+- Chaque exercice est montré par un mannequin 3D animé en boucle, avec les muscles ciblés colorés sur le corps et le matériel (caisse, bâton, élastique, haltère). Sur la fiche, on fait tourner le mannequin au doigt.
+- Ces exercices se notent à la durée uniquement (secondes par série), avec un graphique de durée. « Durée par côté » est rappelé pour les exercices d'un seul côté.
+- Séances types : une durée prévue par série pour ces exercices.
+- « Prière » et « Dos rond/dos creux » remplacent « Child's pose » et « Cat stretch » ; l'historique et les favoris suivent.
+
 ## 0.5.3
 - Correction : glisser la carte « Séance du jour » vers la gauche sur l'accueil la retire bien, même si des séries sont déjà faites. Les séries restent dans le calendrier et l'historique.
 - Relancer une séance « Aujourd'hui » fait réapparaître la carte.
