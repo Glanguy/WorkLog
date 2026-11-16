@@ -1,0 +1,74 @@
+# WorkLog : déballe le zip déposé à la racine, range les fichiers et publie le site.
+# Réglage requis une fois : Settings > Pages > Source : « GitHub Actions ».
+name: Mise à jour WorkLog
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: worklog
+  cancel-in-progress: false
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Déballer le zip et ranger les fichiers
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zips=( *.zip )
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "Pas de zip déposé : publication des fichiers actuels."
+            exit 0
+          fi
+          # Le plus récent numéro de version si plusieurs zips ont été déposés.
+          ZIP=$(printf '%s\n' "${zips[@]}" | sort -V | tail -n 1)
+          echo "Zip utilisé : $ZIP"
+          TMP=$(mktemp -d)
+          unzip -q "$ZIP" -d "$TMP"
+          SRC="$TMP"
+          # Zip qui contient un seul dossier englobant : on prend son contenu.
+          if [ ! -f "$SRC/index.html" ]; then
+            for d in "$TMP"/*/; do
+              if [ -f "$d/index.html" ]; then SRC="${d%/}"; break; fi
+            done
+          fi
+          if [ ! -f "$SRC/index.html" ]; then
+            echo "::error::Le zip ne contient pas index.html : rien n'a été modifié."
+            exit 1
+          fi
+          rm -rf "$SRC/.github" "$SRC/__MACOSX" "$SRC/.git"
+          find "$SRC" -name '.DS_Store' -delete
+          # Le dépôt devient exactement le contenu du zip (sauf .github, gardé tel quel).
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          cp -a "$SRC"/. .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Aucun changement."
+            exit 0
+          fi
+          VER=$(grep -m1 '^## ' CHANGELOG.md 2>/dev/null | sed 's/^## //' || true)
+          NOTES=$(awk 'f && /^## /{exit} f{print} /^## /{f=1}' CHANGELOG.md 2>/dev/null || true)
+          git commit -q -m "WorkLog ${VER:-mise à jour}" -m "${NOTES:-Mise à jour depuis $ZIP}"
+          git push
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deploiement
+        uses: actions/deploy-pages@v4
