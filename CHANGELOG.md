@@ -1,5 +1,11 @@
 # WorkLog : historique des versions
 
+## 0.6.2
+- Mannequin 3D : le corps garde son volume aux articulations. Les fesses ne s'écrasent plus quand la hanche plie beaucoup (Ischio unilat assis, Piriforme…), et les épaules et les coudes se déforment mieux.
+- Poignets naturels : la rotation de la main passe par l'avant-bras (et par l'épaule quand le bras est tendu) au lieu de vriller le poignet. Bras tendus et mains à plat dans « Piriforme avec torsion ».
+- Les mains qui se déplacent ne tournent plus sur elles-mêmes pendant les transitions.
+- Muscles ciblés plus visibles : couleurs plus marquées, zones du piriforme et du TFL agrandies, angle de vue de départ choisi pour montrer le muscle principal de chaque exercice.
+
 ## 0.6.1
 - Le mannequin 3D des 26 exercices d'étirements et de mobilité est remplacé par un corps réaliste (modèle « Male base muscular anatomy », CC BY 4.0).
 - Plus de sol ni d'ombre : on peut tourner autour du mannequin dans tous les sens, y compris par en dessous.

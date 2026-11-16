@@ -31,7 +31,7 @@
   WL3D.define([
     /* ------------------------- Étirements : bas du corps ------------------------- */
     { id: 'wl01', name: 'Quadriceps assis', leaf: 'quadriceps', p: 'quadriceps', s: ['psoas'], side: true,
-      mus: { quadR: 1, psoasR: 2 }, cam: { yaw: -48, pitch: 20 },
+      mus: { quadR: 1, psoasR: 2 }, cam: { yaw: 40, pitch: 20 },
       poses: {
         a: { pelvis: [0, 0.12, 0], rot: [-4, 0, 0], spine: [8, 0, 0],
           lL: { d: [0.22, -0.03, 1], foot: HEEL }, lR: { d: [-0.42, -0.14, 1], e: [-0.2, -0.02, -1], foot: 60 },
@@ -43,7 +43,7 @@
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
     { id: 'wl02', name: 'Ischio unilat assis', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['calves', 'glutes'], side: true,
-      mus: { hamL: 1, calfL: 2, gluteL: 2 }, cam: { yaw: 68, pitch: 12 },
+      mus: { hamL: 1, calfL: 2, gluteL: 2 }, cam: { yaw: -20, pitch: 20 },
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: flatF(0.11, 0.45), aL: hang(1), aR: hang(-1) },
         b: { pelvis: [0, 0.27, -0.33], rot: [38, 0, 0], spine: [26, 0, 0], neck: [-12, 0, 0],
@@ -53,7 +53,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl03', name: 'Piriforme', leaf: 'fessiers-ischios', p: 'piriformis', s: ['glutes'], side: true,
-      mus: { pirR: 1, gluteR: 2 }, cam: { yaw: -35, pitch: 14 },
+      mus: { pirR: 1, gluteR: 2 }, cam: { yaw: 0, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, chest: [14, 0, 0], neck: [10, 0, 0],
           lL: { d: [0, 0.94, 0.34], e: [0, 0.05, 1], foot: 10 }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [-1, 0.25, 0.3], foot: 5 },
@@ -65,19 +65,19 @@
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
     { id: 'wl04', name: 'Piriforme avec torsion', leaf: 'fessiers-ischios', p: 'piriformis', s: ['glutes', 'lower back', 'obliques'], side: true,
-      mus: { pirR: 1, gluteR: 2, lowR: 2, oblR: 2 }, cam: { yaw: -70, pitch: 28 },
+      mus: { pirR: 1, gluteR: 2, lowR: 2, oblR: 2 }, cam: { yaw: -40, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup,
           lL: { at: [0.10, AH, 0.44], p: [0, 1, 0.3], foot: 'flat', toe: [0, 0, 1] }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [-1, 0.25, 0.3], foot: 5 },
-          aL: { at: [0.74, 0.035, -0.46], hdir: [1, 0, 0], p: [0, 0.3, 1] }, aR: { at: [-0.74, 0.035, -0.46], hdir: [-1, 0, 0], p: [0, 0.3, 1] } },
+          aL: { at: [0.785, 0.035, -0.45], hdir: [1, 0, 0.05], p: [0, 0, -1] }, aR: { at: [-0.785, 0.035, -0.45], hdir: [-1, 0, 0.05], p: [0, 0, -1] } },
         b: { pelvis: [0.04, 0.1, 0], rot: [-95, 0, 0, 58], lumbar: [0, 0, -26], chest: [0, 0, -30],
           lL: { d: [0.80, -0.16, 0.56], e: [-0.45, 0.02, 0.9], foot: 20 }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [0.2, 1, 0.1], foot: 5 },
-          aL: { at: [0.74, 0.035, -0.46], hdir: [1, 0, 0], p: [0, 0.3, 1] }, aR: { at: [-0.74, 0.035, -0.46], hdir: [-1, 0, 0], p: [0, 0.3, 1] } },
+          aL: { at: [0.785, 0.035, -0.45], hdir: [1, 0, 0.05], p: [0, 0, -1] }, aR: { at: [-0.785, 0.035, -0.45], hdir: [-1, 0, 0.05], p: [0, 0, -1] } },
       },
       seq: [['a', 0.9, 1.6], ['b', 2.2, 1.6]] },
 
     { id: 'wl05', name: 'Psoas fente + inclinaison', leaf: 'quadriceps', p: 'psoas', s: ['quadriceps', 'obliques', 'lats'], side: true,
-      mus: { psoasL: 1, quadL: 2, oblL: 2, latL: 2 }, cam: { yaw: 28, pitch: 10 },
+      mus: { psoasL: 1, quadL: 2, oblL: 2, latL: 2 }, cam: { yaw: 20, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], lL: KN(1), lR: flatF(-0.11, 0.58),
           aL: { atb: [0.05, 0.78, 0.03], pb: [1, 0.1, -0.2], hand: { db: [0, 1, 0], nb: [-1, 0, 0] } }, aR: { atb: [-0.05, 0.78, 0.03], pb: [-1, 0.1, -0.2], hand: { db: [0, 1, 0], nb: [1, 0, 0] } } },
@@ -88,7 +88,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl06', name: 'Adducteurs ventral', leaf: 'abducteurs', p: 'adductors', s: [],
-      mus: m2('add', 1), cam: { yaw: 165, pitch: 16 },
+      mus: m2('add', 1), cam: { yaw: -180, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.36, 0], rot: [78, 0, 0],
           lL: { d: [0.62, -0.76, 0.1], e: [0, -0.02, -1], foot: 30 }, lR: { d: [-0.62, -0.76, 0.1], e: [0, -0.02, -1], foot: 30 },
@@ -100,7 +100,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl07', name: 'TFL assis', leaf: 'abducteurs', p: 'tfl', s: ['glutes', 'abductors'], side: true,
-      mus: { tflR: 1, gluteR: 2, abdR: 2 }, cam: { yaw: -40, pitch: 22 },
+      mus: { tflR: 1, gluteR: 2, abdR: 2 }, cam: { yaw: -100, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.12, 0], rot: [-26, 0, 0], neck: [14, 0, 0],
           lL: { d: [0.34, -0.03, 1], foot: HEEL }, lR: { at: [-0.34, AH, 0.42], p: [-0.2, 1, 0.3], foot: 'flat', toe: [-0.25, 0, 1] },
@@ -112,7 +112,7 @@
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
     { id: 'wl08', name: 'Mollet unilatéral', leaf: 'mollets', p: 'calves', s: [], side: true,
-      mus: { calfR: 1 }, cam: { yaw: -115, pitch: 8 },
+      mus: { calfR: 1 }, cam: { yaw: -140, pitch: 8 },
       props: [{ type: 'dumbbell', pos: [0.04, 0, 0.34], r: 0.047 }],
       poses: {
         a: { pelvis: [0, 0.915, -0.03], lL: flatF(0.11, -0.10),
@@ -124,7 +124,7 @@
 
     /* ------------------------- Étirements : haut du corps ------------------------- */
     { id: 'wl09', name: 'Rotateurs épaule', leaf: 'epaules', p: 'rotator cuff', s: ['shoulders'], side: true,
-      mus: { cuffR: 1, deltR: 2 }, cam: { yaw: -35, pitch: 10 },
+      mus: { cuffR: 1, deltR: 2 }, cam: { yaw: -40, pitch: 20 },
       props: [{ type: 'stick', a: 'handR', b: 'handL', ext: [0.42, 0.30] }],
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: flatF(0.11, 0.45),
@@ -135,18 +135,18 @@
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
     { id: 'wl10', name: 'Deltoïde post 4 pattes', leaf: 'epaules', p: 'rear delts', s: ['rhomboids', 'traps'], side: true,
-      mus: { deltPR: 1, rhombR: 2, trapR: 2 }, cam: { yaw: 215, pitch: 22 },
+      mus: { deltPR: 1, rhombR: 2, trapR: 2 }, cam: { yaw: -100, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [79, 0, 0], neck: [-12, 0, 0], lL: KN(1), lR: KN(-1),
           aL: { at: [0.21, 0.03, 0.47], p: [0.3, 0, -1] }, aR: { at: [-0.21, 0.03, 0.47], p: [-0.3, 0, -1] } },
         b: { pelvis: [0, 0.46, -0.03], rot: [112, 0, 0], lumbar: [6, 0, 14], chest: [8, 0, 34], neck: [0, 0, 30],
           lL: KN(1, { d: [0.02, -1, 0.07] }), lR: KN(-1, { d: [-0.02, -1, 0.07] }),
-          aL: { at: [0.30, 0.03, 0.70], p: [1, 0.6, -0.2] }, aR: { at: [0.46, 0.04, 0.38], p: [0, 0, -1], hand: { d: [1, 0, 0], n: [0, 1, 0] } } },
+          aL: { at: [0.30, 0.03, 0.70], p: [1, 0.6, -0.2] }, aR: { at: [0.46, 0.04, 0.38], p: [1, 0, 0], hand: { d: [1, 0, 0], n: [0, 1, 0] } } },
       },
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl11', name: 'Pec élastique', leaf: 'pectoraux', p: 'chest', s: ['shoulders', 'biceps'], side: true,
-      mus: { pecR: 1, deltR: 2, bicepsR: 2 }, cam: { yaw: -22, pitch: 10 },
+      mus: { pecR: 1, deltR: 2, bicepsR: 2 }, cam: { yaw: 20, pitch: 5 },
       props: [{ type: 'post', a: [-1.08, 0, -0.95], b: [-1.08, 1.95, -0.95] }, { type: 'band', a: [-1.08, 1.88, -0.95], b: 'handR' }],
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: flatF(0.11, 0.45),
@@ -170,7 +170,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl13', name: 'Trapèzes', leaf: 'dos', p: 'traps', s: ['neck'], side: true,
-      mus: { trapR: 1, neckR: 2 }, cam: { yaw: 198, pitch: 12 },
+      mus: { trapR: 1, neckR: 2 }, cam: { yaw: -180, pitch: 20 },
       poses: {
         a: { pelvis: [0, 0.24, 0], lL: sitHeels(1), lR: sitHeels(-1),
           aL: { atb: [0.10, -0.20, -0.215], pb: [1, 0, -0.5], hand: { db: [-0.9, -0.4, 0], nb: [0, 0, -1] } }, aR: { atb: [-0.10, -0.24, -0.16], pb: [-1, 0, -0.5], hand: { db: [0.9, -0.4, 0], nb: [0, 0, -1] } } },
@@ -180,7 +180,7 @@
       seq: [['a', 0.7, 1.3], ['b', 2.2, 1.3]] },
 
     { id: 'wl14', name: 'Phoque', leaf: 'abdos', p: 'abdominals', s: ['psoas', 'obliques'],
-      mus: mus({ abs: 1 }, m2('psoas', 2), m2('obl', 2)), cam: { yaw: 62, pitch: 12 },
+      mus: mus({ abs: 1 }, m2('psoas', 2), m2('obl', 2)), cam: { yaw: 35, pitch: 10 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: [92, 0, 0], neck: [-18, 0, 0],
           lL: { d: [0.04, -0.02, -1], foot: 80 }, lR: { d: [-0.04, -0.02, -1], foot: 80 },
@@ -192,7 +192,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl15', name: 'Prière', leaf: 'dos', p: 'lats', s: ['lower back', 'shoulders'], dup: ['Childs_Pose'],
-      mus: mus(m2('lat', 1), m2('low', 2), m2('delt', 2)), cam: { yaw: 64, pitch: 14 },
+      mus: mus(m2('lat', 1), m2('low', 2), m2('delt', 2)), cam: { yaw: -180, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [76, 0, 0], neck: [-12, 0, 0], lL: KN(1, { d: [0.10, -1, 0] }), lR: KN(-1, { d: [-0.10, -1, 0] }),
           aL: { at: [0.19, 0.03, 0.60], p: [0.3, 0.3, -1] }, aR: { at: [-0.19, 0.03, 0.60], p: [-0.3, 0.3, -1] } },
@@ -203,7 +203,7 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl16', name: 'Prière latérale', leaf: 'dos', p: 'lats', s: ['obliques', 'lower back'], side: true,
-      mus: { latR: 1, oblR: 2, lowR: 2 }, cam: { yaw: -30, pitch: 32 },
+      mus: { latR: 1, oblR: 2, lowR: 2 }, cam: { yaw: -120, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.22, -0.37], rot: [68, 0, 0], lumbar: [15, 0, 0], chest: [12, 0, 0], neck: [6, 0, 0],
           lL: { d: [0.13, -0.19, 0.38], e: [-0.05, -0.02, -1], foot: 80 }, lR: { d: [-0.13, -0.19, 0.38], e: [0.05, -0.02, -1], foot: 80 },
@@ -216,7 +216,7 @@
 
     /* ------------------------- Mobilité : bas du corps ------------------------- */
     { id: 'wl17', name: 'Cheville dynamique en fente', leaf: 'mollets', p: 'calves', s: [], side: true,
-      mus: { calfR: 1 }, cam: { yaw: -112, pitch: 9 },
+      mus: { calfR: 1 }, cam: { yaw: 100, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [6, 0, 0], lL: KN(1), lR: flatF(-0.11, 0.40),
           aL: { on: ['kneeR', [0.05, 0.19, 0.105], 'UpperLeg_R'], p: [1, 0, -0.5], hand: ONTOP('UpperLeg_R') }, aR: { on: ['kneeR', [-0.05, 0.19, 0.105], 'UpperLeg_R'], p: [-1, 0, -0.5], hand: ONTOP('UpperLeg_R') } },
@@ -227,7 +227,7 @@
       seq: [['a', 0.35, 1.0], ['b', 0.5, 1.0]] },
 
     { id: 'wl18', name: 'Ischios allongé', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['calves'], side: true,
-      mus: { hamR: 1, calfR: 2 }, cam: { yaw: -62, pitch: 15 },
+      mus: { hamR: 1, calfR: 2 }, cam: { yaw: 40, pitch: 20 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, lL: { at: [0.10, HL, 0.83], foot: HEEL },
           lR: { d: [0, 0.97, -0.24], e: [0, -0.2, 1], foot: 10 },
@@ -239,7 +239,7 @@
       seq: [['a', 0.35, 1.1], ['b', 0.6, 1.1]] },
 
     { id: 'wl19', name: 'Foulée au sol', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['psoas', 'glutes'], side: true,
-      mus: { hamR: 1, psoasR: 2, gluteR: 2 }, cam: { yaw: -62, pitch: 14 },
+      mus: { hamR: 1, psoasR: 2, gluteR: 2 }, cam: { yaw: -20, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, lL: { at: [0.10, HL, 0.83], foot: HEEL }, lR: { d: [-0.04, 0.22, 1], p: [0, 1, 0], foot: 0 },
           aL: { at: [0.48, 0.035, -0.16], hdir: [0.4, 0, 1], p: [1, 0.3, 0] }, aR: { at: [-0.48, 0.035, -0.16], hdir: [-0.4, 0, 1], p: [-1, 0.3, 0] } },
@@ -251,7 +251,7 @@
       seq: [['a', 0.15, 0.9], ['b', 0.25, 0.8], ['c', 0.15, 0.8]] },
 
     { id: 'wl20', name: 'Hanche et adducteur unilat', leaf: 'abducteurs', p: 'adductors', s: ['hamstrings', 'glutes'], side: true,
-      mus: { addL: 1, hamL: 2 }, cam: { yaw: 18, pitch: 14 },
+      mus: { addL: 1, hamL: 2 }, cam: { yaw: -20, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: { at: [0.82, AH, 0.04], p: [0.2, 0.6, 1], foot: 'flat', toe: [0.2, 0, 1] }, aL: hip(1), aR: hip(-1) },
         b: { pelvis: [0, 0.34, -0.29], rot: [42, 0, 0], neck: [-18, 0, 0],
@@ -260,7 +260,7 @@
       seq: [['a', 0.35, 1.1], ['b', 0.6, 1.1]] },
 
     { id: 'wl21', name: 'Chaîne post position chien', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['calves', 'lats', 'shoulders'],
-      mus: mus(m2('ham', 1), m2('calf', 1), m2('lat', 2), m2('delt', 2)), cam: { yaw: 72, pitch: 10 },
+      mus: mus(m2('ham', 1), m2('calf', 1), m2('lat', 2), m2('delt', 2)), cam: { yaw: -140, pitch: 15 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [118, 0, 0], chest: [-14, 0, 0], neck: [6, 0, 0],
           lL: KN(1, { d: [0.05, -1, 0.05] }), lR: KN(-1, { d: [-0.05, -1, 0.05] }),
@@ -276,7 +276,7 @@
 
     /* ------------------------- Mobilité : haut du corps ------------------------- */
     { id: 'wl22', name: 'T spine 4 pattes', leaf: 'dos', p: 'rhomboids', s: ['obliques', 'chest'], side: true,
-      mus: mus(m2('rhomb', 1), m2('obl', 2), { pecR: 2 }), cam: { yaw: 40, pitch: 16 },
+      mus: mus(m2('rhomb', 1), m2('obl', 2), { pecR: 2 }), cam: { yaw: 80, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [82, 0, 0], lumbar: [4, 0, 8], chest: [6, 0, 24], neck: [0, 0, 10], lL: KN(1), lR: KN(-1),
           aL: { at: [0.21, 0.03, 0.47], p: [0.3, 0, -1] }, aR: { atb: [-0.12, 0.50, -0.12], pb: [-1, 0.25, 0.25], hand: { db: [1, 0.15, -0.1], nb: [0, 0, 1] } } },
@@ -297,7 +297,7 @@
       seq: [['a', 0.5, 1.5], ['b', 1.0, 1.5]] },
 
     { id: 'wl24', name: 'Papillon', leaf: 'epaules', p: 'rear delts', s: ['shoulders', 'rhomboids', 'traps'],
-      mus: mus(m2('deltP', 1), m2('delt', 2), m2('rhomb', 2), m2('trap', 2)), cam: { yaw: 150, pitch: 34 },
+      mus: mus(m2('deltP', 1), m2('delt', 2), m2('rhomb', 2), m2('trap', 2)), cam: { yaw: 0, pitch: 55 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: [92, 0, 0], neck: [-6, 0, 0], lL: { d: [0.05, -0.02, -1], foot: 80 }, lR: { d: [-0.05, -0.02, -1], foot: 80 },
           aL: { atb: [0.20, -0.22, -0.20], pb: [1, 0, -0.5], hand: { db: [-0.8, -0.6, 0], nb: [0, 0, -1] } }, aR: { atb: [-0.20, -0.22, -0.20], pb: [-1, 0, -0.5], hand: { db: [0.8, -0.6, 0], nb: [0, 0, -1] } } },
@@ -309,7 +309,7 @@
       seq: [['a', 0.3, 1.0], ['b', 0.15, 0.9], ['c', 0.4, 0.9], ['b', 0.15, 1.0]] },
 
     { id: 'wl25', name: 'Skierg', leaf: 'dos', p: 'lats', s: ['shoulders', 'hamstrings'],
-      mus: mus(m2('lat', 1), m2('delt', 2), m2('ham', 2)), cam: { yaw: 76, pitch: 8 },
+      mus: mus(m2('lat', 1), m2('delt', 2), m2('ham', 2)), cam: { yaw: -130, pitch: 10 },
       poses: {
         a: { pelvis: [0, 0.925, 0], rot: [4, 0, 0], lumbar: [-4, 0, 0], lL: flatF(0.12, 0), lR: flatF(-0.12, 0),
           aL: { db: [0.14, 1, 0.16], pb: [0.3, 0, -1] }, aR: { db: [-0.14, 1, 0.16], pb: [-0.3, 0, -1] } },
@@ -321,7 +321,7 @@
       seq: [['a', 0.3, 0.55], ['b', 0, 0.5], ['c', 0.35, 0.65], ['b', 0, 0.6]] },
 
     { id: 'wl26', name: 'Dos rond/dos creux', leaf: 'dos', p: 'lower back', s: ['rhomboids', 'abdominals'], dup: ['Cat_Stretch'],
-      mus: mus(m2('low', 1), m2('rhomb', 2), { abs: 2 }), cam: { yaw: 70, pitch: 12 },
+      mus: mus(m2('low', 1), m2('rhomb', 2), { abs: 2 }), cam: { yaw: 150, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [53, 0, 0], lumbar: [28, 0, 0], chest: [28, 0, 0], neck: [32, 0, 0], lL: KN(1), lR: KN(-1),
           aL: { at: [0.21, 0.03, 0.44], p: [0.3, 0, -1] }, aR: { at: [-0.21, 0.03, 0.44], p: [-0.3, 0, -1] } },

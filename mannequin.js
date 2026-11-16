@@ -157,6 +157,7 @@
   const dirW = (f, v) => qRot(f.q, v);
   const part = (q, f) => qSlerp(QI, q, f);
   /* Tronc : la flexion des lombaires est répartie sur 2 vertèbres du modèle, celle du thorax sur 3, celle du cou sur 3. */
+  const TWIST = 0.75, TWMAX = 115 * D2R;   // part de la torsion de la main donnée à l'avant-bras, et son maximum
   function torso(pos, pq, lq, cq, nq, hq, W, P) {
     const R = RIG; const D = new Array(10);
     D[0] = pq; D[1] = qMul(pq, part(lq, 0.5)); D[2] = qMul(pq, lq);
@@ -285,6 +286,17 @@
         const qe = arm ? qBasis(cross(mul(en.a, -1), eb), mul(en.a, -1), eb) : qBasis(cross(eb, en.a), eb, en.a);
         const setB = (i, q) => { W[i] = qNorm(qMul(qMul(q, qConj(R.mb[i])), R.bw[i].q)); };
         P[u] = root; setB(u, qBasis(fr.x1, fr.y1, fr.z1)); put(l, u); setB(l, qBasis(fr.x2, fr.y2, fr.z2)); put(e, l); setB(e, qe);
+        if (arm) {   // la rotation de la main (pronation, supination) est portée par l'avant-bras et, bras tendu, par l'épaule ; pas par le poignet
+          const wtw = () => { const d = qMul(qConj(R.bones[e].r), qMul(qConj(W[l]), W[e])); let ang = 2 * Math.atan2(d[1], d[3]); if (ang > PI) ang -= 2 * PI; if (ang < -PI) ang += 2 * PI; return ang; };
+          const bend = Math.acos(clamp(dot(fr.y1, fr.y2), -1, 1));
+          const k = 0.5 * clamp(1 - bend / (35 * D2R), 0, 1);   // bras presque tendu : l'épaule tourne aussi (le coude bouge à peine)
+          if (k > 0) {
+            const g = wtw() * k; const ax = norm(sub(P[e], P[u])); const qg = qAxis(ax, g);
+            W[u] = qNorm(qMul(qg, W[u])); W[l] = qNorm(qMul(qg, W[l])); P[l] = add(P[u], qRot(qg, sub(P[l], P[u])));
+          }
+          const f = clamp(wtw() * TWIST, -TWMAX, TWMAX);
+          if (Math.abs(f) > 1e-4) W[l] = qNorm(qMul(qAxis(norm(sub(P[e], P[l])), f), W[l]));
+        }
         if (toes != null) { W[toes] = qMul(qMul(qMul(W[e], qConj(R.bw[e].q)), R.bw[toes].q), qX(L.toes || 0)); put(toes, e); }
         lim[id] = { ik: r.ik, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik };
         if (arm) { J['wrist' + sfx] = P[e]; J['elbow' + sfx] = P[l]; J['sh' + sfx] = P[u]; J['hand' + sfx] = add(P[e], mul(en.a, 0.085)); }
@@ -335,7 +347,8 @@
           const q1 = qArc(norm(sub(P[l], root)), k.d1); const d2 = qRot(q1, norm(sub(P[e], P[l]))); const q2 = qArc(d2, k.d2); const q21 = qMul(q2, q1);
           const wToes = toes != null ? qMul(qConj(W[e]), W[toes]) : null;
           W[u] = qNorm(qMul(q1, W[u])); W[l] = qNorm(qMul(q21, W[l]));
-          W[e] = (a.kind === 'at' && b.kind === 'at') ? qSlerp(A.W[e], Bp.W[e], t) : qNorm(qMul(q21, W[e]));
+          // appui qui ne bouge pas : la main ou le pied garde son orientation dans l'espace ; sinon il suit le membre (pas de vrille)
+          W[e] = (a.kind === 'at' && b.kind === 'at' && len(sub(a.tgt, b.tgt)) < 0.03) ? qSlerp(A.W[e], Bp.W[e], t) : qNorm(qMul(q21, W[e]));
           P[l] = add(root, mul(k.d1, l1)); P[e] = add(P[l], mul(k.d2, l2));
           if (toes != null) { W[toes] = qNorm(qMul(W[e], wToes)); P[toes] = add(P[e], qRot(W[e], R.bones[toes].t)); }
         }
@@ -388,13 +401,14 @@
     ex.fit = { c, rad: Math.max(rad, 0.5) };
     return ex.fit;
   }
-  const COL = { prim: [0.416, 0.310, 0.753, 0.92], sec: [0.700, 0.610, 0.930, 0.80], ink: [0.22, 0.15, 0.2],
+  const COL = { prim: [0.400, 0.290, 0.760, 0.95], sec: [0.640, 0.540, 0.950, 0.86], ink: [0.22, 0.15, 0.2],
     wood: [0.905, 0.800, 0.640], woodDark: [0.800, 0.660, 0.450], band: [0.250, 0.640, 0.560], steel: [0.420, 0.400, 0.480] };
   /* Teinte de chaque groupe du modèle et de chaque zone peinte pour un exercice. */
-  function tintOf(ex) {
-    if (ex.tint) return ex.tint;
+  function tintOf(ex, primOnly) {
+    if (ex.tint && !primOnly) return ex.tint;
     const R = RIG; const g = R.groups.map(() => null); const z = new Float32Array(11 * 4);
     for (const [key, lvl] of Object.entries(ex.mus || {})) {
+      if (primOnly && lvl !== 1) continue;
       const m = /^(.*?)(L|R)?$/.exec(key); const base = m[1]; const sides = m[2] ? [m[2]] : ['L', 'R'];
       const c = lvl === 1 ? COL.prim : COL.sec;
       for (const s of sides) {
@@ -402,6 +416,7 @@
         else if (MZ[base]) { const zi = 1 + (s === 'L' ? 0 : R.zones.length) + R.zones.indexOf(MZ[base]); if (!(z[zi * 4 + 3] > c[3])) z.set(c, zi * 4); }
       }
     }
+    if (primOnly) return { g, z };
     ex.tint = { g, z }; return ex.tint;
   }
 
@@ -463,17 +478,22 @@
 
   /* ---------- rendu ---------- */
   const VS_BODY = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;attribute vec4 aJ;attribute vec4 aW;attribute vec4 aZ;'
-    + 'uniform mat4 uVP;uniform vec4 uB[78];uniform vec3 uLo;uniform vec3 uSc;uniform vec4 uZc[11];uniform float uOut;uniform mediump vec3 uCam;'
+    + 'uniform mat4 uVP;uniform vec4 uB[52];uniform vec3 uLo;uniform vec3 uSc;uniform vec4 uZc[11];uniform float uOut;uniform mediump vec3 uCam;'
     + 'varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
-    + 'void bone(float j,float w,vec4 p,vec3 n,inout vec3 op,inout vec3 on){int i=int(j+0.5)*3;vec4 a=uB[i];vec4 b=uB[i+1];vec4 c=uB[i+2];'
-    + 'op+=w*vec3(dot(a,p),dot(b,p),dot(c,p));on+=w*vec3(dot(a.xyz,n),dot(b.xyz,n),dot(c.xyz,n));}'
-    + 'void main(){vec4 p=vec4(aP*uSc+uLo,1.0);vec3 op=vec3(0.0);vec3 on=vec3(0.0);'
-    + 'bone(aJ.x,aW.x,p,aN,op,on);bone(aJ.y,aW.y,p,aN,op,on);bone(aJ.z,aW.z,p,aN,op,on);bone(aJ.w,aW.w,p,aN,op,on);'
+    + 'void main(){vec3 p=aP*uSc+uLo;'
+    + 'int i0=int(aJ.x+0.5)*2;int i1=int(aJ.y+0.5)*2;int i2=int(aJ.z+0.5)*2;int i3=int(aJ.w+0.5)*2;'
+    + 'vec4 r0=uB[i0];vec4 r1=uB[i1];vec4 r2=uB[i2];vec4 r3=uB[i3];'
+    + 'float s1=dot(r0,r1)<0.0?-1.0:1.0;float s2=dot(r0,r2)<0.0?-1.0:1.0;float s3=dot(r0,r3)<0.0?-1.0:1.0;'
+    + 'vec4 r=aW.x*r0+aW.y*s1*r1+aW.z*s2*r2+aW.w*s3*r3;'
+    + 'vec4 d=aW.x*uB[i0+1]+aW.y*s1*uB[i1+1]+aW.z*s2*uB[i2+1]+aW.w*s3*uB[i3+1];'
+    + 'float l=length(r);r/=l;d/=l;'
+    + 'vec3 op=p+2.0*cross(r.xyz,cross(r.xyz,p)+r.w*p)+2.0*(r.w*d.xyz-d.w*r.xyz+cross(r.xyz,d.xyz));'
+    + 'vec3 on=aN+2.0*cross(r.xyz,cross(r.xyz,aN)+r.w*aN);'
     + 'vec3 n=normalize(on);op+=n*uOut;if(uOut>0.0){op+=normalize(op-uCam)*uOut*4.0;}'
     + 'vN=n;vW=op;vU=aU;vec4 zc=uZc[int(aZ.x*255.0+0.5)];vZ=vec4(zc.rgb,1.0)*(step(0.01,zc.a)*aZ.y);gl_Position=uVP*vec4(op,1.0);}';
   const FS_BODY = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
     + 'uniform sampler2D uTex;uniform vec4 uTint;uniform vec3 uL;uniform mediump vec3 uCam;uniform float uMode;uniform vec4 uFlat;'
-    + 'void main(){if(uMode>0.5){gl_FragColor=uFlat;return;}'
+    + 'void main(){if(uMode>1.5){float m=max(step(0.01,uTint.a),step(0.3,vZ.a));gl_FragColor=vec4(m,0.0,0.0,1.0);return;}if(uMode>0.5){gl_FragColor=uFlat;return;}'
     + 'vec3 tex=texture2D(uTex,vU).rgb;float lum=dot(tex,vec3(0.3,0.5,0.2));float k=0.5+0.8*lum;'
     + 'vec3 col=mix(tex,uTint.rgb*k,uTint.a);col=mix(col,vZ.rgb/max(vZ.a,0.001)*k,smoothstep(0.05,0.6,vZ.a)*0.9);'
     + 'vec3 n=normalize(vN);if(!gl_FrontFacing)n=-n;vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;float hemi=n.y*0.5+0.5;'
@@ -511,7 +531,7 @@
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
     gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); state = 'ko'; });
-    GL = { canvas, gl, body, prop, tex, bones: new Float32Array(78 * 4) };
+    GL = { canvas, gl, body, prop, tex, bones: new Float32Array(52 * 4) };
   }
   function load() {
     if (ASSET) return ASSET;
@@ -522,7 +542,7 @@
       .catch((e) => { state = 'ko'; views.forEach((v) => v.canvas.classList.add('ko')); if (window.console) console.warn('WL3D', e); return false; });
     return ASSET;
   }
-  function drawScene(ex, time, cam, w, h, thick) {
+  function drawScene(ex, time, cam, w, h, thick, mask) {
     const g = GL; const gl = g.gl; const R = RIG;
     ready(ex);
     const [sa, sb, t] = timeline(ex, time);
@@ -536,19 +556,18 @@
     const vp = mMul(mPersp(fov, asp, Math.max(0.05, dist - fit.rad * 1.6), dist + fit.rad * 1.6), view);
     const right = [view[0], view[4], view[8]], up = [view[1], view[5], view[9]], back = [view[2], view[6], view[10]];
     const light = norm(add(add(mul(right, -0.5), mul(up, 0.72)), mul(back, 0.62)));
-    // matrices des os : rotation et translation qui amènent le repos sur la pose
+    // os : rotation et translation qui amènent le repos sur la pose, en quaternion dual (partie réelle, partie duale)
     const bm = g.bones;
     for (let i = 0; i < NB; i++) {
       const q = qMul(s.W[i], qConj(R.bw[i].q)); const tr = sub(s.P[i], qRot(q, R.bw[i].p));
-      const x = qRot(q, [1, 0, 0]), y = qRot(q, [0, 1, 0]), z = qRot(q, [0, 0, 1]); const o = i * 12;
-      bm[o] = x[0]; bm[o + 1] = y[0]; bm[o + 2] = z[0]; bm[o + 3] = tr[0];
-      bm[o + 4] = x[1]; bm[o + 5] = y[1]; bm[o + 6] = z[1]; bm[o + 7] = tr[1];
-      bm[o + 8] = x[2]; bm[o + 9] = y[2]; bm[o + 10] = z[2]; bm[o + 11] = tr[2];
+      const dq = qMul([tr[0], tr[1], tr[2], 0], q); const o = i * 8;
+      bm[o] = q[0]; bm[o + 1] = q[1]; bm[o + 2] = q[2]; bm[o + 3] = q[3];
+      bm[o + 4] = dq[0] * 0.5; bm[o + 5] = dq[1] * 0.5; bm[o + 6] = dq[2] * 0.5; bm[o + 7] = dq[3] * 0.5;
     }
     gl.viewport(0, 0, w, h); gl.enable(gl.SCISSOR_TEST); gl.scissor(0, 0, w, h);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.enable(gl.CULL_FACE);
-    const tint = tintOf(ex);
+    const tint = mask ? tintOf(ex, true) : tintOf(ex);
     // --- corps
     let L = g.body.loc; gl.useProgram(g.body.p);
     for (let i = 0; i < 6; i++) gl.enableVertexAttribArray(i);
@@ -563,7 +582,7 @@
     gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform4fv(L.uB, bm); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
     const hd = R.head; gl.uniform3fv(L.uLo, hd.lo); gl.uniform3f(L.uSc, hd.hi[0] - hd.lo[0], hd.hi[1] - hd.lo[1], hd.hi[2] - hd.lo[2]);
     gl.uniform4fv(L.uZc, tint.z); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, g.tex); gl.uniform1i(L.uTex, 0);
-    gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, 0); gl.cullFace(gl.BACK);
+    gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, mask ? 2 : 0); gl.cullFace(gl.BACK);
     for (let i = 0; i < R.groups.length; i++) {
       const gr = R.groups[i]; const c = tint.g[i];
       if (c) gl.uniform4fv(L.uTint, c); else gl.uniform4f(L.uTint, 0, 0, 0, 0);
@@ -670,6 +689,6 @@
     define, view, has: (id) => EX.has(id),
     credit: 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
     list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
-    _dbg: { EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
+    _dbg: { snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();
