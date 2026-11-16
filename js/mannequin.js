@@ -134,7 +134,50 @@
       const toe = norm(perp(dirOf('Foot_' + s, 'Toes_' + s), [0, 1, 0])); r.mb[X['Foot_' + s]] = qBasis(cross([0, 1, 0], toe), [0, 1, 0], toe);
       const fing = qRot(r.bw[X['Hand_' + s]].q, [0, 1, 0]); const hy = mul(fing, -1); const hz = norm(perp([0, -1, 0], hy)); r.mb[X['Hand_' + s]] = qBasis(cross(hy, hz), hy, hz);
     }
+    surfaces(r);
     return r;
+  }
+
+  /* Surface des membres : pour la cuisse, la jambe, le bras et l'avant-bras, rayon de la peau selon la hauteur
+     le long de l'os (0 = articulation du haut, 1 = articulation du bas) et l'angle autour (0° = devant, 90° = dehors). */
+  const SH = 12, ST = 24;
+  function surfaces(r) {
+    r.surf = {};
+    const n = r.nv; const lo = r.head.lo, hi = r.head.hi;
+    const kids = { UpperLeg: 'LowerLeg', LowerLeg: 'Foot', UpperArm: 'LowerArm', LowerArm: 'Hand' };
+    for (const [seg, kid] of Object.entries(kids)) for (const sd of ['L', 'R']) {
+      const b = X[seg + '_' + sd]; const o = r.bw[b].p; const L = len(sub(r.bw[X[kid + '_' + sd]].p, o)); const q = qConj(r.mb[b]); const mir = sd === 'L' ? 1 : -1;
+      const rm = new Float32Array(SH * ST);
+      for (let i = 0; i < n; i++) {
+        let w = 0; for (let k = 0; k < 4; k++) if (r.jnt[i * 4 + k] === b) w = r.wgt[i * 4 + k];
+        if (w < 140) continue;
+        const p = [lo[0] + r.pos[i * 3] / 65535 * (hi[0] - lo[0]), lo[1] + r.pos[i * 3 + 1] / 65535 * (hi[1] - lo[1]), lo[2] + r.pos[i * 3 + 2] / 65535 * (hi[2] - lo[2])];
+        const v = qRot(q, sub(p, o)); const h = -v[1] / L; if (h < 0 || h >= 1) continue;
+        const rr = Math.hypot(v[0], v[2]); let a = Math.atan2(v[0] * mir, v[2]); if (a < 0) a += 2 * PI;
+        const k = Math.floor(h * SH) * ST + Math.floor(a / (2 * PI) * ST) % ST; if (rr > rm[k]) rm[k] = rr;
+      }
+      for (let pass = 0; pass < 4; pass++) for (let k = 0; k < rm.length; k++) if (!rm[k]) {
+        const hb = Math.floor(k / ST), tb = k % ST; const nb = [rm[hb * ST + (tb + 1) % ST], rm[hb * ST + (tb + ST - 1) % ST], hb ? rm[k - ST] : 0, hb < SH - 1 ? rm[k + ST] : 0].filter((x) => x);
+        if (nb.length) rm[k] = nb.reduce((x, y) => x + y) / nb.length;
+      }
+      r.surf[b] = { L, rm, mir };
+    }
+  }
+  function skinRadius(b, h, ang) {   // interpolé
+    const S = RIG.surf[b]; const hf = clamp(h, 0, 0.999) * SH - 0.5, af = (((ang % 360) + 360) % 360) / 360 * ST - 0.5;
+    const h0 = clamp(Math.floor(hf), 0, SH - 1), h1 = clamp(h0 + 1, 0, SH - 1), th = clamp(hf - h0, 0, 1);
+    const a0 = (Math.floor(af) + ST) % ST, a1 = (a0 + 1) % ST, ta = af - Math.floor(af);
+    const g = (hb, tb) => S.rm[hb * ST + tb];
+    return (g(h0, a0) * (1 - ta) + g(h0, a1) * ta) * (1 - th) + (g(h1, a0) * (1 - ta) + g(h1, a1) * ta) * th;
+  }
+  /* Main posée sur la peau d'un membre : { bone, h, ang, f } (f : +1 / -1, sens des doigts autour du membre).
+     Renvoie la position du poignet, la direction des doigts et le côté vers lequel la paume regarde. */
+  function grabPoint(g, W, P) {
+    const b = X[g.bone]; const S = RIG.surf[b]; const q = boneQ(g.bone, W);
+    const a = g.ang * D2R; const rad = qRot(q, [Math.sin(a) * S.mir, 0, Math.cos(a)]); const axis = qRot(q, [0, -1, 0]);
+    const skin = add(P[b], add(mul(axis, g.h * S.L), mul(rad, skinRadius(b, g.h, g.ang))));
+    const fing = norm(add(mul(cross(axis, rad), (g.f || 1) * S.mir), mul(axis, g.tilt || 0)));
+    return { wrist: add(skin, add(mul(rad, 0.022), mul(fing, -0.082))), fing, palm: mul(rad, -1) };
   }
 
   /* ---------- pose : de la description aux articulations ----------
@@ -190,19 +233,26 @@
   /* Repère d'un os : pour un segment de membre, X = axe du pli, Y = vers la racine du membre, Z = devant ; sinon l'orientation du corps. */
   function boneQ(name, W) { const i = X[name]; const d = qMul(W[i], qConj(RIG.bw[i].q)); return RIG.mb[i] ? qMul(d, RIG.mb[i]) : d; }
   function onTarget(on, off, J, W) { return add(J[on[0]], on[2] ? qRot(boneQ(on[2], W), off) : off); }
-  function targetOf(id, L, F, J, W) {
+  function targetOf(id, L, F, J, W, P) {
     const arm = id[0] === 'a'; const base = arm ? F.C : F.P;
     if (L.at) return L.at;
     if (L.atb) return toW(base, L.atb);
     if (L.on) return onTarget(L.on, L.on[1] || [0, 0, 0], J, W);
+    if (L.grab && P) return grabPoint(L.grab, W, P).wrist;
     return null;
   }
-  function limbOf(id, L, F, J, root, W) {
+  function limbOf(id, L, F, J, root, W, P) {
     const arm = id[0] === 'a'; const side = id[1] === 'L' ? 1 : -1;
     const base = arm ? F.C : F.P;
     const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
-    const pole = norm(L.p ? L.p : L.pb ? dirW(base, L.pb) : dirW(base, arm ? [side * 0.5, -0.6, -0.8] : [side * 0.1, 0.1, 1]));
-    const tgt = targetOf(id, L, F, J, W);
+    const tgt = targetOf(id, L, F, J, W, P);
+    let pole = L.p ? L.p : L.pb ? dirW(base, L.pb) : null;
+    if (!pole && !arm) {   // genou dans la direction qu'il prend quand la cuisse pivote depuis la position debout, sans tourner
+      const u = LB[id][0]; const guess = tgt ? sub(tgt, root) : (L.d || (L.db ? dirW(base, L.db) : [0, -1, 0]));
+      const dl = qRot(qConj(base.q), norm(guess, [0, -1, 0])); const rest = qRot(RIG.mb[u], [0, -1, 0]);
+      pole = dirW(base, qRot(qArc(rest, dl), add(qRot(RIG.mb[u], [0, 0, 1]), mul(rest, -0.35))));
+    }
+    pole = norm(pole || dirW(base, [side * 0.5, -0.6, -0.8]));
     if (tgt) { const r = ik(root, tgt, l1, l2, pole); return { root, ik: true, tgt, pole: r.pole, d1: r.d1, d2: r.d2 }; }
     let d1 = L.d ? L.d : L.db ? dirW(base, L.db) : dirW(base, [0, -1, 0]);
     let d2 = L.e ? L.e : L.eb ? dirW(base, L.eb) : d1;
@@ -280,9 +330,11 @@
       for (const id of LIMBS) {
         const arm = id[0] === 'a'; const sfx = id[1]; const [u, l, e, toes] = LB[id];
         const L = K.limbs[id]; const root = rootOf(id, W, P);
-        const r = limbOf(id, L, F, J, root, W);
+        const r = limbOf(id, L, F, J, root, W, P);
         const fr = limbFrames(id, r, arm ? B.upper : B.thigh, arm ? B.fore : B.shin);
-        const en = endOf(id, L, fr, F, W); const eb = norm(perp(en.b, en.a));
+        let Le = L;
+        if (L.grab) { P[u] = root; const gp = grabPoint(L.grab, W, P); Le = Object.assign({}, L, { hand: { d: gp.fing, n: gp.palm } }); }
+        const en = endOf(id, Le, fr, F, W); const eb = norm(perp(en.b, en.a));
         const qe = arm ? qBasis(cross(mul(en.a, -1), eb), mul(en.a, -1), eb) : qBasis(cross(eb, en.a), eb, en.a);
         const setB = (i, q) => { W[i] = qNorm(qMul(qMul(q, qConj(R.mb[i])), R.bw[i].q)); };
         P[u] = root; setB(u, qBasis(fr.x1, fr.y1, fr.z1)); put(l, u); setB(l, qBasis(fr.x2, fr.y2, fr.z2)); put(e, l); setB(e, qe);
@@ -298,7 +350,7 @@
           if (Math.abs(f) > 1e-4) W[l] = qNorm(qMul(qAxis(norm(sub(P[e], P[l])), f), W[l]));
         }
         if (toes != null) { W[toes] = qMul(qMul(qMul(W[e], qConj(R.bw[e].q)), R.bw[toes].q), qX(L.toes || 0)); put(toes, e); }
-        lim[id] = { ik: r.ik, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik };
+        lim[id] = { ik: r.ik, grab: L.grab || null, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : L.grab ? 'grab' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik };
         if (arm) { J['wrist' + sfx] = P[e]; J['elbow' + sfx] = P[l]; J['sh' + sfx] = P[u]; J['hand' + sfx] = add(P[e], mul(en.a, 0.085)); }
         else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
@@ -337,7 +389,11 @@
         if (a.ik && b.ik) {
           if (!F) F = frames(W, P);
           let tgt;
-          if (a.kind === 'on' && b.kind === 'on' && a.on[0] === b.on[0] && a.on[2] === b.on[2] && J[a.on[0]]) tgt = onTarget(a.on, lerp(a.on[1] || [0, 0, 0], b.on[1] || [0, 0, 0], t), J, W);
+          let gp = null;
+          if (a.kind === 'grab' && b.kind === 'grab' && a.grab.bone === b.grab.bone) {
+            gp = grabPoint({ bone: a.grab.bone, h: a.grab.h + (b.grab.h - a.grab.h) * t, ang: a.grab.ang + (b.grab.ang - a.grab.ang) * t, f: a.grab.f, tilt: (a.grab.tilt || 0) + ((b.grab.tilt || 0) - (a.grab.tilt || 0)) * t }, W, P);
+            tgt = gp.wrist;
+          } else if (a.kind === 'on' && b.kind === 'on' && a.on[0] === b.on[0] && a.on[2] === b.on[2] && J[a.on[0]]) tgt = onTarget(a.on, lerp(a.on[1] || [0, 0, 0], b.on[1] || [0, 0, 0], t), J, W);
           else if (a.kind === 'atb' && b.kind === 'atb') tgt = toW(arm ? F.C : F.P, lerp(a.atb, b.atb, t));
           else tgt = lerp(a.tgt, b.tgt, t);
           const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
@@ -349,6 +405,7 @@
           W[u] = qNorm(qMul(q1, W[u])); W[l] = qNorm(qMul(q21, W[l]));
           // appui qui ne bouge pas : la main ou le pied garde son orientation dans l'espace ; sinon il suit le membre (pas de vrille)
           W[e] = (a.kind === 'at' && b.kind === 'at' && len(sub(a.tgt, b.tgt)) < 0.03) ? qSlerp(A.W[e], Bp.W[e], t) : qNorm(qMul(q21, W[e]));
+          if (gp) { const hy = mul(gp.fing, -1); const hz = norm(perp(gp.palm, hy)); W[e] = qNorm(qMul(qMul(qBasis(cross(hy, hz), hy, hz), qConj(R.mb[e])), R.bw[e].q)); }
           P[l] = add(root, mul(k.d1, l1)); P[e] = add(P[l], mul(k.d2, l2));
           if (toes != null) { W[toes] = qNorm(qMul(W[e], wToes)); P[toes] = add(P[e], qRot(W[e], R.bones[toes].t)); }
         }
@@ -479,8 +536,9 @@
   /* ---------- rendu ---------- */
   const VS_BODY = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;attribute vec4 aJ;attribute vec4 aW;attribute vec4 aZ;'
     + 'uniform mat4 uVP;uniform vec4 uB[52];uniform vec3 uLo;uniform vec3 uSc;uniform vec4 uZc[11];uniform float uOut;uniform mediump vec3 uCam;'
-    + 'varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
-    + 'void main(){vec3 p=aP*uSc+uLo;'
+    + 'varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;varying float vH;'
+    + 'float hb(float j,float w){return (abs(j-13.0)<0.5||abs(j-17.0)<0.5)?w:0.0;}'
+    + 'void main(){vec3 p=aP*uSc+uLo;vH=hb(aJ.x,aW.x)+hb(aJ.y,aW.y)+hb(aJ.z,aW.z)+hb(aJ.w,aW.w);'
     + 'int i0=int(aJ.x+0.5)*2;int i1=int(aJ.y+0.5)*2;int i2=int(aJ.z+0.5)*2;int i3=int(aJ.w+0.5)*2;'
     + 'vec4 r0=uB[i0];vec4 r1=uB[i1];vec4 r2=uB[i2];vec4 r3=uB[i3];'
     + 'float s1=dot(r0,r1)<0.0?-1.0:1.0;float s2=dot(r0,r2)<0.0?-1.0:1.0;float s3=dot(r0,r3)<0.0?-1.0:1.0;'
@@ -491,9 +549,9 @@
     + 'vec3 on=aN+2.0*cross(r.xyz,cross(r.xyz,aN)+r.w*aN);'
     + 'vec3 n=normalize(on);op+=n*uOut;if(uOut>0.0){op+=normalize(op-uCam)*uOut*4.0;}'
     + 'vN=n;vW=op;vU=aU;vec4 zc=uZc[int(aZ.x*255.0+0.5)];vZ=vec4(zc.rgb,1.0)*(step(0.01,zc.a)*aZ.y);gl_Position=uVP*vec4(op,1.0);}';
-  const FS_BODY = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;'
+  const FS_BODY = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;varying float vH;'
     + 'uniform sampler2D uTex;uniform vec4 uTint;uniform vec3 uL;uniform mediump vec3 uCam;uniform float uMode;uniform vec4 uFlat;'
-    + 'void main(){if(uMode>1.5){float m=max(step(0.01,uTint.a),step(0.3,vZ.a));gl_FragColor=vec4(m,0.0,0.0,1.0);return;}if(uMode>0.5){gl_FragColor=uFlat;return;}'
+    + 'void main(){if(uMode>2.5){if(uMode>3.5&&vH<0.5)discard;gl_FragColor=vec4(step(0.5,vH),0.0,0.0,1.0);return;}if(uMode>1.5){float m=max(step(0.01,uTint.a),step(0.3,vZ.a));gl_FragColor=vec4(m,0.0,0.0,1.0);return;}if(uMode>0.5){gl_FragColor=uFlat;return;}'
     + 'vec3 tex=texture2D(uTex,vU).rgb;float lum=dot(tex,vec3(0.3,0.5,0.2));float k=0.5+0.8*lum;'
     + 'vec3 col=mix(tex,uTint.rgb*k,uTint.a);col=mix(col,vZ.rgb/max(vZ.a,0.001)*k,smoothstep(0.05,0.6,vZ.a)*0.9);'
     + 'vec3 n=normalize(vN);if(!gl_FrontFacing)n=-n;vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;float hemi=n.y*0.5+0.5;'
@@ -582,7 +640,7 @@
     gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform4fv(L.uB, bm); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
     const hd = R.head; gl.uniform3fv(L.uLo, hd.lo); gl.uniform3f(L.uSc, hd.hi[0] - hd.lo[0], hd.hi[1] - hd.lo[1], hd.hi[2] - hd.lo[2]);
     gl.uniform4fv(L.uZc, tint.z); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, g.tex); gl.uniform1i(L.uTex, 0);
-    gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, mask ? 2 : 0); gl.cullFace(gl.BACK);
+    gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, mask ? (mask === true ? 2 : mask) : 0); gl.cullFace(gl.BACK);
     for (let i = 0; i < R.groups.length; i++) {
       const gr = R.groups[i]; const c = tint.g[i];
       if (c) gl.uniform4fv(L.uTint, c); else gl.uniform4f(L.uTint, 0, 0, 0, 0);
@@ -689,6 +747,6 @@
     define, view, has: (id) => EX.has(id),
     credit: 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
     list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
-    _dbg: { snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
+    _dbg: { snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();

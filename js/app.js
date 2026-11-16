@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.6.2.2';
+  const APP_VERSION = '0.6.2.3';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db

@@ -1,5 +1,12 @@
 # WorkLog : historique des versions
 
+## 0.6.2.3
+- Ischio unilat assis : la jambe tendue ne se retourne plus (l'ischio reste derrière la cuisse). Par défaut, le genou suit maintenant la cuisse sans rotation de hanche, pour toutes les jambes.
+- Piriforme : mains visibles (main gauche sur la cuisse gauche, main droite qui pousse le genou droit), plus de main qui se retourne entre deux positions. Angle de départ qui montre à la fois les mains et la zone étirée.
+- Ischios allongé : les mains tiennent l'arrière de la cuisse sur la peau, sans y entrer.
+- Les mains qui tiennent un membre sont posées exactement sur sa surface et le suivent pendant les transitions.
+- Corrections relevées par les nouveaux contrôles : Piriforme avec torsion, Prière latérale, Cheville dynamique en fente, Pec élastique, Phoque, Hanche et adducteur unilat, Grand dorsal/triceps avec barre.
+
 ## 0.6.2.2
 - Dépôt GitHub rangé en dossiers : `js/` (code), `css/` (styles), `data/` (exercices et schéma du corps), `models/` (mannequin 3D), `icons/` (icônes). À la racine : `index.html`, `sw.js`, `manifest.webmanifest`, `README.md`, `CHANGELOG.md`, `CREDITS.txt`.
 - Mise à jour par simple dépôt du zip : GitHub le déballe, range les fichiers, retire ceux qui ne servent plus et publie le site.

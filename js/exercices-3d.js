@@ -22,7 +22,7 @@
   const m2 = (k, v) => ({ [k + 'L']: v, [k + 'R']: v });
   const mus = (...parts) => Object.assign({}, ...parts);
   const hang = (s) => ({ db: [s * 0.13, -1, 0.04], eb: [s * 0.08, -1, 0.14] });
-  const hip = (s) => ({ on: ['hip' + (s > 0 ? 'L' : 'R'), [s * 0.115, 0.17, -0.06], 'Hips'], pb: [s, 0, -0.5], hand: { bone: 'Hips', dl: [0, -0.5, 1], nl: [-s, 0, 0.2] } });   // main sur la hanche
+  const hip = (s) => ({ on: ['hip' + (s > 0 ? 'L' : 'R'), [s * 0.10, 0.24, -0.07], 'Hips'], pb: [s, 0, -0.5], hand: { bone: 'Hips', dl: [0, -0.5, 1], nl: [-s, 0, 0.2] } });   // main sur la hanche
   const BEHIND = (s, bone) => ({ bone, dl: [-s, 0, 0], nl: [0, 0, 1] });      // main qui passe derrière une cuisse, doigts vers l'autre côté
   const ONTOP = (bone) => ({ bone, dl: [0, -1, 0.04], nl: [0, 0, -1] });       // main posée sur le dessus d'une cuisse, doigts vers le genou
   const TIP = { toe: [0, -0.97, 0.24], up: [0, -0.24, -0.97] };                // pied dressé sur les orteils
@@ -43,7 +43,7 @@
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
     { id: 'wl02', name: 'Ischio unilat assis', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['calves', 'glutes'], side: true,
-      mus: { hamL: 1, calfL: 2, gluteL: 2 }, cam: { yaw: -20, pitch: 20 },
+      mus: { hamL: 1, calfL: 2, gluteL: 2 }, cam: { yaw: 100, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: flatF(0.11, 0.45), aL: hang(1), aR: hang(-1) },
         b: { pelvis: [0, 0.27, -0.33], rot: [38, 0, 0], spine: [26, 0, 0], neck: [-12, 0, 0],
@@ -53,14 +53,14 @@
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl03', name: 'Piriforme', leaf: 'fessiers-ischios', p: 'piriformis', s: ['glutes'], side: true,
-      mus: { pirR: 1, gluteR: 2 }, cam: { yaw: 0, pitch: 5 },
+      mus: { pirR: 1, gluteR: 2 }, cam: { yaw: 45, pitch: -12 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, chest: [14, 0, 0], neck: [10, 0, 0],
-          lL: { d: [0, 0.94, 0.34], e: [0, 0.05, 1], foot: 10 }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [-1, 0.25, 0.3], foot: 5 },
-          aL: { on: ['kneeL', [0.115, 0.17, -0.115], 'UpperLeg_L'], p: [1, -0.2, 0], hand: BEHIND(1, 'UpperLeg_L') }, aR: { on: ['kneeL', [-0.07, 0.24, -0.12], 'UpperLeg_L'], p: [0, 1, -0.3], hand: BEHIND(-1, 'UpperLeg_L') } },
+          lL: { d: [0, 0.94, 0.34], e: [0, 0.05, 1], foot: 10 }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-1, 0.6, 0.2], foot: 5 },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.5, ang: 35, f: 1, tilt: 2.5 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: -95, f: 1, tilt: -1 }, p: [-1, 0.4, -0.2] } },
         b: { pelvis: [0, 0.1, 0], rot: [-100, 0, 0], chest: [14, 0, 0], neck: [10, 0, 0],
-          lL: { d: [0, 0.82, -0.57], e: [0, 0.12, 1], foot: 10 }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [-1, 0.15, 0.3], foot: 5 },
-          aL: { on: ['kneeL', [0.115, 0.17, -0.115], 'UpperLeg_L'], p: [1, -0.2, 0], hand: BEHIND(1, 'UpperLeg_L') }, aR: { on: ['kneeL', [-0.07, 0.24, -0.12], 'UpperLeg_L'], p: [0, 1, -0.3], hand: BEHIND(-1, 'UpperLeg_L') } },
+          lL: { d: [0, 0.82, -0.57], e: [0, 0.12, 1], foot: 10 }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-1, 0.6, 0.2], foot: 5 },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.5, ang: 35, f: 1, tilt: 2.5 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: -95, f: 1, tilt: -1 }, p: [-1, 0.4, -0.2] } },
       },
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
@@ -68,10 +68,10 @@
       mus: { pirR: 1, gluteR: 2, lowR: 2, oblR: 2 }, cam: { yaw: -40, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup,
-          lL: { at: [0.10, AH, 0.44], p: [0, 1, 0.3], foot: 'flat', toe: [0, 0, 1] }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [-1, 0.25, 0.3], foot: 5 },
+          lL: { at: [0.10, AH, 0.44], p: [0, 1, 0.3], foot: 'flat', toe: [0, 0, 1] }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-0.5, 1, 0.3], foot: 5 },
           aL: { at: [0.785, 0.035, -0.45], hdir: [1, 0, 0.05], p: [0, 0, -1] }, aR: { at: [-0.785, 0.035, -0.45], hdir: [-1, 0, 0.05], p: [0, 0, -1] } },
         b: { pelvis: [0.04, 0.1, 0], rot: [-95, 0, 0, 58], lumbar: [0, 0, -26], chest: [0, 0, -30],
-          lL: { d: [0.80, -0.16, 0.56], e: [-0.45, 0.02, 0.9], foot: 20 }, lR: { on: ['kneeL', [0, 0.07, 0.115], 'UpperLeg_L'], p: [0.2, 1, 0.1], foot: 5 },
+          lL: { d: [0.80, -0.16, 0.56], e: [-0.45, 0.02, 0.9], foot: 20 }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-0.5, 1, 0.3], foot: 5 },
           aL: { at: [0.785, 0.035, -0.45], hdir: [1, 0, 0.05], p: [0, 0, -1] }, aR: { at: [-0.785, 0.035, -0.45], hdir: [-1, 0, 0.05], p: [0, 0, -1] } },
       },
       seq: [['a', 0.9, 1.6], ['b', 2.2, 1.6]] },
@@ -150,10 +150,10 @@
       props: [{ type: 'post', a: [-1.08, 0, -0.95], b: [-1.08, 1.95, -0.95] }, { type: 'band', a: [-1.08, 1.88, -0.95], b: 'handR' }],
       poses: {
         a: { pelvis: [0, 0.46, 0], lR: KN(-1), lL: flatF(0.11, 0.45),
-          aR: { db: [-1, 0.06, -0.05], pb: [0, -0.3, -1], pron: 0 }, aL: { on: ['kneeL', [0.01, 0.20, 0.105], 'UpperLeg_L'], p: [1, 0, -0.5], hand: ONTOP('UpperLeg_L') } },
+          aR: { db: [-1, 0.06, -0.05], pb: [0, -0.3, -1], pron: 0 }, aL: { grab: { bone: 'UpperLeg_L', h: 0.6, ang: 15, f: 1, tilt: 3 }, p: [1, 0, -0.5] } },
         b: { pelvis: [0, 0.44, 0.10], rot: [4, 14, 0], chest: [-4, 0, 16], neck: [0, 0, 14],
           lR: KN(-1, { d: [-0.02, -1, -0.24] }), lL: flatF(0.11, 0.45),
-          aR: { db: [-0.80, 0.10, -0.60], pb: [0, -0.3, -1], pron: 0 }, aL: { on: ['kneeL', [0.01, 0.20, 0.105], 'UpperLeg_L'], p: [1, 0, -0.5], hand: ONTOP('UpperLeg_L') } },
+          aR: { db: [-0.80, 0.10, -0.60], pb: [0, -0.3, -1], pron: 0 }, aL: { grab: { bone: 'UpperLeg_L', h: 0.6, ang: 15, f: 1, tilt: 3 }, p: [1, 0, -0.5] } },
       },
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
@@ -184,15 +184,15 @@
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: [92, 0, 0], neck: [-18, 0, 0],
           lL: { d: [0.04, -0.02, -1], foot: 80 }, lR: { d: [-0.04, -0.02, -1], foot: 80 },
-          aL: { at: [0.25, 0.03, 0.42], p: [0.5, 1, -0.6] }, aR: { at: [-0.25, 0.03, 0.42], p: [-0.5, 1, -0.6] } },
+          aL: { at: [0.25, 0.03, 0.45], p: [0.5, 1, -0.6] }, aR: { at: [-0.25, 0.03, 0.45], p: [-0.5, 1, -0.6] } },
         b: { pelvis: [0, 0.1, 0], rot: [74, 0, 0], lumbar: [-36, 0, 0], chest: [-30, 0, 0], neck: [-6, 0, 0],
           lL: { d: [0.04, -0.02, -1], foot: 80 }, lR: { d: [-0.04, -0.02, -1], foot: 80 },
-          aL: { at: [0.25, 0.03, 0.42], p: [0.3, 0.2, -1] }, aR: { at: [-0.25, 0.03, 0.42], p: [-0.3, 0.2, -1] } },
+          aL: { at: [0.25, 0.03, 0.45], p: [0.3, 0.2, -1] }, aR: { at: [-0.25, 0.03, 0.45], p: [-0.3, 0.2, -1] } },
       },
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     { id: 'wl15', name: 'Prière', leaf: 'dos', p: 'lats', s: ['lower back', 'shoulders'], dup: ['Childs_Pose'],
-      mus: mus(m2('lat', 1), m2('low', 2), m2('delt', 2)), cam: { yaw: -180, pitch: 35 },
+      mus: mus(m2('lat', 1), m2('low', 2), m2('delt', 2)), cam: { yaw: 140, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [76, 0, 0], neck: [-12, 0, 0], lL: KN(1, { d: [0.10, -1, 0] }), lR: KN(-1, { d: [-0.10, -1, 0] }),
           aL: { at: [0.19, 0.03, 0.60], p: [0.3, 0.3, -1] }, aR: { at: [-0.19, 0.03, 0.60], p: [-0.3, 0.3, -1] } },
@@ -206,35 +206,35 @@
       mus: { latR: 1, oblR: 2, lowR: 2 }, cam: { yaw: -120, pitch: 35 },
       poses: {
         a: { pelvis: [0, 0.22, -0.37], rot: [68, 0, 0], lumbar: [15, 0, 0], chest: [12, 0, 0], neck: [6, 0, 0],
-          lL: { d: [0.13, -0.19, 0.38], e: [-0.05, -0.02, -1], foot: 80 }, lR: { d: [-0.13, -0.19, 0.38], e: [0.05, -0.02, -1], foot: 80 },
+          lL: { d: [0.22, -0.19, 0.36], e: [-0.07, -0.02, -1], foot: 80 }, lR: { d: [-0.22, -0.19, 0.36], e: [0.07, -0.02, -1], foot: 80 },
           aL: { at: [0.19, 0.03, 0.60], p: [0.3, 1, 0] }, aR: { at: [-0.19, 0.03, 0.60], p: [-0.3, 1, 0] } },
         b: { pelvis: [0, 0.22, -0.37], rot: [68, 0, 0], lumbar: [15, 14, 0], chest: [12, 18, 0], neck: [6, 0, 0],
-          lL: { d: [0.13, -0.19, 0.38], e: [-0.05, -0.02, -1], foot: 80 }, lR: { d: [-0.13, -0.19, 0.38], e: [0.05, -0.02, -1], foot: 80 },
+          lL: { d: [0.22, -0.19, 0.36], e: [-0.07, -0.02, -1], foot: 80 }, lR: { d: [-0.22, -0.19, 0.36], e: [0.07, -0.02, -1], foot: 80 },
           aL: { at: [0.55, 0.03, 0.36], hdir: [0.5, 0, 1], p: [0.3, 1, 0] }, aR: { at: [0.36, 0.03, 0.54], hdir: [0.5, 0, 1], p: [-0.3, 1, 0] } },
       },
       seq: [['a', 0.7, 1.5], ['b', 2.2, 1.5]] },
 
     /* ------------------------- Mobilité : bas du corps ------------------------- */
     { id: 'wl17', name: 'Cheville dynamique en fente', leaf: 'mollets', p: 'calves', s: [], side: true,
-      mus: { calfR: 1 }, cam: { yaw: 100, pitch: 5 },
+      mus: { calfR: 1 }, cam: { yaw: -140, pitch: 5 },
       poses: {
         a: { pelvis: [0, 0.46, 0], rot: [6, 0, 0], lL: KN(1), lR: flatF(-0.11, 0.40),
-          aL: { on: ['kneeR', [0.05, 0.19, 0.105], 'UpperLeg_R'], p: [1, 0, -0.5], hand: ONTOP('UpperLeg_R') }, aR: { on: ['kneeR', [-0.05, 0.19, 0.105], 'UpperLeg_R'], p: [-1, 0, -0.5], hand: ONTOP('UpperLeg_R') } },
+          aL: { grab: { bone: 'UpperLeg_R', h: 0.62, ang: -25, f: 1, tilt: 3 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: 60, f: 1, tilt: 3 }, p: [-1, 0, -0.5] } },
         b: { pelvis: [0, 0.43, 0.17], rot: [20, 0, 0], neck: [-12, 0, 0],
           lL: KN(1, { d: [0.02, -0.395, -0.16] }), lR: flatF(-0.11, 0.40),
-          aL: { on: ['kneeR', [0.05, 0.19, 0.105], 'UpperLeg_R'], p: [1, 0, -0.5], hand: ONTOP('UpperLeg_R') }, aR: { on: ['kneeR', [-0.05, 0.19, 0.105], 'UpperLeg_R'], p: [-1, 0, -0.5], hand: ONTOP('UpperLeg_R') } },
+          aL: { grab: { bone: 'UpperLeg_R', h: 0.62, ang: -25, f: 1, tilt: 3 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: 60, f: 1, tilt: 3 }, p: [-1, 0, -0.5] } },
       },
       seq: [['a', 0.35, 1.0], ['b', 0.5, 1.0]] },
 
     { id: 'wl18', name: 'Ischios allongé', leaf: 'fessiers-ischios', p: 'hamstrings', s: ['calves'], side: true,
-      mus: { hamR: 1, calfR: 2 }, cam: { yaw: 40, pitch: 20 },
+      mus: { hamR: 1, calfR: 2 }, cam: { yaw: -20, pitch: 20 },
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, lL: { at: [0.10, HL, 0.83], foot: HEEL },
           lR: { d: [0, 0.97, -0.24], e: [0, -0.2, 1], foot: 10 },
-          aL: { on: ['kneeR', [0.11, 0.27, -0.11], 'UpperLeg_R'], p: [1, -0.3, 0], hand: BEHIND(1, 'UpperLeg_R') }, aR: { on: ['kneeR', [-0.11, 0.18, -0.11], 'UpperLeg_R'], p: [-1, -0.3, 0], hand: BEHIND(-1, 'UpperLeg_R') } },
+          aL: { grab: { bone: 'UpperLeg_R', h: 0.78, ang: -100, f: -1 }, p: [1, 0.7, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.78, ang: 100, f: -1 }, p: [-1, 0.3, 0] } },
         b: { pelvis: [0, 0.1, 0], rot: sup, lL: { at: [0.10, HL, 0.83], foot: HEEL },
-          lR: { d: [0, 0.97, -0.24], e: [0, 1, 0.10], p: [0, 0.2, -1], foot: -8 },
-          aL: { on: ['kneeR', [0.11, 0.27, -0.11], 'UpperLeg_R'], p: [1, -0.3, 0], hand: BEHIND(1, 'UpperLeg_R') }, aR: { on: ['kneeR', [-0.11, 0.18, -0.11], 'UpperLeg_R'], p: [-1, -0.3, 0], hand: BEHIND(-1, 'UpperLeg_R') } },
+          lR: { d: [0, 0.97, -0.24], e: [0, 1, 0.10], foot: -8 },
+          aL: { grab: { bone: 'UpperLeg_R', h: 0.78, ang: -100, f: -1 }, p: [1, 0.7, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.78, ang: 100, f: -1 }, p: [-1, 0.3, 0] } },
       },
       seq: [['a', 0.35, 1.1], ['b', 0.6, 1.1]] },
 
@@ -290,7 +290,7 @@
       props: [{ type: 'box', pos: [0, 0, 0.75], size: [0.5, 0.62, 0.4] }, { type: 'stick', a: 'handR', b: 'handL', ext: [0.28, 0.28] }],
       poses: {
         a: { pelvis: [0, 0.6, 0.305], rot: [12, 0, 0], neck: [6, 0, 0], lL: KN(1), lR: KN(-1),
-          aL: { atb: [0.17, 0.30, -0.06], pb: [0.2, 0.2, 1], pron: 0 }, aR: { atb: [-0.17, 0.30, -0.06], pb: [-0.2, 0.2, 1], pron: 0 } },
+          aL: { atb: [0.18, 0.36, 0.0], pb: [0.2, 0.2, 1], pron: 0 }, aR: { atb: [-0.18, 0.36, 0.0], pb: [-0.2, 0.2, 1], pron: 0 } },
         b: { pelvis: [0, 0.3, -0.07], rot: [50, 0, 0], neck: [-14, 0, 0], lL: sitHeels(1), lR: sitHeels(-1),
           aL: { d: [-0.083, 0.284, 0.955], e: [-0.036, 0.207, -0.978], pron: 0 }, aR: { d: [0.083, 0.284, 0.955], e: [0.036, 0.207, -0.978], pron: 0 } },
       },

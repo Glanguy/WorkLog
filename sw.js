@@ -3,7 +3,7 @@
    - Liste des exercices : cache d'abord, mise à jour en arrière-plan.
    - Images et animations d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
    Les séries, favoris et séances sont dans IndexedDB, pas ici. */
-const CACHE = 'worklog-0.6.2.2';
+const CACHE = 'worklog-0.6.2.3';
 const IMG_CACHE = 'worklog-img-v1';
 const IMG_MAX = 500;
 const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/mannequin.js', 'js/exercices-3d.js', 'models/mannequin.bin', 'models/mannequin-peau.jpg', 'manifest.webmanifest', 'data/data-v3.json', 'data/bodymap.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
