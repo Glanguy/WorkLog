@@ -536,8 +536,8 @@
   function load() {
     if (ASSET) return ASSET;
     ASSET = Promise.all([
-      fetch('mannequin.bin').then((r) => { if (!r.ok) throw new Error('mannequin.bin ' + r.status); return r.arrayBuffer(); }),
-      new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('mannequin-peau.jpg')); im.src = 'mannequin-peau.jpg'; }),
+      fetch('models/mannequin.bin').then((r) => { if (!r.ok) throw new Error('mannequin.bin ' + r.status); return r.arrayBuffer(); }),
+      new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('mannequin-peau.jpg')); im.src = 'models/mannequin-peau.jpg'; }),
     ]).then(([buf, img]) => { RIG = parseRig(buf); initGL(img); state = 'ok'; kick(); return true; })
       .catch((e) => { state = 'ko'; views.forEach((v) => v.canvas.classList.add('ko')); if (window.console) console.warn('WL3D', e); return false; });
     return ASSET;

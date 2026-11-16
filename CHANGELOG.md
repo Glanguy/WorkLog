@@ -1,5 +1,11 @@
 # WorkLog : historique des versions
 
+## 0.6.2.2
+- Dépôt GitHub rangé en dossiers : `js/` (code), `css/` (styles), `data/` (exercices et schéma du corps), `models/` (mannequin 3D), `icons/` (icônes). À la racine : `index.html`, `sw.js`, `manifest.webmanifest`, `README.md`, `CHANGELOG.md`, `CREDITS.txt`.
+- Mise à jour par simple dépôt du zip : GitHub le déballe, range les fichiers, retire ceux qui ne servent plus et publie le site.
+- Ajout d'un `README.md` qui présente l'app et la façon de la mettre à jour.
+- Aucun changement dans l'app elle-même.
+
 ## 0.6.2
 - Mannequin 3D : le corps garde son volume aux articulations. Les fesses ne s'écrasent plus quand la hanche plie beaucoup (Ischio unilat assis, Piriforme…), et les épaules et les coudes se déforment mieux.
 - Poignets naturels : la rotation de la main passe par l'avant-bras (et par l'épaule quand le bras est tendu) au lieu de vriller le poignet. Bras tendus et mains à plat dans « Piriforme avec torsion ».

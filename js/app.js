@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.6.2';
+  const APP_VERSION = '0.6.2.2';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
@@ -440,7 +440,7 @@
   const getJson = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
   async function loadExercises() {
     try {
-      const base = await getJson('data-v3.json');
+      const base = await getJson('data/data-v3.json');
       const sha = (v) => (typeof v === 'string' && /^[0-9a-f]{7,40}$/.test(v) ? v : 'main');
       SHA_E = sha(base.shaE); SHA_F = sha(base.shaF);
       S.alias = base.alias && typeof base.alias === 'object' ? base.alias : {};
@@ -459,7 +459,7 @@
     } catch (e) {
       S.exercises = []; S.loadError = true;
     }
-    if (!BODY) { try { BODY = await getJson('bodymap.json'); } catch (e) { BODY = null; } }
+    if (!BODY) { try { BODY = await getJson('data/bodymap.json'); } catch (e) { BODY = null; } }
     S.byId = new Map(S.exercises.map((e) => [e.id, e]));
     S.byLeaf = new Map();
     for (const ex of S.exercises) { if (!S.byLeaf.has(ex.leaf)) S.byLeaf.set(ex.leaf, []); S.byLeaf.get(ex.leaf).push(ex); }
@@ -1062,7 +1062,7 @@
     S.cleanups.push(() => { document.removeEventListener('click', onDoc); document.removeEventListener('keydown', onEsc); });
 
     wrap.append(h('header', { class: 'bar' },
-      h('div', { class: 'wordmark' }, h('img', { src: 'icon-192.png', alt: '' }), h('h1', { text: 'WorkLog' })),
+      h('div', { class: 'wordmark' }, h('img', { src: 'icons/icon-192.png', alt: '' }), h('h1', { text: 'WorkLog' })),
       menuBtn, menu));
 
     const tk = todayKey();
