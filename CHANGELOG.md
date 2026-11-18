@@ -1,5 +1,63 @@
 # WorkLog : historique des versions
 
+## 0.7.0
+**Graphiques**
+- Un seul point par jour (avant : un point par série, d'où les traits verticaux quand on fait plusieurs séries le même jour).
+- Trois onglets pour la musculation : « Force estimée » (par défaut), « Charge max » et « Volume ».
+- Force estimée : la charge que tu pourrais soulever une fois (1RM), calculée pour chaque série avec la formule d'Epley, poids × (1 + répétitions ÷ 30) ; le point du jour est ta meilleure série. Une explication du calcul s'affiche sous le graphique, avec l'exemple de la série retenue.
+- Charge max : la charge la plus lourde du jour, avec le nombre de répétitions faites à cette charge au-dessus du point.
+- Volume : le total du jour (poids × répétitions de toutes les séries), c'est-à-dire l'ancien graphique.
+- Cardio et étirements aussi par jour : durée totale, meilleure vitesse, plus longue tenue, niveau le plus haut, tours du jour.
+- Graphique plus lisible : points plus gros, zone colorée sous la courbe, date complète du point sélectionné.
+
+**Poids du corps**
+- Nouveau réglage « Poids du corps » (menu › Réglages).
+- Case « PDC » sur chaque série (« Poids du corps » dans la fenêtre de modification et dans les séances types). Cochée, le champ du poids devient le lest, avec un bouton + / − devant : + pour ajouter du lest, − pour retirer du poids (exercice assisté). Taper « - » ou « + » au début du champ règle aussi le bouton. Le total soulevé s'affiche à côté de la case.
+- La série enregistre le poids total (poids du corps + lest) : graphiques et totaux restent justes même si ton poids change ensuite. Affichage : « PDC + 10 kg × 8 », « PDC − 20 kg × 8 ».
+- Une nouvelle série reprend le mode PDC de la dernière série de l'exercice. Les séries prévues des séances types peuvent aussi être au poids du corps.
+
+**Séries**
+- « Dernières séances » : un bouton « dupliquer » à côté de chaque série la recopie dans « Nouvelle série » (toucher la série la modifie toujours).
+- Les boutons dupliquer et retirer d'une série sont sur la même ligne que les champs, calés à droite (saisie, séances types).
+- Le champ « Date et heure » ne dépasse plus de la fenêtre « Modifier la série » sur iPhone.
+
+**Programmer des séances**
+- « Programmer » une séance type (menu « … » d'une séance, ou bouton sur la page de la séance) : à une date précise, ou en répétition chaque semaine ou toutes les 2, 3 ou 4 semaines, les jours choisis, avec une date de fin facultative.
+- Dans le calendrier, « Prévoir une séance type » sur aujourd'hui ou un jour à venir. On peut maintenant aller dans les mois suivants : les jours programmés y sont entourés.
+- Une séance répétée est ajoutée au jour même (ou quand tu ouvres ce jour à l'avance). La page de la séance type liste ses programmations, avec une croix pour en arrêter une.
+
+**Supprimer une séance**
+- Dans le calendrier, « Retirer le nom de cette séance » devient « Supprimer la séance » : le nom et les exercices prévus pas encore faits disparaissent, les séries déjà faites restent, et tu reviens à la page précédente (avec « Annuler »).
+- Supprimer une séance type retire aussi du calendrier ses exercices prévus pas encore faits (aujourd'hui compris) et sa programmation. Les séries déjà faites restent.
+
+**Bibliothèque et recherche**
+- Favoris et Mes séances : tous les dossiers sont fermés à l'ouverture, comme dans la bibliothèque.
+- Étoile « favori » sur chaque exercice quand on ajoute des exercices à une séance.
+- Recherche : chaque mot est cherché séparément, en français et en anglais, avec une tolérance aux fautes de frappe (« hip trust » trouve « Hip thrust à la barre »). Les résultats qui contiennent tous les mots passent en premier.
+- Pendant une recherche : filtres par type (Tout, Favoris, Musculation, Étirements) et par groupe musculaire, avec le nombre de résultats.
+- Correction du plantage après avoir parcouru beaucoup d'exercices : les vignettes (gifs, photos, mannequins 3D) ne sont chargées qu'à l'écran et retirées de la mémoire dès qu'elles en sortent ; un groupe refermé libère son contenu.
+
+**Export et import**
+- L'export ne crée plus de fichier texte « WorkLog » en plus de la sauvegarde.
+- Favoris : « Exporter les favoris » et « Importer » dans l'onglet Favoris.
+- Mes séances : « Exporter des séances » (toutes, ou seulement celles cochées) et « Importer ».
+- Un import ajoute ce qui manque, sans rien effacer ni créer de doublon (deux séries identiques faites la même minute restent bien deux séries).
+- L'export complet (Historique) contient tout ce que tu as rempli : séries, favoris, séances, notes, séances types, dossiers, programmations et réglages (poids du corps, adresse du NAS ; jamais le mot de passe).
+
+**Langue**
+- Français ou anglais (menu › Réglages › Langue) : toute l'application, y compris les 1 861 noms d'exercices. Les noms français suivent les termes courants des salles (développé couché, rowing, tirage vertical, oiseau, soulevé de terre…). La recherche marche dans les deux langues.
+
+**Synchronisation avec ton NAS**
+- Nouvelle section dans Réglages : adresse de ton serveur PocketBase, e-mail, mot de passe. Synchronisation automatique à l'ouverture et quelques secondes après chaque modification, bouton « Synchroniser maintenant », « Remplacer par les données du NAS », « Se déconnecter ».
+- L'app ne contacte que l'adresse saisie ; le jeton de connexion reste sur le téléphone, le mot de passe n'est pas enregistré. Si deux appareils ont changé en même temps, les données sont fusionnées.
+- Guide d'installation pour Synology DS224+ (Container Manager + PocketBase, accès HTTPS par Tailscale ou proxy inversé) : `docs/synchronisation-nas.html`, et la collection à importer : `docs/pocketbase-worklog.json`.
+
+**Strava**
+- « Copier pour Strava » dans le détail d'un jour : un résumé texte (exercices et séries, séries identiques regroupées) à coller dans la description de l'activité enregistrée par ta montre.
+
+**Fichiers**
+- Nouveaux : `js/i18n.js` (textes anglais), `data/names-fr.json` (noms français des exercices), `docs/` (guide NAS et collection PocketBase).
+
 ## 0.6.2.3
 - Ischio unilat assis : la jambe tendue ne se retourne plus (l'ischio reste derrière la cuisse). Par défaut, le genou suit maintenant la cuisse sans rotation de hanche, pour toutes les jambes.
 - Piriforme : mains visibles (main gauche sur la cuisse gauche, main droite qui pousse le genou droit), plus de main qui se retourne entre deux positions. Angle de départ qui montre à la fois les mains et la zone étirée.

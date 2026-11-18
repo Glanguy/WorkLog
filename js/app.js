@@ -14,7 +14,9 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.6.2.3';
+  const APP_VERSION = '0.7.0';
+  const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
+  const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
   let SHA_E = 'main';   // version figée du dépôt des médias ExerciseDB
   let SHA_F = 'main';   // version figée du dépôt free-exercise-db
@@ -26,17 +28,35 @@
   const fold = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const skey = (s) => fold(s).replace(/[^a-z0-9]+/g, ' ').trim();
   const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-  const fmtNum = (n) => new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 2 }).format(n);
-  const fDateTime = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  const fDayLong = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
-  const fDayShort = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short' });
-  const fTime = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  const fMonth = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
+  /* Langue : français (par défaut) ou anglais. T() traduit un texte de l'interface (js/i18n.js). */
+  let LANG = 'fr';
+  try { if (localStorage.getItem(LANG_KEY) === 'en') LANG = 'en'; } catch (e) { /* ignoré */ }
+  const EN = window.WL_EN || {};
+  const T = (fr, ...args) => {
+    let out = LANG === 'en' && Object.prototype.hasOwnProperty.call(EN, fr) ? EN[fr] : fr;
+    if (args.length) out = out.replace(/\{(\d)\}/g, (m, i) => (args[i] == null ? '' : String(args[i])));
+    return out;
+  };
+  const LOC = () => (LANG === 'en' ? 'en-GB' : 'fr-FR');
+  let nf; let fDateTime; let fDayLong; let fDayShort; let fTime; let fMonth; let fDate;
+  function setLocale() {
+    nf = new Intl.NumberFormat(LOC(), { maximumFractionDigits: 2 });
+    fDateTime = new Intl.DateTimeFormat(LOC(), { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    fDayLong = new Intl.DateTimeFormat(LOC(), { weekday: 'long', day: 'numeric', month: 'long' });
+    fDayShort = new Intl.DateTimeFormat(LOC(), { day: 'numeric', month: 'short' });
+    fTime = new Intl.DateTimeFormat(LOC(), { hour: '2-digit', minute: '2-digit' });
+    fMonth = new Intl.DateTimeFormat(LOC(), { month: 'long', year: 'numeric' });
+    fDate = new Intl.DateTimeFormat(LOC(), { day: 'numeric', month: 'long', year: 'numeric' });
+    document.documentElement.lang = LANG;
+  }
+  setLocale();
+  const fmtNum = (n) => nf.format(n);
   const pad2 = (n) => String(n).padStart(2, '0');
   const dayKey = (ts) => { const d = new Date(ts); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
   const keyDate = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d); };
   const toLocalInput = (ts) => { const d = new Date(ts); return dayKey(ts) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
-  const plural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
+  // Pluriel : en français à partir de 2, en anglais dès que ce n'est pas 1.
+  const plural = (n, one, many) => n + ' ' + ((LANG === 'en' ? n !== 1 : n > 1) ? T(many) : T(one));
   function dayLabel(date) {
     const s = cap(fDayLong.format(date));
     return date.getFullYear() !== new Date().getFullYear() ? s + ' ' + date.getFullYear() : s;
@@ -44,11 +64,11 @@
   function ago(key) {
     const now = new Date();
     const n = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - keyDate(key)) / 86400000);
-    if (n <= 0) return 'aujourd’hui';
-    if (n === 1) return 'hier';
-    if (n < 14) return 'il y a ' + n + ' jours';
-    if (n < 63) return 'il y a ' + Math.round(n / 7) + ' semaines';
-    return 'il y a ' + Math.round(n / 30.44) + ' mois';
+    if (n <= 0) return T('aujourd’hui');
+    if (n === 1) return T('hier');
+    if (n < 14) return T('il y a {0} jours', n);
+    if (n < 63) return T('il y a {0} semaines', Math.round(n / 7));
+    return T('il y a {0} mois', Math.round(n / 30.44));
   }
 
   function h(tag, props, ...kids) {
@@ -104,12 +124,12 @@
 
   /* ---------- muscles et catégories (de la tête aux pieds) ---------- */
   const MUSCLES = {
-    'neck': 'Cou', 'shoulders': 'Épaules', 'chest': 'Pectoraux', 'traps': 'Trapèzes', 'lats': 'Grands dorsaux',
-    'middle back': 'Milieu du dos', 'lower back': 'Bas du dos', 'biceps': 'Biceps', 'triceps': 'Triceps', 'forearms': 'Avant-bras',
-    'abdominals': 'Abdominaux', 'glutes': 'Fessiers', 'hamstrings': 'Ischio-jambiers', 'abductors': 'Abducteurs', 'adductors': 'Adducteurs',
-    'quadriceps': 'Quadriceps', 'calves': 'Mollets',
-    'obliques': 'Obliques', 'hip flexors': 'Fléchisseurs de hanche', 'tibialis': 'Tibial antérieur', 'serratus': 'Dentelé antérieur', 'cardio': 'Système cardiovasculaire',
-    'psoas': 'Psoas', 'piriformis': 'Piriforme', 'tfl': 'Tenseur du fascia lata (TFL)', 'rhomboids': 'Rhomboïdes', 'rear delts': 'Deltoïde postérieur', 'rotator cuff': 'Coiffe des rotateurs',
+    'neck': T('Cou'), 'shoulders': T('Épaules'), 'chest': T('Pectoraux'), 'traps': T('Trapèzes'), 'lats': T('Grands dorsaux'),
+    'middle back': T('Milieu du dos'), 'lower back': T('Bas du dos'), 'biceps': T('Biceps'), 'triceps': T('Triceps'), 'forearms': T('Avant-bras'),
+    'abdominals': T('Abdominaux'), 'glutes': T('Fessiers'), 'hamstrings': T('Ischio-jambiers'), 'abductors': T('Abducteurs'), 'adductors': T('Adducteurs'),
+    'quadriceps': T('Quadriceps'), 'calves': T('Mollets'),
+    'obliques': T('Obliques'), 'hip flexors': T('Fléchisseurs de hanche'), 'tibialis': T('Tibial antérieur'), 'serratus': T('Dentelé antérieur'), 'cardio': T('Système cardiovasculaire'),
+    'psoas': T('Psoas'), 'piriformis': T('Piriforme'), 'tfl': T('Tenseur du fascia lata (TFL)'), 'rhomboids': T('Rhomboïdes'), 'rear delts': T('Deltoïde postérieur'), 'rotator cuff': T('Coiffe des rotateurs'),
   };
   /* Zones du schéma colorées pour chaque muscle. */
   const SLUGS = {
@@ -123,23 +143,23 @@
   const frMuscle = (s) => MUSCLES[s] || cap(String(s));
 
   const TREE = [
-    { id: 'cou', label: 'Cou', color: '#7F8FA9', m: ['neck'] },
-    { id: 'epaules', label: 'Épaules', color: '#4F86E0', m: ['shoulders'] },
-    { id: 'pectoraux', label: 'Pectoraux', color: '#D9668F', m: ['chest'] },
-    { id: 'dos', label: 'Dos', color: '#2F9C8A', m: ['traps', 'lats', 'middle back', 'lower back'] },
-    { id: 'bras', label: 'Bras', color: '#DD8F2E', subs: [
-      { id: 'biceps', label: 'Biceps', m: ['biceps'] },
-      { id: 'triceps', label: 'Triceps', m: ['triceps'] },
-      { id: 'avant-bras', label: 'Avant-bras', m: ['forearms'] },
+    { id: 'cou', label: T('Cou'), color: '#7F8FA9', m: ['neck'] },
+    { id: 'epaules', label: T('Épaules'), color: '#4F86E0', m: ['shoulders'] },
+    { id: 'pectoraux', label: T('Pectoraux'), color: '#D9668F', m: ['chest'] },
+    { id: 'dos', label: T('Dos'), color: '#2F9C8A', m: ['traps', 'lats', 'middle back', 'lower back'] },
+    { id: 'bras', label: T('Bras'), color: '#DD8F2E', subs: [
+      { id: 'biceps', label: T('Biceps'), m: ['biceps'] },
+      { id: 'triceps', label: T('Triceps'), m: ['triceps'] },
+      { id: 'avant-bras', label: T('Avant-bras'), m: ['forearms'] },
     ] },
-    { id: 'abdos', label: 'Abdominaux et taille', color: '#A9912B', m: ['abdominals'] },
-    { id: 'jambes', label: 'Jambes', color: '#7459C4', subs: [
-      { id: 'fessiers-ischios', label: 'Fessiers et ischio-jambiers', m: ['glutes', 'hamstrings'] },
-      { id: 'abducteurs', label: 'Abducteurs et adducteurs', m: ['abductors', 'adductors'] },
-      { id: 'quadriceps', label: 'Quadriceps', m: ['quadriceps'] },
-      { id: 'mollets', label: 'Mollets', m: ['calves'] },
+    { id: 'abdos', label: T('Abdominaux et taille'), color: '#A9912B', m: ['abdominals'] },
+    { id: 'jambes', label: T('Jambes'), color: '#7459C4', subs: [
+      { id: 'fessiers-ischios', label: T('Fessiers et ischio-jambiers'), m: ['glutes', 'hamstrings'] },
+      { id: 'abducteurs', label: T('Abducteurs et adducteurs'), m: ['abductors', 'adductors'] },
+      { id: 'quadriceps', label: T('Quadriceps'), m: ['quadriceps'] },
+      { id: 'mollets', label: T('Mollets'), m: ['calves'] },
     ] },
-    { id: 'cardio', label: 'Cardio', color: '#D95B56' },
+    { id: 'cardio', label: T('Cardio'), color: '#D95B56' },
   ];
   const GROUPS = new Map();      // id -> { id, label, full, top, color }
   const LEAF_OF = new Map();     // muscle anglais -> id de la (sous-)catégorie
@@ -167,6 +187,9 @@
     notes: {},           // id d'exercice -> note libre
     plans: [],           // séances types : { id, name, folder, main, sec, items: [{ ex, sets: [{ w, r }] }], created, last }
     folders: [],         // noms des dossiers de séances types
+    schedules: [],       // programmations répétées : { id, plan, start, every (semaines), days [0 = lundi … 6], until, made: [dates déjà ajoutées] }
+    settings: { bw: '', nas: { url: '', email: '' } },   // réglages : poids du corps (kg), adresse du NAS
+    savedAt: 0,          // date de la dernière modification des données
     guard: null,         // saisie non validée sur la page en cours : { dirty(), save() }
     draft: null,         // saisie à remettre après « Annuler » : { id, rows }
     planDraft: null,     // séance type en cours de création/modification : { p, isNew, base }
@@ -178,7 +201,7 @@
     getUI: null,
   };
 
-  const dn = (ex) => ex.name;
+  const dn = (ex) => (LANG === 'fr' ? ex.fr || ex.name : ex.en || ex.name);
   function getEx(id, fallbackName) {
     return S.byId.get(id) || { id, name: fallbackName || id, missing: true, p: null, s: [], leaf: null };
   }
@@ -207,12 +230,14 @@
     img.src = mediaUrl(ex, kind);
     return img;
   }
-  /* Vignette : le gif (ExerciseDB) ou les deux photos (free-exercise-db) ne s'animent que
-     lorsque la vignette est à l'écran ; ailleurs, l'image fixe. opts.zoom : un appui l'agrandit. */
+  /* Vignette : l'image n'est chargée que lorsque la vignette arrive à l'écran (gif animé
+     d'ExerciseDB, ou les deux photos de free-exercise-db) et elle est retirée de la mémoire dès
+     qu'elle en sort : faire défiler beaucoup d'exercices ne remplit plus la mémoire du téléphone.
+     opts.zoom : un appui l'agrandit. */
   let thumbIO = null;
   function watchThumb(el) {
     if (!('IntersectionObserver' in window)) { el._play(true); return; }
-    if (!thumbIO) thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => en.target._play && en.target._play(en.isIntersecting)), { rootMargin: '40px 0px' });
+    if (!thumbIO) thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => en.target._play && en.target._play(en.isIntersecting)), { rootMargin: '120px 0px' });
     thumbIO.observe(el);
   }
   /* Exercice maison (src 2) : le mannequin 3D animé. big : grande vue qu'on fait tourner au doigt. */
@@ -225,25 +250,33 @@
     let el;
     if (ex.src === 2) {
       el = view3d(ex, false, 'thumb sq');
-      if (opts && opts.zoom) { el.classList.add('zoomable'); el.setAttribute('title', 'Agrandir'); el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); }); }
+      if (opts && opts.zoom) { el.classList.add('zoomable'); el.setAttribute('title', T('Agrandir')); el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); }); }
       return el;
     }
     if (ex.src === 0) {
       el = h('img', { class: 'thumb sq', alt: '', decoding: 'async', crossorigin: 'anonymous' });
-      let mode = 't'; let alt = false;
-      const set = () => { el.src = mediaUrl(ex, mode, alt); };
-      el.addEventListener('error', () => { if (!alt) { alt = true; set(); } else el.classList.add('broken'); });
-      el._play = (on) => { const m = on ? 'a' : 't'; if (m !== mode) { mode = m; alt = false; set(); } };
-      set();
+      let on = false; let alt = false;
+      el.addEventListener('error', () => { if (!on) return; if (!alt) { alt = true; el.src = mediaUrl(ex, 'a', true); } else el.classList.add('broken'); });
+      el._play = (v) => {
+        if (v === on) return;
+        on = v;
+        if (on) { alt = false; el.classList.remove('broken'); el.src = mediaUrl(ex, 'a'); } else el.removeAttribute('src');
+      };
     } else {
-      el = h('span', { class: 'thumb tflip' }, photo(ex, 0, { loading: 'lazy' }));
-      let second = null;
-      el._play = (on) => { if (on && !second) { second = photo(ex, 1, { class: 'b' }); el.append(second); } el.classList.toggle('play', on); };
+      el = h('span', { class: 'thumb tflip' });
+      let on = false;
+      el._play = (v) => {
+        if (v === on) return;
+        on = v;
+        el.textContent = '';
+        if (on) el.append(photo(ex, 0), photo(ex, 1, { class: 'b' }));
+        el.classList.toggle('play', on);
+      };
     }
     watchThumb(el);
     if (opts && opts.zoom) {
       el.classList.add('zoomable');
-      el.setAttribute('title', 'Agrandir');
+      el.setAttribute('title', T('Agrandir'));
       el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); });
     }
     return el;
@@ -269,8 +302,8 @@
     const prim = new Set(SLUGS[ex.p] || []);
     const sec = new Set(ex.s.flatMap((m) => SLUGS[m] || []).filter((x) => !prim.has(x)));
     return h('div', { class: 'maps' },
-      h('figure', {}, bodyFig('front', prim, sec), h('figcaption', { text: 'Face' })),
-      h('figure', {}, bodyFig('back', prim, sec), h('figcaption', { text: 'Dos' })));
+      h('figure', {}, bodyFig('front', prim, sec), h('figcaption', { text: T('Face') })),
+      h('figure', {}, bodyFig('back', prim, sec), h('figcaption', { text: T('Dos') })));
   }
   /* Bloc visuel d'un exercice : le schéma en grand, l'animation ExerciseDB en vignette
      (un appui l'agrandit). Pour free-exercise-db : le schéma puis les photos en grand. */
@@ -278,18 +311,18 @@
     const zoom = !(opts && opts.static);
     if (ex.src === 2) {
       return h('div', { class: 'vis vis3d' }, view3d(ex, zoom, 'big'),
-        zoom ? h('p', { class: 'turn', text: 'Fais glisser le doigt sur le mannequin pour le tourner dans tous les sens.' }) : null);
+        zoom ? h('p', { class: 'turn', text: T('Fais glisser le doigt sur le mannequin pour le tourner dans tous les sens.') }) : null);
     }
     const maps = muscleMaps(ex);
     if (ex.src === 0) {
-      const media = photo(ex, 'a', { alt: 'Animation : ' + dn(ex) });
+      const media = photo(ex, 'a', { alt: T('Animation : ') + dn(ex) });
       const box = zoom
-        ? h('button', { type: 'button', class: 'anim', 'aria-label': 'Agrandir l’animation', onclick: () => lightbox(ex) }, media, h('span', { class: 'zoom' }, icon('zoom')))
+        ? h('button', { type: 'button', class: 'anim', 'aria-label': T('Agrandir l’animation'), onclick: () => lightbox(ex) }, media, h('span', { class: 'zoom' }, icon('zoom')))
         : h('div', { class: 'anim' }, media);
       return h('div', { class: 'vis' + (maps ? '' : ' nomap') }, maps, box);
     }
     const ph = zoom
-      ? h('button', { type: 'button', class: 'visual', 'aria-label': 'Agrandir les photos', onclick: () => lightbox(ex) }, flip(ex, { alt: 'Démonstration : ' + dn(ex) }))
+      ? h('button', { type: 'button', class: 'visual', 'aria-label': T('Agrandir les photos'), onclick: () => lightbox(ex) }, flip(ex, { alt: T('Démonstration : ') + dn(ex) }))
       : h('div', { class: 'visual' }, flip(ex, { alt: dn(ex) }));
     return h('div', { class: 'visf' }, maps ? h('div', { class: 'vis solo' }, maps) : null, ph);
   }
@@ -297,11 +330,11 @@
     let close = null;
     const media = ex.src === 2 ? h('div', { class: 'lb-media sq' }, view3d(ex, true, 'big'))
       : ex.src === 0
-      ? h('div', { class: 'lb-media sq' }, photo(ex, 'a', { alt: 'Animation : ' + dn(ex) }))
-      : h('div', { class: 'lb-media' }, flip(ex, { alt: 'Démonstration : ' + dn(ex) }));
+      ? h('div', { class: 'lb-media sq' }, photo(ex, 'a', { alt: T('Animation : ') + dn(ex) }))
+      : h('div', { class: 'lb-media' }, flip(ex, { alt: T('Démonstration : ') + dn(ex) }));
     const box = h('div', { class: 'dialog lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': dn(ex) },
       media, h('p', { class: 'lb-name', text: dn(ex) }),
-      h('button', { type: 'button', class: 'btn ghost wide', text: 'Fermer', onclick: () => close() }));
+      h('button', { type: 'button', class: 'btn ghost wide', text: T('Fermer'), onclick: () => close() }));
     close = openModal(box);
   }
 
@@ -341,7 +374,11 @@
     if (raw.c === 1) {
       e.c = 1; e.dur = raw.dur;
       for (const k of CARDIO_KEYS) if (fin(raw[k]) && raw[k] >= 0) e[k] = raw[k];
-    } else { e.w = raw.w; e.r = raw.r; }
+    } else {
+      e.w = raw.w; e.r = raw.r;
+      // Série au poids du corps : w = poids total soulevé (poids du corps + lest), x = lest (négatif : assistance).
+      if (raw.bw === 1) { e.bw = 1; e.x = fin(raw.x) ? raw.x : 0; }
+    }
     return e;
   }
   function cleanSession(s) {
@@ -367,8 +404,15 @@
   }
   /* Série prévue : { w, r } ; pour un exercice à la durée (étirement, mobilité) : { w: '', r: '', dur } en secondes, dur vide = durée libre. */
   const durOrBlank = (v) => { const n = numOrBlank(v); return n === '' ? '' : Math.round(n); };
-  const cleanSet = (x) => (x && x.dur !== undefined ? { w: '', r: '', dur: durOrBlank(x.dur) } : { w: numOrBlank(x && x.w), r: numOrBlank(x && x.r) });
-  const keepSet = (x) => x.w !== '' || x.r !== '' || x.dur !== undefined;
+  /* Lest d'une série au poids du corps : positif (ajouté), négatif (assistance) ou vide. */
+  function signedOrBlank(v) {
+    if (fin(v)) return Math.round(v * 100) / 100;
+    if (typeof v === 'string' && v.trim()) { const n = calcEval(v); return Number.isFinite(n) ? n : ''; }
+    return '';
+  }
+  const cleanSet = (x) => (x && x.dur !== undefined ? { w: '', r: '', dur: durOrBlank(x.dur) }
+    : x && x.bw ? { w: signedOrBlank(x.w), r: numOrBlank(x.r), bw: 1 } : { w: numOrBlank(x && x.w), r: numOrBlank(x && x.r) });
+  const keepSet = (x) => x.w !== '' || x.r !== '' || x.dur !== undefined || !!x.bw;
   const cleanSets = (a) => (Array.isArray(a) ? a.slice(0, 30).map(cleanSet) : []);
   function cleanPlans(arr) {
     const out = []; const seen = new Set();
@@ -392,7 +436,12 @@
       const plan = {};
       for (const [id, sets] of Object.entries(d.plan && typeof d.plan === 'object' ? d.plan : {})) { const c = cleanSets(sets); if (c.length) plan[id] = c; }
       const note = str(d.note, 4000);
-      if (order.length || note) { out[k] = { order, plan, note }; if (d.hidden === true) out[k].hidden = true; }
+      if (order.length || note) {
+        out[k] = { order, plan, note };
+        if (d.hidden === true) out[k].hidden = true;
+        const src = (Array.isArray(d.src) ? d.src : []).filter((x) => typeof x === 'string');
+        if (src.length) out[k].src = [...new Set(src)];
+      }
     }
     return out;
   }
@@ -401,13 +450,37 @@
     for (const [k, v] of Object.entries(obj && typeof obj === 'object' ? obj : {})) if (typeof v === 'string' && v.trim()) out[k] = v.slice(0, 4000);
     return out;
   }
+  const isKey = (k) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k);
+  function cleanSchedules(arr) {
+    const out = []; const seen = new Set();
+    for (const x of Array.isArray(arr) ? arr : []) {
+      if (!x || typeof x.id !== 'string' || seen.has(x.id) || typeof x.plan !== 'string' || !isKey(x.start)) continue;
+      seen.add(x.id);
+      const every = [1, 2, 3, 4].includes(x.every) ? x.every : 1;
+      const days = [...new Set((Array.isArray(x.days) ? x.days : []).filter((d) => Number.isInteger(d) && d >= 0 && d < 7))].sort();
+      if (!days.length) continue;
+      out.push({ id: x.id, plan: x.plan, start: x.start, every, days, until: isKey(x.until) ? x.until : '', made: (Array.isArray(x.made) ? x.made : []).filter(isKey) });
+    }
+    return out;
+  }
+  function cleanSettings(o) {
+    const s = o && typeof o === 'object' ? o : {};
+    const bw = fin(s.bw) && s.bw > 0 && s.bw < 400 ? Math.round(s.bw * 10) / 10 : '';
+    const nas = s.nas && typeof s.nas === 'object' ? s.nas : {};
+    return { bw, nas: { url: str(nas.url, 300).trim(), email: str(nas.email, 200).trim() } };
+  }
   const cleanFolders = (a) => [...new Set((Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 40)))];
 
-  async function saveUser() {
-    const payload = { v: DATA_V, savedAt: Date.now(), entries: S.entries, favs: [...S.favs], sessions: S.sessions,
-      days: S.days, notes: S.notes, plans: S.plans, folders: S.folders };
+  /* Tout ce que l'utilisateur a rempli : séries, favoris, séances, notes, séances types, dossiers,
+     programmations et réglages. C'est aussi le contenu de l'export complet et de la synchronisation. */
+  const userData = () => ({ entries: S.entries, favs: [...S.favs], sessions: S.sessions, days: S.days, notes: S.notes,
+    plans: S.plans, folders: S.folders, schedules: S.schedules, settings: S.settings });
+  async function saveUser(opts) {
+    S.savedAt = (opts && opts.at) || Date.now();
+    const payload = Object.assign({ v: DATA_V, savedAt: S.savedAt }, userData());
     try { localStorage.setItem(BACKUP_KEY, JSON.stringify(payload)); } catch (e) { /* ignoré */ }
     try { await kvSet('user', payload); } catch (e) { console.warn('IndexedDB indisponible', e); }
+    if (!(opts && opts.quiet)) nasSoon();
   }
   async function loadUser() {
     let a = null; let b = null;
@@ -427,6 +500,9 @@
     S.notes = cleanNotes(p.notes);
     S.plans = cleanPlans(p.plans);
     S.folders = cleanFolders(p.folders);
+    S.schedules = cleanSchedules(p.schedules);
+    S.settings = cleanSettings(p.settings);
+    S.savedAt = fin(p.savedAt) ? p.savedAt : 0;
   }
   async function dropOldCache() {
     try {
@@ -440,21 +516,24 @@
   const getJson = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
   async function loadExercises() {
     try {
-      const base = await getJson('data/data-v3.json');
+      const [base, frNames] = await Promise.all([getJson('data/data-v3.json'), getJson('data/names-fr.json').catch(() => ({}))]);
+      const frOf = (id) => (frNames && typeof frNames[id] === 'string' ? frNames[id] : '');
       const sha = (v) => (typeof v === 'string' && /^[0-9a-f]{7,40}$/.test(v) ? v : 'main');
       SHA_E = sha(base.shaE); SHA_F = sha(base.shaF);
       S.alias = base.alias && typeof base.alias === 'object' ? base.alias : {};
       // [id, nom, source (0 ExerciseDB, 1 free-exercise-db), étirement (0/1), catégorie, muscle principal, muscles secondaires, média]
       S.exercises = base.items.filter((it) => Array.isArray(it) && typeof it[0] === 'string' && it[1] && GROUPS.has(it[4])).map((it) => ({
         id: it[0], name: String(it[1]), src: it[2] === 0 ? 0 : 1, st: it[3] === 1, leaf: it[4], top: topOf(it[4]),
-        p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null, key: skey(it[1]),
+        p: it[5], s: Array.isArray(it[6]) ? it[6] : [], media: it[7] || null, key: skey(it[1]), fr: frOf(it[0]), fkey: skey(frOf(it[0])),
       }));
       // Exercices maison en 3D : ils remplacent leurs doublons de la liste (l'historique suit, voir migrateAliases).
       const own = W3 ? W3.list().filter((o) => GROUPS.has(o.leaf)) : [];
       const dups = new Map();
       own.forEach((o) => o.dup.forEach((d) => dups.set(d, o.id)));
       if (dups.size) { S.exercises = S.exercises.filter((e) => !dups.has(e.id)); S.alias = Object.assign({}, S.alias); dups.forEach((to, from) => { S.alias[from] = to; }); }
-      own.forEach((o) => S.exercises.push({ id: o.id, name: o.name, src: 2, st: true, leaf: o.leaf, top: topOf(o.leaf), p: o.p, s: o.s, media: null, key: skey(o.name), side: o.side }));
+      // Exercices maison : nom anglais (en) et nom français (name dans exercices-3d.js).
+      own.forEach((o) => S.exercises.push({ id: o.id, name: o.en || o.name, fr: o.name, src: 2, st: true, leaf: o.leaf, top: topOf(o.leaf), p: o.p, s: o.s, media: null,
+        key: skey(o.en || o.name), fkey: skey(o.name), side: o.side }));
       S.loadError = false;
     } catch (e) {
       S.exercises = []; S.loadError = true;
@@ -463,7 +542,7 @@
     S.byId = new Map(S.exercises.map((e) => [e.id, e]));
     S.byLeaf = new Map();
     for (const ex of S.exercises) { if (!S.byLeaf.has(ex.leaf)) S.byLeaf.set(ex.leaf, []); S.byLeaf.get(ex.leaf).push(ex); }
-    S.byLeaf.forEach((list) => list.sort((x, y) => dn(x).localeCompare(dn(y), 'en')));
+    S.byLeaf.forEach((list) => list.sort((x, y) => dn(x).localeCompare(dn(y), LANG)));
   }
   /* Exercices retirés car en double avec ExerciseDB : l'historique et les favoris suivent le nouvel exercice. */
   async function migrateAliases() {
@@ -489,7 +568,7 @@
     root.textContent = '';
     const t = h('div', { class: 't' }, h('span', { text: msg }));
     if (opts && opts.action) {
-      t.append(h('button', { type: 'button', text: opts.label || 'Annuler', onclick: () => { root.textContent = ''; toastSticky = false; opts.action(); } }));
+      t.append(h('button', { type: 'button', text: opts.label || T('Annuler'), onclick: () => { root.textContent = ''; toastSticky = false; opts.action(); } }));
     }
     root.append(t);
     toastSticky = !!(opts && opts.sticky);
@@ -498,7 +577,7 @@
   }
 
   /* ----- calcul dans le champ du poids : 20+2,5+2,5 → 25 ----- */
-  const fmtIn = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
+  const fmtIn = (n) => (LANG === 'en' ? String(Math.round(n * 100) / 100) : String(Math.round(n * 100) / 100).replace('.', ','));
   const OPS = /[+\-−×÷*/()]/;
   function calcEval(src) {
     const t = String(src).replace(/\s+/g, '').replace(/,/g, '.').replace(/[−–]/g, '-').replace(/×/g, '*').replace(/÷/g, '/');
@@ -526,8 +605,8 @@
   function hideCalc() { if (calcBar) calcBar.hidden = true; calcTarget = null; }
   function ensureCalcBar() {
     if (calcBar) return calcBar;
-    calcBar = h('div', { class: 'calcbar', hidden: true, role: 'toolbar', 'aria-label': 'Calcul du poids' },
-      ['+', '−', '×', '÷', '(', ')'].map((k) => h('button', { type: 'button', class: 'ck', 'data-k': k, text: k })),
+    calcBar = h('div', { class: 'calcbar', hidden: true, role: 'toolbar', 'aria-label': T('Calcul du poids') },
+      ['+', '−', T('×'), T('÷'), '(', ')'].map((k) => h('button', { type: 'button', class: 'ck', 'data-k': k, text: k })),
       h('button', { type: 'button', class: 'ck eq', 'data-k': '=', text: '=' }));
     const press = (b) => {
       const inp = calcTarget;
@@ -591,8 +670,8 @@
     hold: { fields: [], metrics: ['hold'] },
   };
   const CFIELD = {
-    dist: { label: 'Distance', ph: 'km' }, incl: { label: 'Pente', ph: '%' }, lvl: { label: 'Niveau', ph: 'niv.' },
-    rounds: { label: 'Tours', ph: 'tours' }, kcal: { label: 'Calories', ph: 'kcal' },
+    dist: { label: T('Distance'), ph: 'km' }, incl: { label: T('Pente'), ph: '%' }, lvl: { label: T('Niveau'), ph: T('niv.') },
+    rounds: { label: T('Tours'), ph: T('tours') }, kcal: { label: T('Calories'), ph: 'kcal' },
   };
   function fmtDur(sec) {
     const m = Math.floor(sec / 60); const s2 = Math.round(sec % 60);
@@ -601,15 +680,18 @@
     return s2 ? m + ' min ' + pad2(s2) : m + ' min';
   }
   const speedOf = (e) => (e.c === 1 && e.dist > 0 && e.dur > 0 ? e.dist / (e.dur / 3600) : null);
+  /* Lest d'une série au poids du corps : « PDC », « PDC + 10 kg », « PDC − 20 kg ». */
+  const bwText = (x) => T('PDC') + (fin(x) && x ? (x > 0 ? ' + ' : ' − ') + fmtNum(Math.abs(x)) + ' kg' : '');
   function entryText(e) {
-    if (e.c !== 1) return fmtNum(e.w) + ' kg × ' + fmtNum(e.r);
+    if (e.c !== 1 && e.bw) return bwText(e.x) + T(' × ') + fmtNum(e.r);
+    if (e.c !== 1) return fmtNum(e.w) + T(' kg × ') + fmtNum(e.r);
     const kind = cardioKind(S.byId.get(e.exerciseId)) || 'other';
     const out = [fmtDur(e.dur)];
     if (e.dist > 0) out.push(fmtNum(e.dist) + ' km');
     const sp = speedOf(e);
     if (sp && kind === 'row') { const p = e.dur / (e.dist * 2); out.push(Math.floor(p / 60) + ':' + pad2(Math.round(p % 60)) + ' /500 m'); } else if (sp) out.push(fmtNum(Math.round(sp * 10) / 10) + ' km/h');
-    if (fin(e.incl)) out.push('pente ' + fmtNum(e.incl) + ' %');
-    if (fin(e.lvl)) out.push('niveau ' + fmtNum(e.lvl));
+    if (fin(e.incl)) out.push(T('pente ') + fmtNum(e.incl) + ' %');
+    if (fin(e.lvl)) out.push(T('niveau ') + fmtNum(e.lvl));
     if (fin(e.rounds)) out.push(plural(e.rounds, 'tour', 'tours'));
     if (fin(e.kcal)) out.push(fmtNum(e.kcal) + ' kcal');
     return out.join(' · ');
@@ -625,8 +707,8 @@
       return inp;
     };
     return h('div', { class: 'cgrid' },
-      h('label', { class: 'cf dur' }, h('span', { text: 'Durée' }),
-        h('div', { class: 'durin' }, mk('min', 'min', 'Durée : minutes', 'numeric'), h('span', { text: ':' }), mk('sec', 's', 'Durée : secondes', 'numeric'))),
+      h('label', { class: 'cf dur' }, h('span', { text: T('Durée') }),
+        h('div', { class: 'durin' }, mk('min', 'min', T('Durée : minutes'), 'numeric'), h('span', { text: ':' }), mk('sec', 's', T('Durée : secondes'), 'numeric'))),
       CARDIO[kind].fields.map((k) => h('label', { class: 'cf' }, h('span', { text: CFIELD[k].label }), mk(k, CFIELD[k].ph, CFIELD[k].label))));
   }
   function readCardio(kind, row) {
@@ -648,9 +730,95 @@
     return r;
   };
 
+  /* ----- poids du corps (PDC) -----
+     Le poids du corps se règle dans Réglages. Une série au poids du corps enregistre le poids total
+     soulevé (poids du corps + lest) : les graphiques et les totaux restent justes même si ton poids change. */
+  const bwKg = () => (fin(S.settings.bw) && S.settings.bw > 0 ? S.settings.bw : 0);
+  async function askBodyWeight() {
+    const v = await promptDialog(T('Ton poids du corps'), T('Poids du corps en kg (modifiable dans Réglages)'), bwKg() ? fmtIn(bwKg()) : '', 6, 'decimal');
+    if (v == null) return false;
+    const n = calcEval(v);
+    if (!(n > 0 && n < 400)) { toast(T('Poids du corps : un nombre en kilos.')); return false; }
+    S.settings.bw = Math.round(n * 10) / 10;
+    await saveUser();
+    return true;
+  }
+  /* Champ du poids d'une série. Au poids du corps : un bouton « + » ou « − » (lest ajouté, ou poids
+     retiré par une machine d'assistance) suivi du lest en kg ; vide = poids du corps seul. */
+  function weightField(row, label, onInput) {
+    const inp = calcInput({ 'aria-label': label });
+    inp.value = row.w || '';
+    const sign = h('button', { type: 'button', class: 'sgn' });
+    const box = h('div', { class: 'wbox' }, sign, inp);
+    const paint = () => {
+      if (inp.value !== String(row.w || '')) inp.value = row.w || '';
+      box.classList.toggle('bw', !!row.bw);
+      sign.hidden = !row.bw;
+      sign.textContent = row.neg ? '−' : '+';
+      sign.setAttribute('aria-label', row.neg ? T('Poids retiré (assistance). Toucher pour ajouter du lest.') : T('Lest ajouté. Toucher pour retirer du poids (assistance).'));
+      inp.placeholder = row.bw ? T('lest') : 'kg';
+    };
+    sign.addEventListener('pointerdown', (e) => e.preventDefault());
+    sign.addEventListener('click', () => { row.neg = !row.neg; paint(); onInput(); });
+    inp.addEventListener('input', () => {
+      // Au poids du corps, un signe tapé au début du champ règle le bouton + / −.
+      if (row.bw && /^\s*[-−–+]/.test(inp.value)) {
+        row.neg = !/^\s*\+/.test(inp.value);
+        inp.value = inp.value.replace(/^\s*[-−–+]\s*/, '');
+        row.w = inp.value;
+        paint();
+      }
+      row.w = inp.value; inp.classList.remove('invalid'); onInput();
+    });
+    paint();
+    box.inp = inp; box.paint = paint;
+    return box;
+  }
+  /* Case « PDC » (poids du corps) d'une série ; cochée, elle affiche le total soulevé. */
+  function bwCheck(row, onChange, long) {
+    const cb = h('input', { type: 'checkbox', 'aria-label': T('Poids du corps') });
+    cb.checked = !!row.bw;
+    const txt = h('span');
+    const paint = () => {
+      const r = row.bw ? readWeight(row, row.base) : null;
+      txt.textContent = (long ? T('Poids du corps') : T('PDC')) + (r && r.ok ? ' · ' + fmtNum(r.vals.w) + ' kg' : !long || !bwKg() ? '' : ' · ' + fmtNum(bwKg()) + ' kg');
+    };
+    cb.addEventListener('change', async () => {
+      if (cb.checked && !bwKg() && !row.base) { const ok = await askBodyWeight(); if (!ok) { cb.checked = false; return; } }
+      // Changer de mode vide le champ : une charge en kg n'est pas un lest, et inversement.
+      row.bw = cb.checked; row.neg = false; row.w = '';
+      paint(); onChange();
+    });
+    paint();
+    const lab = h('label', { class: 'bwcheck', title: T('Poids du corps') }, cb, txt);
+    lab.paint = paint;
+    return lab;
+  }
+  /* Lit le poids d'une série. base : poids du corps à utiliser (celui de l'époque pour une série modifiée). */
+  function readWeight(row, base) {
+    const raw = String(row.w == null ? '' : row.w).trim();
+    if (!row.bw) { const w = calcEval(raw); return Number.isFinite(w) && w > 0 ? { ok: true, vals: { w } } : { ok: false }; }
+    const b = base || bwKg();
+    if (!b) return { ok: false, noBw: true };
+    const amt = raw ? calcEval(raw) : 0;
+    if (!Number.isFinite(amt)) return { ok: false };
+    const x = Math.round((row.neg ? -1 : 1) * amt * 100) / 100;
+    const w = Math.round((b + x) * 100) / 100;
+    return w > 0 ? { ok: true, vals: { w, bw: 1, x } } : { ok: false };
+  }
+  /* Valeurs de saisie (texte) à partir d'une série enregistrée ou prévue. */
+  function rowVals(src) {
+    if (!src) return null;
+    if (src.bw) {
+      const x = fin(src.x) ? src.x : fin(src.w) && src.c === undefined && src.x === undefined ? src.w : 0;
+      return { w: x ? fmtIn(Math.abs(x)) : '', r: fin(src.r) ? String(src.r) : '', bw: true, neg: x < 0 };
+    }
+    return { w: fin(src.w) ? fmtIn(src.w) : '', r: fin(src.r) ? String(src.r) : '' };
+  }
+
   /* ----- glisser de droite à gauche pour supprimer ----- */
   function swipeable(content, onDelete, label) {
-    const del = h('button', { type: 'button', class: 'swipe-del', 'aria-label': label || 'Supprimer' }, icon('trash'));
+    const del = h('button', { type: 'button', class: 'swipe-del', 'aria-label': label || T('Supprimer') }, icon('trash'));
     const wrap = h('div', { class: 'swipe' }, del, content);
     content.classList.add('swipe-c');
     let sx = 0; let sy = 0; let dx = 0; let mode = null; let open = false; let pid = null; let swiped = false;
@@ -776,7 +944,7 @@
         box.append(h('button', { type: 'button', class: 'bs-item' + (it.danger ? ' danger' : ''), onclick: () => close(it.run) },
           it.icon ? icon(it.icon) : null, h('span', { text: it.label })));
       }
-      box.append(h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: 'Annuler', onclick: () => close() }));
+      box.append(h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: T('Annuler'), onclick: () => close() }));
     });
   }
   /* Choix des groupes secondaires : une ligne compacte qui ouvre une liste à cocher. */
@@ -785,7 +953,7 @@
     const paint = () => {
       const v = get().filter((x) => GROUPS.has(x));
       btn.textContent = '';
-      btn.append(h('span', { class: v.length ? 'v' : 'ph', text: v.length ? v.map((x) => GROUPS.get(x).label).join(', ') : 'Aucun' }), icon('down'));
+      btn.append(h('span', { class: v.length ? 'v' : 'ph', text: v.length ? v.map((x) => GROUPS.get(x).label).join(', ') : T('Aucun') }), icon('down'));
     };
     btn.addEventListener('click', () => {
       const sel = new Set(get());
@@ -793,7 +961,7 @@
       bottomSheet((box, close, onCancel) => {
         const done = () => close(() => { set(GROUP_LIST.map((g) => g.id).filter((x) => sel.has(x) && x !== main)); paint(); });
         onCancel(() => { set(GROUP_LIST.map((g) => g.id).filter((x) => sel.has(x) && x !== main)); paint(); });
-        box.append(h('h2', { class: 'bs-title', text: 'Groupes secondaires' }));
+        box.append(h('h2', { class: 'bs-title', text: T('Groupes secondaires') }));
         const list = h('div', { class: 'gs-list' });
         for (const g of GROUP_LIST) {
           const isMain = g.id === main;
@@ -801,7 +969,7 @@
           cb.checked = sel.has(g.id) && !isMain;
           cb.addEventListener('change', () => { if (cb.checked) sel.add(g.id); else sel.delete(g.id); });
           list.append(h('label', { class: 'gs-row' + (g.sub ? ' sub' : '') + (isMain ? ' main' : '') },
-            cb, h('span', { class: 'dot', style: { '--c': g.color } }), h('span', { class: 'gl', text: g.label }), isMain ? h('span', { class: 'gm', text: 'principal' }) : null));
+            cb, h('span', { class: 'dot', style: { '--c': g.color } }), h('span', { class: 'gl', text: g.label }), isMain ? h('span', { class: 'gm', text: T('principal') }) : null));
         }
         box.append(list, h('button', { type: 'button', class: 'btn primary wide', text: 'OK', onclick: done }));
       });
@@ -823,17 +991,17 @@
     requestAnimationFrame(fit);
     return h('div', { class: 'notebox' }, ta);
   }
-  function promptDialog(title, label, value, max) {
+  function promptDialog(title, label, value, max, mode) {
     return new Promise((resolve) => {
       let close = null;
-      const inp = h('input', { class: 'field left', type: 'text', maxlength: String(max || 40), id: 'pr-in', autocomplete: 'off', enterkeyhint: 'done' });
+      const inp = h('input', { class: 'field left', type: 'text', maxlength: String(max || 40), id: 'pr-in', autocomplete: 'off', enterkeyhint: 'done', inputmode: mode || null });
       inp.value = value || '';
       const ok = () => { const v = inp.value.trim(); close(); resolve(v || null); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
       const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
         h('h2', { id: 'dlg-t', text: title }), h('label', { class: 'lbl', for: 'pr-in', text: label }), inp,
-        h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => { close(); resolve(null); } }),
-          h('button', { type: 'button', class: 'btn primary', text: 'Valider', onclick: ok })));
+        h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: T('Annuler'), onclick: () => { close(); resolve(null); } }),
+          h('button', { type: 'button', class: 'btn primary', text: T('Valider'), onclick: ok })));
       close = openModal(box, () => resolve(null));
       setTimeout(() => inp.focus(), 50);
     });
@@ -855,16 +1023,16 @@
     return new Promise((resolve) => {
       let close = null;
       const done = (v) => { close(); resolve(v); };
-      const noBtn = h('button', { type: 'button', class: 'btn ghost', text: no || 'Non', onclick: () => done(false) });
+      const noBtn = h('button', { type: 'button', class: 'btn ghost', text: no || T('Non'), onclick: () => done(false) });
       const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
         h('h2', { id: 'dlg-t', text: title }), text ? h('p', { text }) : null,
-        h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn ' + (safe ? 'primary' : 'danger'), text: yes || 'Oui', onclick: () => done(true) })));
+        h('div', { class: 'acts' }, noBtn, h('button', { type: 'button', class: 'btn ' + (safe ? 'primary' : 'danger'), text: yes || T('Oui'), onclick: () => done(true) })));
       close = openModal(box, () => resolve(false));
       noBtn.focus();
     });
   }
   function starBtn(id, onChange) {
-    const b = h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Favori', 'aria-pressed': String(S.favs.has(id)) }, icon('star'));
+    const b = h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Favori'), 'aria-pressed': String(S.favs.has(id)) }, icon('star'));
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       if (S.favs.has(id)) S.favs.delete(id); else S.favs.add(id);
@@ -874,16 +1042,16 @@
     });
     return b;
   }
-  const closeBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Fermer', onclick: goHome }, icon('close'));
-  const backBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Retour', onclick: goBack }, icon('left'));
-  const setText = (w, r) => fmtNum(w) + ' kg × ' + fmtNum(r);
+  const closeBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Fermer'), onclick: goHome }, icon('close'));
+  const backBtn = () => h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Retour'), onclick: goBack }, icon('left'));
+  const setText = (w, r) => fmtNum(w) + T(' kg × ') + fmtNum(r);
   const tag = (id, main) => { const g = GROUPS.get(id); return g ? h('span', { class: 'tag' + (main ? ' main' : ''), style: { '--c': g.color }, text: g.label }) : null; };
 
   /* ---------- navigation : une pile de pages, chaque page garde son état ----------
      La flèche retour et le balayage depuis le bord gauche utilisent l'historique du
      navigateur : on revient sur la page précédente telle qu'on l'avait laissée. */
   const app = () => document.getElementById('app');
-  const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan });
+  const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan, settings: viewSettings });
   /* Transitions : nouvelle page qui arrive de la droite, flèche = page qui part vers la droite,
      croix = page qui descend. Le balayage depuis le bord garde l'animation du navigateur. */
   const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -951,19 +1119,19 @@
   function askLeave(proceed) {
     const g = S.guard;
     let close = null;
-    const stay = h('button', { type: 'button', class: 'btn ghost', text: 'Rester', onclick: () => close() });
+    const stay = h('button', { type: 'button', class: 'btn ghost', text: T('Rester'), onclick: () => close() });
     const discard = () => { if (g.discard) g.discard(); S.guard = null; proceed(); };
     const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
-      h('h2', { id: 'dlg-t', text: g.title || 'Enregistrer ta saisie ?' }),
-      h('p', { text: g.text || 'Tu as rempli une série sans la valider.' }),
+      h('h2', { id: 'dlg-t', text: g.title || T('Enregistrer ta saisie ?') }),
+      h('p', { text: g.text || T('Tu as rempli une série sans la valider.') }),
       h('div', { class: 'acts col' },
-        h('button', { type: 'button', class: 'btn primary', text: g.yes || 'Enregistrer', onclick: async () => {
+        h('button', { type: 'button', class: 'btn primary', text: g.yes || T('Enregistrer'), onclick: async () => {
           close();
           const miss = g.missing ? g.missing() : [];
           if (miss.length) { if ((await missingDialog(miss, true)) === 'quit') discard(); return; }
           if (await g.save()) { S.guard = null; proceed(); }
         } }),
-        h('button', { type: 'button', class: 'btn ghost warn', text: g.no || 'Ne pas enregistrer', onclick: () => { close(); discard(); } }),
+        h('button', { type: 'button', class: 'btn ghost warn', text: g.no || T('Ne pas enregistrer'), onclick: () => { close(); discard(); } }),
         stay));
     close = openModal(box);
     stay.focus();
@@ -972,12 +1140,12 @@
   function missingDialog(miss, withQuit) {
     return new Promise((resolve) => {
       let close = null;
-      const back = h('button', { type: 'button', class: 'btn primary', text: 'Compléter la séance', onclick: () => { close(); resolve('stay'); } });
+      const back = h('button', { type: 'button', class: 'btn primary', text: T('Compléter la séance'), onclick: () => { close(); resolve('stay'); } });
       const box = h('div', { class: 'dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
-        h('h2', { id: 'dlg-t', text: 'Impossible de valider' }),
-        h('p', { text: 'Il manque ' + miss.join(' et ') + ' pour enregistrer cette séance.' }),
+        h('h2', { id: 'dlg-t', text: T('Impossible de valider') }),
+        h('p', { text: T('Il manque {0} pour enregistrer cette séance.', miss.map((x) => T(x)).join(' ' + T('et') + ' ')) }),
         h('div', { class: 'acts col' }, back,
-          withQuit ? h('button', { type: 'button', class: 'btn ghost warn', text: 'Quitter sans enregistrer', onclick: () => { close(); resolve('quit'); } }) : null));
+          withQuit ? h('button', { type: 'button', class: 'btn ghost warn', text: T('Quitter sans enregistrer'), onclick: () => { close(); resolve('quit'); } }) : null));
       close = openModal(box, () => resolve('stay'));
       back.focus();
     });
@@ -1038,17 +1206,19 @@
     return best;
   }
   function viewHome() {
+    materialize(todayKey());   // séance programmée pour aujourd'hui
     const wrap = h('main', { class: 'home' });
     const menu = h('div', { class: 'menu', role: 'menu', hidden: true });
-    const menuBtn = h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Menu', 'aria-expanded': 'false' }, icon('menu'));
+    const menuBtn = h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Menu'), 'aria-expanded': 'false' }, icon('menu'));
     const closeMenu = () => { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); };
     const item = (label, fn) => h('button', { type: 'button', role: 'menuitem', text: label, onclick: () => { closeMenu(); fn(); } });
     menu.append(
-      item('Historique', () => go('history')),
-      item('Calendrier', () => go('calendar')),
-      item('Séances', () => go('seances')),
-      item('Créer une séance', createPlan),
-      h('div', { class: 'ver', 'aria-hidden': 'true', text: 'Version ' + APP_VERSION }),
+      item(T('Historique'), () => go('history')),
+      item(T('Calendrier'), () => go('calendar')),
+      item(T('Séances'), () => go('seances')),
+      item(T('Créer une séance'), createPlan),
+      item(T('Réglages'), () => go('settings')),
+      h('div', { class: 'ver', 'aria-hidden': 'true', text: T('Version {0}', APP_VERSION) }),
     );
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1072,11 +1242,11 @@
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
       const card = h('button', { type: 'button', class: 'today-card', style: s ? { '--c': GROUPS.get(s.main).color } : null, onclick: () => go('calendar', { day: tk }) },
-        h('div', {}, h('span', { class: 'sub', text: 'Séance du jour' }), h('strong', { text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
+        h('div', {}, h('span', { class: 'sub', text: T('Séance du jour') }), h('strong', { text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
           h('span', { class: 'prog', text: k + ' / ' + plural(tOrder.length, 'exercice fait', 'exercices faits') })),
         h('span', { class: 'go' }, icon('right')));
       // Glisser vers la gauche : retirer la séance prévue (les séries déjà faites restent).
-      const sw = swipeable(card, () => clearPlanned(tk, () => { snapshot(); render(S.stack[S.stack.length - 1]); }, true), 'Retirer la séance du jour de l’accueil');
+      const sw = swipeable(card, () => clearPlanned(tk, () => { snapshot(); render(S.stack[S.stack.length - 1]); }, true), T('Retirer la séance du jour de l’accueil'));
       sw.classList.add('today-swipe');
       wrap.append(sw);
     }
@@ -1090,31 +1260,32 @@
         ex.missing ? null : (ex.src !== 1 ? visual(ex, { static: true }) : h('div', { class: 'frame' }, flip(ex, { alt: dn(ex) }))),
         h('h2', { text: dn(ex) }),
         latest.c === 1 ? h('p', { class: 'last' }, h('strong', { text: fmtDur(latest.dur) }), latest.dist > 0 ? ' · ' + fmtNum(latest.dist) + ' km' : '')
-          : h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), ' × ' + fmtNum(latest.r)),
+          : h('p', { class: 'last' }, h('strong', { text: fmtNum(latest.w) + ' kg' }), T(' × ') + fmtNum(latest.r)),
         h('p', { class: 'when', text: fDateTime.format(latest.ts) })));
     } else {
       wrap.append(h('button', { type: 'button', class: 'hero empty', onclick: () => go('library') },
-        h('h2', { text: 'Pas encore d’exercice' }),
-        h('p', { text: 'Choisis un exercice dans la bibliothèque pour noter ta première série.' })));
+        h('h2', { text: T('Pas encore d’exercice') }),
+        h('p', { text: T('Choisis un exercice dans la bibliothèque pour noter ta première série.') })));
     }
 
     wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('library') },
-      h('div', {}, h('strong', { text: 'Bibliothèque' }),
-        h('span', { class: 'sub', text: S.exercises.length ? fmtNum(S.exercises.length) + ' exercices · choisir un autre exercice' : 'Choisir un exercice' })),
+      h('div', {}, h('strong', { text: T('Bibliothèque') }),
+        h('span', { class: 'sub', text: S.exercises.length ? T('{0} exercices · choisir un autre exercice', fmtNum(S.exercises.length)) : T('Choisir un exercice') })),
       h('span', { class: 'go' }, icon('right'))));
 
     const byDay = daysIndex();
     const named = Object.keys(S.sessions).filter((k) => byDay.has(k)).sort();
     wrap.append(h('button', { type: 'button', class: 'lib-card', onclick: () => go('seances') },
-      h('div', {}, h('strong', { text: 'Séances' }),
-        h('span', { class: 'sub', text: named.length ? plural(named.length, 'séance enregistrée', 'séances enregistrées') + ' · dernière ' + ago(named[named.length - 1]) : 'Tes séances nommées, par groupe musculaire' })),
+      h('div', {}, h('strong', { text: T('Séances') }),
+        h('span', { class: 'sub', text: named.length ? plural(named.length, 'séance enregistrée', 'séances enregistrées') + ' · ' + T('dernière {0}', ago(named[named.length - 1])) : T('Tes séances nommées, par groupe musculaire') })),
       h('span', { class: 'go' }, icon('right'))));
     return wrap;
   }
   async function shareFile(name, text, mime) {
     const file = new File([text], name, { type: mime });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'WorkLog' }); return true; } catch (e) { if (e && e.name === 'AbortError') return false; }
+      // Le fichier seul : un titre ou un texte serait partagé en plus, comme un second fichier texte « WorkLog ».
+      try { await navigator.share({ files: [file] }); return true; } catch (e) { if (e && e.name === 'AbortError') return false; }
     }
     const url = URL.createObjectURL(file);
     const a = h('a', { href: url, download: name });
@@ -1125,10 +1296,10 @@
 
   /* ---------- fiche exercice ---------- */
   const RANGES = [
-    { k: '2s', label: '2 semaines', days: 14 },
-    { k: '1m', label: '1 mois', days: 30.44 },
-    { k: '3m', label: '3 mois', days: 91.3 },
-    { k: '6m', label: '6 mois', days: 182.6 },
+    { k: '2s', label: T('2 semaines'), days: 14 },
+    { k: '1m', label: T('1 mois'), days: 30.44 },
+    { k: '3m', label: T('3 mois'), days: 91.3 },
+    { k: '6m', label: T('6 mois'), days: 182.6 },
   ];
   function viewExercise(arg, ui) {
     const id = typeof arg === 'string' ? arg : (arg && arg.id) || '';
@@ -1136,7 +1307,7 @@
     const known = S.entries.find((e) => e.exerciseId === id);
     const ex = getEx(id, known && known.name);
     const kind = cardioKind(ex);
-    const metrics = kind ? CARDIO[kind].metrics : ['load'];
+    const metrics = kind ? CARDIO[kind].metrics : ['e1rm', 'max', 'vol'];
     let range = RANGES.some((r) => r.k === ui.range) ? ui.range : '2s';
     let metric = metrics.includes(ui.metric) ? ui.metric : metrics[0];
     S.getUI = () => ({ range, metric });
@@ -1145,14 +1316,14 @@
     wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
     wrap.append(h('h1', { class: 'ex-title', text: dn(ex) }));
     wrap.append(noteBox(() => S.notes[id], (v) => { if (v.trim()) S.notes[id] = v; else delete S.notes[id]; },
-      'Note : réglages, position de la machine…', 'Note sur l’exercice'));
+      T('Note : réglages, position de la machine…'), T('Note sur l’exercice')));
     if (!ex.missing) {
       wrap.append(visual(ex));
       const sec = [...new Set(ex.s.map(frMuscle))].filter((m) => m !== frMuscle(ex.p));
       wrap.append(h('div', { class: 'legend' },
-        h('p', {}, h('i', { class: 'p' }), h('span', { text: 'Muscle principal : ' }), h('b', { text: frMuscle(ex.p) })),
-        sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: 'Muscles secondaires : ' }), sec.join(', ')) : null));
-      if (ex.src === 0) wrap.append(h('p', { class: 'credit', text: 'Animation © Gym visual' }));
+        h('p', {}, h('i', { class: 'p' }), h('span', { text: T('Muscle principal : ') }), h('b', { text: frMuscle(ex.p) })),
+        sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: T('Muscles secondaires : ') }), sec.join(', ')) : null));
+      if (ex.src === 0) wrap.append(h('p', { class: 'credit', text: T('Animation © Gym visual') }));
       if (ex.src === 2 && W3 && W3.credit) wrap.append(h('p', { class: 'credit', text: W3.credit }));
     }
 
@@ -1167,22 +1338,24 @@
       const byDay = new Map();
       for (const e of mine()) { const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
       const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 3);
-      if (!days.length) { recent.append(h('p', { class: 'empty-note', text: 'Aucune série pour l’instant. Note ta première série en bas de la page.' })); return; }
+      if (!days.length) { recent.append(h('p', { class: 'empty-note', text: T('Aucune série pour l’instant. Note ta première série en bas de la page.') })); return; }
       for (const [, list] of days) {
         recent.append(h('div', { class: 'day' },
           h('div', { class: 'dlabel', text: cap(fDayLong.format(list[0].ts)) }),
-          h('div', { class: 'sets' }, list.map((e) => h('button', { type: 'button', class: 'set', 'aria-label': 'Modifier la série ' + entryText(e), text: entryText(e), onclick: () => editEntry(e, refresh) })))));
+          h('div', { class: 'sets' }, list.map((e) => h('span', { class: 'setpair' },
+            h('button', { type: 'button', class: 'set', 'aria-label': T('Modifier la série ') + entryText(e), text: entryText(e), onclick: () => editEntry(e, refresh) }),
+            h('button', { type: 'button', class: 'setdup', 'aria-label': T('Dupliquer la série ') + entryText(e) + T(' dans « Nouvelle série »'), onclick: () => copyToForm(e) }, icon('copy')))))));
       }
-      recent.append(h('p', { class: 'hint', text: 'Touche une série pour la modifier ou la supprimer.' }));
+      recent.append(h('p', { class: 'hint', text: T('Touche une série pour la modifier ou la supprimer ; le bouton à côté la recopie dans « Nouvelle série ».') }));
     }
 
     function renderChart() {
       chartBox.textContent = '';
       if (metrics.length > 1) {
-        chartBox.append(h('div', { class: 'tabs two', role: 'tablist', 'aria-label': 'Donnée affichée' },
+        chartBox.append(h('div', { class: 'tabs' + (metrics.length === 2 ? ' two' : ''), role: 'tablist', 'aria-label': T('Donnée affichée') },
           metrics.map((m) => h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': String(metric === m), text: METRICS[m].label, onclick: () => { metric = m; renderChart(); } }))));
       }
-      chartBox.append(h('div', { class: 'chips fit', role: 'group', 'aria-label': 'Période' },
+      chartBox.append(h('div', { class: 'chips fit', role: 'group', 'aria-label': T('Période') },
         RANGES.map((r) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(range === r.k), text: r.label, onclick: () => { range = r.k; renderChart(); } }))));
       const all = mine();
       const end = Math.max(Date.now(), all.length ? all[all.length - 1].ts : 0);
@@ -1190,46 +1363,88 @@
       chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end, METRICS[metric]));
     }
 
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Dernières séances' }), h('div', { class: 'card' }, recent)));
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Progression' }), h('div', { class: 'card' }, chartBox)));
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Dernières séances') }), h('div', { class: 'card' }, recent)));
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Progression') }), h('div', { class: 'card' }, chartBox)));
     let draft = null;
     if (S.draft && S.draft.id === id) { draft = S.draft.rows; S.draft = null; }
     const planned = dayCtx && S.days[dayCtx] && S.days[dayCtx].plan[id] && !dayEntries(dayCtx).some((e) => e.exerciseId === id) ? S.days[dayCtx].plan[id] : null;
-    wrap.append(buildForm(ex, { day: dayCtx, draft, planned, arg }, refresh));
+    const form = buildForm(ex, { day: dayCtx, draft, planned, arg }, refresh);
+    wrap.append(form);
+    function copyToForm(e) {
+      const row = form.fill(e);
+      const f = row.nodes && (row.nodes.r || row.nodes.min);
+      if (f) f.closest('.srow, .crow').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+      toast(T('Série recopiée dans « Nouvelle série » : ajuste-la puis valide.'));
+    }
     refresh();
     return wrap;
   }
 
-  /* Données affichables sur le graphique. */
+  /* Données affichables sur le graphique : un point par jour, calculé à partir des séries du jour.
+     agg(séries du jour) → { v : valeur, best : série retenue, n : nombre de séries, mark : petit texte sur le point }. */
+  const e1rm = (e) => (e.r <= 1 ? e.w : e.w * (1 + e.r / 30));   // formule d'Epley
+  const round1 = (v) => Math.round(v * 10) / 10;
+  const maxBy = (list, f) => list.reduce((a, b) => (f(b) > f(a) ? b : a));
+  const sumOf = (list, f) => list.reduce((n, e) => n + (fin(f(e)) ? f(e) : 0), 0);
   const METRICS = {
-    load: { label: 'Charge', note: 'Charge totale par série (kg × répétitions)', val: (e) => e.w * e.r, tick: fmtNum,
-      detail: (e) => [fmtNum(e.w) + ' kg × ' + fmtNum(e.r) + ' rép.', 'Total ' + fmtNum(e.w * e.r) + ' · ' + fDateTime.format(e.ts)] },
-    dur: { label: 'Durée', note: 'Durée (minutes)', val: (e) => e.dur / 60, tick: (v) => fmtNum(Math.round(v)),
-      detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
-    speed: { label: 'Vitesse', note: 'Vitesse moyenne (km/h)', val: (e) => speedOf(e), tick: (v) => fmtNum(Math.round(v)),
-      detail: (e) => [fmtNum(Math.round(speedOf(e) * 10) / 10) + ' km/h', entryText(e) + ' · ' + fDateTime.format(e.ts)] },
-    hold: { label: 'Durée', note: 'Durée de chaque série (secondes)', val: (e) => e.dur, tick: (v) => fmtNum(Math.round(v)),
-      detail: (e) => [fmtDur(e.dur), fDateTime.format(e.ts)] },
-    lvl: { label: 'Niveau', note: 'Niveau', val: (e) => e.lvl, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
-    rounds: { label: 'Tours', note: 'Nombre de tours', val: (e) => e.rounds, tick: fmtNum, detail: (e) => [entryText(e), fDateTime.format(e.ts)] },
+    e1rm: { label: T('Force estimée'), note: T('Force estimée (kg) : ta meilleure série du jour'),
+      agg: (l) => { const b = maxBy(l, e1rm); return { v: round1(e1rm(b)), best: b }; }, tick: fmtNum,
+      detail: (p) => [fmtNum(p.v) + ' kg ' + T('estimés'), T('Meilleure série : ') + entryText(p.best)] },
+    max: { label: T('Charge max'), note: T('Charge la plus lourde du jour (kg) ; × = répétitions faites à cette charge'),
+      agg: (l) => { const w = Math.max(...l.map((e) => e.w)); const b = maxBy(l.filter((e) => e.w === w), (e) => e.r); return { v: w, best: b, mark: T('×') + fmtNum(b.r) }; }, tick: fmtNum,
+      detail: (p) => [fmtNum(p.v) + T(' kg × ') + fmtNum(p.best.r) + ' ' + T('rép.'), p.best.bw ? entryText(p.best) : ''] },
+    vol: { label: T('Volume'), note: T('Volume du jour (kg) : poids × répétitions de toutes les séries'),
+      agg: (l) => ({ v: Math.round(sumOf(l, (e) => e.w * e.r)), n: l.length }), tick: fmtNum,
+      detail: (p) => [fmtNum(p.v) + ' kg', plural(p.n, 'série', 'séries')] },
+    dur: { label: T('Durée'), note: T('Durée totale du jour (minutes)'), agg: (l) => ({ v: sumOf(l, (e) => e.dur) / 60, s: sumOf(l, (e) => e.dur), n: l.length }), tick: (v) => fmtNum(Math.round(v)),
+      detail: (p) => [fmtDur(p.s), plural(p.n, 'série', 'séries')] },
+    speed: { label: T('Vitesse'), note: T('Meilleure vitesse moyenne du jour (km/h)'), agg: (l) => { const ok = l.filter((e) => speedOf(e)); if (!ok.length) return null; const b = maxBy(ok, speedOf); return { v: speedOf(b), best: b }; },
+      tick: (v) => fmtNum(Math.round(v)), detail: (p) => [fmtNum(Math.round(p.v * 10) / 10) + ' km/h', entryText(p.best)] },
+    hold: { label: T('Durée'), note: T('Plus longue tenue du jour (secondes)'), agg: (l) => { const b = maxBy(l, (e) => e.dur); return { v: b.dur, best: b, n: l.length, s: sumOf(l, (e) => e.dur) }; },
+      tick: (v) => fmtNum(Math.round(v)), detail: (p) => [fmtDur(p.v), plural(p.n, 'série', 'séries') + ' · ' + T('total') + ' ' + fmtDur(p.s)] },
+    lvl: { label: T('Niveau'), note: T('Niveau le plus haut du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.lvl)); if (!ok.length) return null; const b = maxBy(ok, (e) => e.lvl); return { v: b.lvl, best: b }; },
+      tick: fmtNum, detail: (p) => [T('niveau') + ' ' + fmtNum(p.v), entryText(p.best)] },
+    rounds: { label: T('Tours'), note: T('Nombre de tours du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.rounds)); if (!ok.length) return null; return { v: sumOf(ok, (e) => e.rounds), n: ok.length }; },
+      tick: fmtNum, detail: (p) => [plural(p.v, 'tour', 'tours'), plural(p.n, 'série', 'séries')] },
   };
+  /* Explication du calcul de la force estimée, avec l'exemple de la série retenue. */
+  function e1rmExplain(p) {
+    const box = h('div', { class: 'explain' });
+    box.append(h('strong', { text: T('Comment la force estimée est calculée') }),
+      h('p', { text: T('Pour chaque série : poids × (1 + répétitions ÷ 30). C’est la formule d’Epley, qui estime la charge que tu pourrais soulever une seule fois (ton « 1RM »). Une série d’une seule répétition compte pour son poids.') }),
+      h('p', { text: T('Le point du jour est ta meilleure série. Si tu as pris plus lourd en faisant moins de répétitions, le graphique montre quand même ce progrès, ce que le total soulevé (onglet Volume) ne fait pas.') }));
+    if (p && p.best) {
+      const b = p.best;
+      box.append(h('p', { class: 'ex' }, T('Exemple, ta meilleure série du {0} : ', fDayShort.format(b.ts)),
+        h('b', { text: b.r <= 1 ? fmtNum(b.w) + T(' kg × 1 → ') + fmtNum(round1(e1rm(b))) + ' kg'
+          : fmtNum(b.w) + T(' kg × ') + fmtNum(b.r) + ' → ' + fmtNum(b.w) + T(' × (1 + ') + fmtNum(b.r) + T(' ÷ 30) = ') + fmtNum(round1(e1rm(b))) + ' kg' })));
+    }
+    box.append(h('p', { class: 'small', text: T('L’estimation est plus fiable entre 1 et 12 répétitions. Au poids du corps, le calcul utilise le poids total (poids du corps + lest, ou moins l’assistance).') }));
+    return box;
+  }
 
-  /* Graphique. Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
+  /* Graphique : un point par jour. Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
   function buildChart(all, start, end, M) {
     const box = h('div');
-    const pts = all.filter((p) => { const v = M.val(p); return fin(v) && v > 0; });
+    const byDay = new Map();
+    for (const e of all) { const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
+    const pts = [];
+    for (const [k, list] of byDay) {
+      const a = M.agg(list);
+      if (a && fin(a.v) && a.v > 0) pts.push(Object.assign(a, { key: k, t: Math.min(end, keyDate(k).getTime() + 12 * 3600000) }));
+    }
     if (!pts.length) {
-      box.append(h('p', { class: 'empty-note', text: all.length ? 'Pas de donnée « ' + M.label.toLowerCase() + ' » sur cette période.' : 'Aucune série sur cette période.' }));
+      box.append(h('p', { class: 'empty-note', text: all.length ? T('Pas de donnée « {0} » sur cette période.', T(M.label).toLowerCase()) : T('Aucune série sur cette période.') }));
       return box;
     }
-    const vals = pts.map(M.val);
+    const vals = pts.map((p) => p.v);
     const lo = Math.max(0, Math.floor(Math.min(...vals) * 0.9));
     let hi = Math.ceil(Math.max(...vals) * 1.1);
     if (hi <= lo) hi = lo + 1;
-    const W = 340; const H = 210; const m = { l: 48, r: 12, t: 12, b: 28 };
+    const W = 340; const H = 220; const m = { l: 44, r: 16, t: 22, b: 28 };
     const x = (t) => m.l + ((t - start) / (end - start || 1)) * (W - m.l - m.r);
     const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
-    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Courbe de progression : ' + pts.length + ' séries' });
+    const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': T('Courbe de progression : {0} jours', pts.length) });
 
     const steps = Math.min(4, hi - lo);
     const seen = new Set();
@@ -1244,29 +1459,36 @@
       svg.append(sv('text', { class: 'tick', x: m.l + f * (W - m.l - m.r), y: H - 8, 'text-anchor': i === 0 ? 'start' : i === 3 ? 'end' : 'middle' }, fDayShort.format(t)));
     });
 
-    const sorted = [...pts].sort((a, b) => a.ts - b.ts);
+    const sorted = pts.sort((a, b) => a.t - b.t);
     if (sorted.length > 1) {
-      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.ts).toFixed(1) + ' ' + y(M.val(p)).toFixed(1)).join(' ') }));
+      svg.append(sv('path', { class: 'area', d: 'M' + x(sorted[0].t).toFixed(1) + ' ' + (H - m.b) + sorted.map((p) => ' L' + x(p.t).toFixed(1) + ' ' + y(p.v).toFixed(1)).join('') + ' L' + x(sorted[sorted.length - 1].t).toFixed(1) + ' ' + (H - m.b) + ' Z' }));
+      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ') }));
+    }
+    // Petit texte au-dessus des points (répétitions de la charge max), seulement s'il y a la place.
+    if (sorted.some((p) => p.mark) && sorted.length <= 14) {
+      sorted.forEach((p) => { if (p.mark) svg.append(sv('text', { class: 'mark', x: x(p.t), y: y(p.v) - 10, 'text-anchor': 'middle' }, p.mark)); });
     }
     const detail = h('div', { class: 'detail', 'aria-live': 'polite' });
+    const explain = h('div');
     const dots = [];
     const select = (i) => {
       dots.forEach((d, j) => d.setAttribute('class', j === i ? 'dot on' : 'dot'));
       const [a, b] = M.detail(sorted[i]);
       detail.textContent = '';
-      detail.append(h('strong', { text: a }), h('span', { class: 'sub', text: b }));
+      detail.append(h('strong', { text: a }), h('span', { class: 'sub', text: (b ? b + ' · ' : '') + cap(fDayLong.format(keyDate(sorted[i].key))) }));
+      if (M === METRICS.e1rm) { explain.textContent = ''; explain.append(e1rmExplain(sorted[i])); }
     };
     sorted.forEach((p) => {
-      const dot = sv('circle', { class: 'dot', cx: x(p.ts), cy: y(M.val(p)), r: 5 });
+      const dot = sv('circle', { class: 'dot', cx: x(p.t), cy: y(p.v), r: 5.5 });
       dots.push(dot); svg.append(dot);
     });
     sorted.forEach((p, i) => {
-      const hit = sv('circle', { class: 'hit', cx: x(p.ts), cy: y(M.val(p)), r: 16, tabindex: '0', role: 'button', 'aria-label': M.detail(p).join(', ') });
+      const hit = sv('circle', { class: 'hit', cx: x(p.t), cy: y(p.v), r: 18, tabindex: '0', role: 'button', 'aria-label': M.detail(p).filter(Boolean).join(', ') + ', ' + fDayShort.format(keyDate(p.key)) });
       hit.addEventListener('click', () => select(i));
       hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
       svg.append(hit);
     });
-    box.append(h('p', { class: 'chart-note', text: M.note }), svg, detail);
+    box.append(h('p', { class: 'chart-note', text: T(M.note) }), svg, detail, explain);
     select(sorted.length - 1);
     return box;
   }
@@ -1282,9 +1504,12 @@
     const fixedDay = ctx.day && ctx.day !== todayKey() ? ctx.day : null;
     const baseDt = (i) => (fixedDay ? keyDate(fixedDay).getTime() + 18 * 3600000 + i * 120000 : Date.now());
     const keys = kind ? ['min', 'sec'].concat(CARDIO[kind].fields) : ['w', 'r'];
+    // Une nouvelle série reprend le mode « poids du corps » de la dernière série de l'exercice.
+    const lastBw = () => !kind && S.entries.filter((e) => e.exerciseId === ex.id).reduce((a, b) => (!a || b.ts > a.ts ? b : a), null);
     const newRow = (vals) => {
       const r = { dt: baseDt(rows.length), manual: !!fixedDay };
       for (const k of keys) r[k] = vals && vals[k] != null ? String(vals[k]) : '';
+      if (!kind) { const lb = vals && vals.bw !== undefined ? null : lastBw(); r.bw = vals && vals.bw !== undefined ? !!vals.bw : !!(lb && lb.bw); r.neg = !!(vals && vals.neg); }
       return r;
     };
     const isFilled = (r) => keys.some((k) => String(r[k] || '').trim());
@@ -1294,7 +1519,7 @@
       list.textContent = '';
       rows.forEach((row, i) => {
         row.nodes = {};
-        const dIn = h('input', { class: 'field', type: 'datetime-local', 'aria-label': 'Date et heure de la série ' + (i + 1) });
+        const dIn = h('input', { class: 'field', type: 'datetime-local', 'aria-label': T('Date et heure de la série ') + (i + 1) });
         dIn.value = toLocalInput(row.dt);
         const touch = () => {
           msg.textContent = '';
@@ -1304,32 +1529,36 @@
           const t = new Date(dIn.value).getTime();
           if (Number.isFinite(t)) { row.dt = t; row.manual = true; } else { row.manual = false; row.dt = Date.now(); dIn.value = toLocalInput(row.dt); }
         });
-        const dup = h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (i + 1),
+        const dup = h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Dupliquer la série ') + (i + 1),
           onclick: () => { const c = newRow(row); rows.splice(i + 1, 0, c); renderRows(); } }, icon('copy'));
-        const rm = rows.length > 1 ? h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (i + 1), onclick: () => { rows.splice(i, 1); renderRows(); } }, icon('close')) : h('span', { class: 'mini' });
+        const rm = rows.length > 1 ? h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Retirer la série ') + (i + 1), onclick: () => { rows.splice(i, 1); renderRows(); } }, icon('close')) : null;
+        // Boutons de la ligne, alignés à droite sur la même ligne que les champs.
+        const acts = h('span', { class: 'racts' }, dup, rm);
         if (kind) {
           const live = h('span', { class: 'live' });
           const upd = () => { const r = readCardio(kind, row); live.textContent = r.ok && speedOf(r.vals) ? fmtNum(Math.round(speedOf(r.vals) * 10) / 10) + ' km/h' : ''; };
           list.append(h('div', { class: 'crow' },
-            h('div', { class: 'chead' }, h('span', { class: 'n', text: String(i + 1) }), live, h('span', { class: 'grow' }), dup, rm),
+            h('div', { class: 'chead' }, h('span', { class: 'n', text: String(i + 1) }), live, h('span', { class: 'grow' }), acts),
             cardioFields(kind, row, () => { touch(); upd(); }),
-            h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+            h('div', { class: 'dt-line' }, h('span', { text: T('Le') }), dIn)));
           upd();
         } else {
-          const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids de la série ' + (i + 1) + ' en kilos' });
-          const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions de la série ' + (i + 1), autocomplete: 'off' });
-          wIn.value = row.w; rIn.value = row.r;
-          wIn.addEventListener('input', () => { row.w = wIn.value; wIn.classList.remove('invalid'); touch(); });
+          let chk = null;
+          const wBox = weightField(row, T('Poids de la série ') + (i + 1) + ' en kilos', () => { touch(); if (chk) chk.paint(); });
+          const wIn = wBox.inp;
+          const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: T('rép.'), 'aria-label': T('Répétitions de la série ') + (i + 1), autocomplete: 'off' });
+          rIn.value = row.r;
           rIn.addEventListener('input', () => { row.r = rIn.value; rIn.classList.remove('invalid'); touch(); });
           row.nodes = { w: wIn, r: rIn };
+          chk = bwCheck(row, () => { wBox.paint(); touch(); });
           list.append(h('div', { class: 'srow' },
-            h('span', { class: 'n', text: String(i + 1) }), wIn, h('span', { class: 'times', 'aria-hidden': 'true', text: '×' }), rIn, dup, rm,
-            h('div', { class: 'dt-line' }, h('span', { text: 'Le' }), dIn)));
+            h('span', { class: 'n', text: String(i + 1) }), wBox, h('span', { class: 'times', 'aria-hidden': 'true', text: T('×') }), rIn, acts,
+            h('div', { class: 'dt-line' }, chk, h('span', { class: 'dtw' }, h('span', { text: T('Le') }), dIn))));
         }
       });
     }
     if (ctx.draft && ctx.draft.length) ctx.draft.forEach((d) => rows.push(Object.assign(newRow(d), { dt: d.dt, manual: d.manual })));
-    else if (ctx.planned && ctx.planned.length && !kind) ctx.planned.forEach((p) => rows.push(newRow({ w: toStr(p.w), r: toStr(p.r) })));
+    else if (ctx.planned && ctx.planned.length && !kind) ctx.planned.forEach((p) => rows.push(newRow(p.bw ? rowVals(p) : { w: toStr(p.w), r: toStr(p.r) })));
     else if (ctx.planned && ctx.planned.length && kind === 'hold') ctx.planned.forEach((p) => rows.push(newRow(fin(p.dur) ? { min: p.dur >= 60 ? Math.floor(p.dur / 60) : '', sec: p.dur % 60 || '' } : null)));
     else rows.push(newRow());
     renderRows();
@@ -1339,8 +1568,8 @@
       msg.textContent = '';
       rows.forEach((r) => { if (r.nodes && r.nodes.w) finishCalc(r.nodes.w); });
       const filled = rows.filter(isFilled);
-      if (!filled.length) { msg.textContent = kind ? 'Renseigne au moins la durée.' : 'Renseigne le poids et les répétitions d’au moins une série.'; return false; }
-      let bad = false;
+      if (!filled.length) { msg.textContent = kind ? T('Renseigne au moins la durée.') : T('Renseigne le poids et les répétitions d’au moins une série.'); return false; }
+      let bad = false; let noBw = false;
       const vals = filled.map((row) => {
         if (kind) {
           const r = readCardio(kind, row);
@@ -1348,38 +1577,54 @@
           if (!r.ok) bad = true;
           return r.vals;
         }
-        const w = calcEval(row.w); const r = parseNum(row.r);
-        const okW = Number.isFinite(w) && w > 0; const okR = Number.isInteger(r) && r > 0;
-        row.nodes.w.classList.toggle('invalid', !okW); row.nodes.r.classList.toggle('invalid', !okR);
-        if (!okW || !okR) bad = true;
-        return { w, r };
+        const wr = readWeight(row); const r = parseNum(row.r);
+        const okR = Number.isInteger(r) && r > 0;
+        row.nodes.w.classList.toggle('invalid', !wr.ok); row.nodes.r.classList.toggle('invalid', !okR);
+        if (wr.noBw) noBw = true;
+        if (!wr.ok || !okR) bad = true;
+        return Object.assign({}, wr.vals, { r });
       });
-      if (bad) { msg.textContent = kind ? 'Durée obligatoire ; les autres valeurs doivent être des nombres.' : 'Poids : un nombre positif. Répétitions : un nombre entier.'; return false; }
+      if (noBw) { msg.textContent = T('Renseigne ton poids du corps dans Réglages (menu de l’accueil) pour les séries au poids du corps.'); return false; }
+      if (bad) { msg.textContent = kind ? T('Durée obligatoire ; les autres valeurs doivent être des nombres.') : T('Poids : un nombre positif (au poids du corps, le total doit rester positif). Répétitions : un nombre entier.'); return false; }
       const base = Date.now();
       const created = [];
       filled.forEach((row, i) => {
-        const e = Object.assign({ id: uid(), exerciseId: ex.id, name: dn(ex), ts: row.dt, created: base + i }, vals[i]);
+        const e = Object.assign({ id: uid(), exerciseId: ex.id, name: ex.name, ts: row.dt, created: base + i }, vals[i]);
         S.entries.push(e); created.push(e.id);
         const k = dayKey(e.ts);
         if (S.days[k] && !S.days[k].order.includes(ex.id)) S.days[k].order.push(ex.id);
       });
       await saveUser();
-      const draft = filled.map((r) => { const o = { dt: r.dt, manual: r.manual }; keys.forEach((k) => { o[k] = r[k]; }); return o; });
+      const draft = filled.map((r) => { const o = { dt: r.dt, manual: r.manual, bw: r.bw, neg: r.neg }; keys.forEach((k) => { o[k] = r[k]; }); return o; });
       const n = filled.length;
       rows.length = 0; rows.push(newRow()); renderRows();
-      toast(n + (n > 1 ? ' séries enregistrées' : ' série enregistrée'), { ms: 6000, sticky: true, action: () => undoSave(ex.id, created, draft, ctx.arg) });
+      toast(n + (n > 1 ? T(' séries enregistrées') : T(' série enregistrée')), { ms: 6000, sticky: true, action: () => undoSave(ex.id, created, draft, ctx.arg) });
       onSaved();
       return true;
     }
     S.guard = { dirty: () => rows.some(isFilled), save };
+    /* Recopie une série déjà faite (bouton « dupliquer » de « Dernières séances ») dans la première ligne vide. */
+    function fill(src) {
+      const v = (kind ? cardioRowOf(src) : rowVals(src)) || {};
+      let row = rows.find((r) => !isFilled(r));
+      if (!row) { row = newRow(); rows.push(row); }
+      for (const k of keys) row[k] = v[k] != null ? String(v[k]) : '';
+      if (!kind) { row.bw = !!v.bw; row.neg = !!v.neg; }
+      if (!row.manual) row.dt = Date.now();
+      msg.textContent = '';
+      renderRows();
+      return row;
+    }
 
-    return h('section', { class: 'sec' },
-      h('h2', { text: 'Nouvelle série' + (ex.side ? ' · durée par côté' : '') + (fixedDay ? ' · ' + cap(fDayLong.format(keyDate(fixedDay))) : '') }),
+    const formSec = h('section', { class: 'sec' },
+      h('h2', { text: T('Nouvelle série') + (ex.side ? T(' · durée par côté') : '') + (fixedDay ? ' · ' + cap(fDayLong.format(keyDate(fixedDay))) : '') }),
       h('div', { class: 'card' }, list,
         h('div', { class: 'form-actions' },
           msg,
-          h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; const f = last.nodes.w || last.nodes.min; if (f) f.focus(); } }, icon('plus'), 'Ajouter une série'),
-          h('button', { type: 'button', class: 'btn primary', onclick: save, text: 'Valider' }))));
+          h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; const f = last.nodes.w || last.nodes.min; if (f) f.focus(); } }, icon('plus'), T('Ajouter une série')),
+          h('button', { type: 'button', class: 'btn primary', onclick: save, text: T('Valider') }))));
+    formSec.fill = fill;
+    return formSec;
   }
   /* « Annuler » après « Valider » : les séries sont retirées et la saisie revient sur la page de l'exercice. */
   function undoSave(exId, ids, draft, arg) {
@@ -1397,40 +1642,46 @@
     const kind = e.c === 1 ? (cardioKind(ex) || 'other') : null;
     const msg = h('p', { class: 'form-msg', role: 'alert' });
     let row; let fields;
+    let chk = null;
     if (kind) { row = cardioRowOf(e); fields = cardioFields(kind, row, () => { msg.textContent = ''; }); } else {
-      row = { w: fmtIn(e.w), r: String(e.r) };
-      const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids en kilos' }); wIn.value = row.w;
-      const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions', autocomplete: 'off' }); rIn.value = row.r;
-      wIn.addEventListener('input', () => { row.w = wIn.value; wIn.classList.remove('invalid'); });
+      row = rowVals(e);
+      // Série au poids du corps : on garde le poids du corps de l'époque (total − lest).
+      if (e.bw) row.base = Math.round((e.w - (e.x || 0)) * 100) / 100;
+      const wBox = weightField(row, T('Poids en kilos'), () => { msg.textContent = ''; if (chk) chk.paint(); });
+      const wIn = wBox.inp;
+      const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: T('rép.'), 'aria-label': T('Répétitions'), autocomplete: 'off' }); rIn.value = row.r;
       rIn.addEventListener('input', () => { row.r = rIn.value; rIn.classList.remove('invalid'); });
       row.nodes = { w: wIn, r: rIn };
-      fields = h('div', { class: 'srow edit' }, wIn, h('span', { class: 'times', text: '×' }), rIn);
+      chk = bwCheck(row, () => { if (!row.bw) row.base = 0; wBox.paint(); msg.textContent = ''; }, true);
+      fields = h('div', { class: 'edw' }, h('div', { class: 'srow edit' }, wBox, h('span', { class: 'times', text: T('×') }), rIn), chk);
     }
     const dIn = h('input', { class: 'field left', type: 'datetime-local', id: 'ed-dt' });
     dIn.value = toLocalInput(e.ts);
     let close = null;
     const save = async () => {
       let vals;
-      if (kind) { const r = readCardio(kind, row); r.bad.forEach((k) => row.nodes[k] && row.nodes[k].classList.add('invalid')); if (!r.ok) { msg.textContent = 'Durée obligatoire ; les autres valeurs doivent être des nombres.'; return; } vals = r.vals; } else {
+      if (kind) { const r = readCardio(kind, row); r.bad.forEach((k) => row.nodes[k] && row.nodes[k].classList.add('invalid')); if (!r.ok) { msg.textContent = T('Durée obligatoire ; les autres valeurs doivent être des nombres.'); return; } vals = r.vals; } else {
         finishCalc(row.nodes.w);
-        const w = calcEval(row.w); const r = parseNum(row.r);
-        const okW = Number.isFinite(w) && w > 0; const okR = Number.isInteger(r) && r > 0;
-        row.nodes.w.classList.toggle('invalid', !okW); row.nodes.r.classList.toggle('invalid', !okR);
-        if (!okW || !okR) { msg.textContent = 'Poids : un nombre positif. Répétitions : un nombre entier.'; return; }
-        vals = { w, r };
+        const wr = readWeight(row, row.base); const r = parseNum(row.r);
+        const okR = Number.isInteger(r) && r > 0;
+        row.nodes.w.classList.toggle('invalid', !wr.ok); row.nodes.r.classList.toggle('invalid', !okR);
+        if (wr.noBw) { msg.textContent = T('Renseigne ton poids du corps dans Réglages.'); return; }
+        if (!wr.ok || !okR) { msg.textContent = T('Poids : un nombre positif. Répétitions : un nombre entier.'); return; }
+        vals = Object.assign({}, wr.vals, { r });
       }
       const t = new Date(dIn.value).getTime();
       if (kind) CARDIO_KEYS.forEach((k) => { delete e[k]; });
+      if (!kind) { delete e.bw; delete e.x; }
       Object.assign(e, vals, Number.isFinite(t) ? { ts: t } : {});
       await saveUser();
-      close(); onDone(); toast('Série modifiée');
+      close(); onDone(); toast(T('Série modifiée'));
     };
     const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
-      h('h2', { id: 'dlg-t', text: 'Modifier la série' }), h('p', { class: 'ed-name', text: dn(ex) }),
-      fields, h('label', { class: 'lbl', for: 'ed-dt', text: 'Date et heure' }), dIn, msg,
-      h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => close() }),
-        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: save })),
-      h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette série', onclick: () => { close(); deleteEntry(e, onDone); } }));
+      h('h2', { id: 'dlg-t', text: T('Modifier la série') }), h('p', { class: 'ed-name', text: dn(ex) }),
+      fields, h('label', { class: 'lbl', for: 'ed-dt', text: T('Date et heure') }), dIn, msg,
+      h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: T('Annuler'), onclick: () => close() }),
+        h('button', { type: 'button', class: 'btn primary', text: T('Enregistrer'), onclick: save })),
+      h('button', { type: 'button', class: 'textbtn danger center', text: T('Supprimer cette série'), onclick: () => { close(); deleteEntry(e, onDone); } }));
     close = openModal(box, hideCalc);
     const c0 = close; close = () => { hideCalc(); c0(); };
   }
@@ -1439,11 +1690,75 @@
     if (i < 0) return;
     S.entries.splice(i, 1);
     saveUser(); onDone();
-    toast('Série supprimée', { ms: 6000, action: () => { S.entries.push(e); saveUser(); onDone(); } });
+    toast(T('Série supprimée'), { ms: 6000, action: () => { S.entries.push(e); saveUser(); onDone(); } });
   }
 
+  /* ---------- recherche d'exercices ----------
+     Chaque mot de la recherche est cherché séparément, en anglais et en français, avec une
+     tolérance aux fautes de frappe (« hip trust » trouve « Barbell hip thrust »). Ordre : nom exact,
+     puis noms qui commencent par la recherche ou la contiennent telle quelle, puis le plus de mots
+     trouvés (mots entiers avant débuts de mots, puis fautes) ; à égalité, le nom le plus court. */
+  function editDist(a, b, max) {
+    if (Math.abs(a.length - b.length) > max) return max + 1;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i]; let best = i;
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (cur[j] < best) best = cur[j];
+      }
+      if (best > max) return max + 1;
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  /* Note d'un mot de la recherche dans un nom : 3 mot entier, 2 début de mot, 1,5 contenu, 1 avec une faute. */
+  function tokenScore(t, words, joined) {
+    let best = 0;
+    for (const w of words) {
+      if (w === t) return 3;
+      if (w.startsWith(t)) best = Math.max(best, 2);
+      else if (t.length >= 3 && w.includes(t)) best = Math.max(best, 1.5);
+      else if (best < 1 && t.length >= 4) {
+        const max = t.length >= 6 ? 2 : 1;
+        if (editDist(t, w, max) <= max || (w.length > t.length && editDist(t, w.slice(0, t.length), 1) <= 1 && t.length >= 5)) best = 1;
+      }
+    }
+    if (!best && t.length >= 3 && joined.includes(t)) best = 1.5;
+    return best;
+  }
+  function searchExercises(raw) {
+    const q = skey(raw);
+    if (!q) return [];
+    const qc = q.replace(/ /g, '');
+    const tokens = [...new Set(q.split(' '))];
+    const need = tokens.length <= 2 ? tokens.length : Math.ceil(tokens.length * 0.6);
+    const out = [];
+    for (const ex of S.exercises) {
+      let bestRow = null;
+      for (const k of [ex.key, ex.fkey]) {
+        if (!k) continue;
+        const words = k.split(' '); const joined = k.replace(/ /g, '');
+        let rank = 4;
+        if (k === q || joined === qc) rank = 0;
+        else if (k.startsWith(q + ' ')) rank = 1;
+        else if ((' ' + k + ' ').includes(' ' + q + ' ')) rank = 2;
+        else if (k.startsWith(q) || (qc.length > 3 && joined.includes(qc))) rank = 3;
+        let n = 0; let sc = 0;
+        for (const t of tokens) { const v = tokenScore(t, words, joined); if (v) { n++; sc += v; } }
+        if (rank === 4 && n < need) continue;
+        const row = [rank, -n, -sc, k.length];
+        if (!bestRow || cmpRow(row, bestRow) < 0) bestRow = row;
+      }
+      if (bestRow) out.push([bestRow, ex]);
+    }
+    out.sort((a, b) => cmpRow(a[0], b[0]) || dn(a[1]).localeCompare(dn(b[1]), LANG));
+    return out.map((x) => x[1]);
+  }
+  function cmpRow(a, b) { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; }
+
   /* ---------- bibliothèque : onglets Favoris / Musculation / Étirements ---------- */
-  const TABS = [['fav', 'Favoris'], ['musc', 'Musculation'], ['str', 'Étirements']];
+  const TABS = [['fav', T('Favoris')], ['musc', T('Musculation')], ['str', T('Étirements')]];
   function viewLibrary(arg, ui) {
     const wrap = h('main', { class: 'page library' });
     // Mode « ajouter des exercices » à une séance du jour (pick: 'day') ou à une séance type (pick: 'plan').
@@ -1456,7 +1771,7 @@
       } else {
         const d = dayMeta(pick.id, true);
         if (picked(ex.id)) {
-          if (dayEntries(pick.id).some((e) => e.exerciseId === ex.id)) { toast('Cet exercice a déjà des séries ce jour-là.'); return; }
+          if (dayEntries(pick.id).some((e) => e.exerciseId === ex.id)) { toast(T('Cet exercice a déjà des séries ce jour-là.')); return; }
           d.order = d.order.filter((x) => x !== ex.id); delete d.plan[ex.id];
         } else if (!d.order.includes(ex.id)) d.order = dayOrder(pick.id).concat([ex.id]);
       }
@@ -1468,37 +1783,41 @@
     const countEl = h('span', { class: 'pcount' });
     if (pick) {
       countEl.textContent = pickPlan ? String(pickPlan.items.length) : String(dayOrder(pick.id).length);
-      wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: 'Ajouter des exercices' }),
-        h('button', { type: 'button', class: 'btn primary okbtn', onclick: goBack }, 'OK ', countEl)));
-    } else wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Bibliothèque' }), h('span')));
-    const search = h('input', { class: 'search', type: 'search', placeholder: 'Rechercher un exercice', 'aria-label': 'Rechercher un exercice', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
+      wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: T('Ajouter des exercices') }),
+        h('button', { type: 'button', class: 'btn primary okbtn', onclick: goBack }, T('OK '), countEl)));
+    } else wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: T('Bibliothèque') }), h('span')));
+    const search = h('input', { class: 'search', type: 'search', placeholder: T('Rechercher un exercice'), 'aria-label': T('Rechercher un exercice'), autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', enterkeyhint: 'search' });
     search.value = ui.q || '';
     const tabBar = h('div', { class: 'tabs', role: 'tablist' });
     const body = h('div');
-    const clearBtn = h('button', { type: 'button', class: 'clear', 'aria-label': 'Effacer la recherche', hidden: !search.value,
+    const clearBtn = h('button', { type: 'button', class: 'clear', 'aria-label': T('Effacer la recherche'), hidden: !search.value,
       onclick: () => { search.value = ''; clearBtn.hidden = true; render(); search.focus(); } }, icon('close'));
     wrap.append(h('div', { class: 'searchbox' }, search, clearBtn), tabBar, body);
     let tab = TABS.some((t) => t[0] === ui.tab) ? ui.tab : (S.favs.size ? 'fav' : 'musc');
     // Groupes dépliés (Musculation, Étirements) ou repliés (Favoris, dépliés par défaut).
     const toggled = new Set(Array.isArray(ui.open) ? ui.open : []);
-    S.getUI = () => ({ q: search.value, tab, open: [...toggled] });
+    // Filtres de la recherche : type (favoris, musculation, étirements) et groupe musculaire.
+    let sType = ['all', 'fav', 'musc', 'str'].includes(ui.sType) ? ui.sType : 'all';
+    let sGroup = GROUPS.has(ui.sGroup) ? ui.sGroup : 'all';
+    S.getUI = () => ({ q: search.value, tab, open: [...toggled], sType, sGroup });
     const inTab = (ex) => (tab === 'fav' ? S.favs.has(ex.id) : tab === 'str' ? ex.st : !ex.st);
+    const favIn = filePicker(async (f) => { if (await importPart(f, 'favs')) render(); });
 
     function onStar(ex) {
       if (search.value.trim() || tab !== 'fav' || S.favs.has(ex.id)) return;
       render();
-      toast('Retiré des favoris', { ms: 5000, action: () => { S.favs.add(ex.id); saveUser(); render(); } });
+      toast(T('Retiré des favoris'), { ms: 5000, action: () => { S.favs.add(ex.id); saveUser(); render(); } });
     }
     const exRow = (ex, showKind) => {
-      const label = h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: 'Étirement' }) : null);
+      const label = h('span', { class: 'nm' }, dn(ex), showKind && ex.st ? h('span', { class: 'kind', text: T('Étirement') }) : null);
       if (pick) {
         // Toute la ligne sélectionne ; la loupe agrandit l'animation.
         const row = h('div', { class: 'exrow pickrow' + (picked(ex.id) ? ' picked' : ''), role: 'checkbox', tabindex: '0', 'aria-checked': String(picked(ex.id)) });
         row.addEventListener('click', () => togglePick(ex, row));
         row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePick(ex, row); } });
         row.append(h('span', { class: 'tw' }, thumb(ex),
-          ex.missing ? null : h('button', { type: 'button', class: 'loupe', 'aria-label': 'Agrandir l’animation de ' + dn(ex), onclick: (e) => { e.stopPropagation(); lightbox(ex); } }, icon('zoom'))),
-          label, h('span', { class: 'pick', 'aria-hidden': 'true' }, icon('check')));
+          ex.missing ? null : h('button', { type: 'button', class: 'loupe', 'aria-label': T('Agrandir l’animation de ') + dn(ex), onclick: (e) => { e.stopPropagation(); lightbox(ex); } }, icon('zoom'))),
+          label, starBtn(ex.id), h('span', { class: 'pick', 'aria-hidden': 'true' }, icon('check')));
         return row;
       }
       return h('div', { class: 'exrow' },
@@ -1506,18 +1825,20 @@
         starBtn(ex.id, () => onStar(ex)));
     };
 
-    /* Un groupe repliable ; son contenu n'est construit qu'à la première ouverture. */
+    /* Un groupe repliable, fermé par défaut (Favoris compris) ; son contenu n'est construit qu'à
+       l'ouverture et il est retiré quand on le referme (moins de mémoire utilisée). */
     function group(gid, label, count, fill, cls) {
       const key = tab + ':' + gid;
-      const defOpen = tab === 'fav';
       const d = h('details', { class: 'group ' + (cls || '') },
         h('summary', {}, h('span', {}, label, h('span', { class: 'count', text: String(count) })), icon('down')));
-      let filled = false;
-      const ensure = () => { if (!filled) { filled = true; d.append(fill()); } };
-      if (defOpen !== toggled.has(key)) { d.open = true; ensure(); }
+      let content = null;
+      const ensure = () => { if (!content) { content = fill(); d.append(content); } };
+      if (toggled.has(key)) { d.open = true; ensure(); }
       d.addEventListener('toggle', () => {
-        if (d.open) ensure();
-        if (d.open !== defOpen) toggled.add(key); else toggled.delete(key);
+        if (d.open) { ensure(); toggled.add(key); } else {
+          toggled.delete(key);
+          if (content) { content.querySelectorAll('.thumb').forEach((t) => { if (thumbIO) thumbIO.unobserve(t); if (t._play) t._play(false); }); content.remove(); content = null; }
+        }
       });
       return d;
     }
@@ -1537,33 +1858,32 @@
       if (S.loadError || !S.exercises.length) {
         renderTabs(true);
         body.append(h('div', { class: 'loader' },
-          h('strong', { text: 'Liste des exercices indisponible' }),
-          h('p', { class: 'err', text: 'Le fichier des exercices n’a pas pu être lu. Vérifie ta connexion puis réessaie.' }),
-          h('button', { type: 'button', class: 'btn primary', text: 'Réessayer', onclick: async () => { await loadExercises(); render(); } })));
+          h('strong', { text: T('Liste des exercices indisponible') }),
+          h('p', { class: 'err', text: T('Le fichier des exercices n’a pas pu être lu. Vérifie ta connexion puis réessaie.') }),
+          h('button', { type: 'button', class: 'btn primary', text: T('Réessayer'), onclick: async () => { await loadExercises(); render(); } })));
         return;
       }
       const raw = search.value.trim();
       renderTabs(!!raw);
       if (raw) {
-        // « pull up », « pull-up » et « pullup » trouvent les mêmes exercices.
-        // Ordre : nom exact, puis noms qui commencent par la recherche, puis ceux qui la contiennent
-        // telle quelle, puis le reste ; à égalité, le nom le plus court d'abord.
-        const q = skey(raw);
-        const tokens = q.split(' ');
-        const qc = q.replace(/ /g, '');
-        const rank = (ex) => {
-          const k = ex.key;
-          if (k === q || k.replace(/ /g, '') === qc) return 0;
-          if (k.startsWith(q + ' ')) return 1;
-          if ((' ' + k + ' ').includes(' ' + q + ' ')) return 2;
-          if (k.startsWith(q)) return 3;
-          return 4;
-        };
-        const hits = S.exercises.filter((ex) => tokens.every((t) => ex.key.includes(t)) || (qc.length > 2 && ex.key.replace(/ /g, '').includes(qc)))
-          .map((ex) => [rank(ex), ex]).sort((a, b) => a[0] - b[0] || a[1].key.length - b[1].key.length || a[1].key.localeCompare(b[1].key)).map((x) => x[1]);
-        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: 'Aucun exercice ne correspond à « ' + raw + ' ».' })); return; }
+        const found = searchExercises(raw);
+        const typeOk = (ex, t) => (t === 'all' ? true : t === 'fav' ? S.favs.has(ex.id) : t === 'str' ? ex.st : !ex.st);
+        const byType = found.filter((ex) => typeOk(ex, sType));
+        const hits = sGroup === 'all' ? byType : byType.filter((ex) => ex.top === sGroup);
+        // Catégories pour chercher seulement dans ce qu'on veut ; le chiffre = nombre de résultats.
+        const chip = (label, on, n, fn) => h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(on), onclick: fn }, label, h('span', { class: 'n', text: String(n) }));
+        body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': T('Type d’exercice') },
+          [['all', T('Tout')], ['fav', T('Favoris')], ['musc', T('Musculation')], ['str', T('Étirements')]].map(([id, label]) =>
+            chip(T(label), sType === id, found.filter((ex) => typeOk(ex, id) && (sGroup === 'all' || ex.top === sGroup)).length, () => { sType = id; render(); }))));
+        const tops = TREE.filter((t) => byType.some((ex) => ex.top === t.id) || sGroup === t.id);
+        if (tops.length > 1 || sGroup !== 'all') {
+          body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': T('Groupe musculaire') },
+            chip(T('Tous les muscles'), sGroup === 'all', byType.length, () => { sGroup = 'all'; render(); }),
+            tops.map((t) => chip(T(t.label), sGroup === t.id, byType.filter((ex) => ex.top === t.id).length, () => { sGroup = t.id; render(); }))));
+        }
+        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: found.length ? T('Aucun résultat dans cette catégorie.') : T('Aucun exercice ne correspond à « {0} ».', raw) })); return; }
         body.append(h('div', { class: 'results' }, hits.slice(0, 60).map((ex) => exRow(ex, true))));
-        if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: hits.length + ' résultats, les 60 premiers sont affichés. Précise ta recherche.' }));
+        if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: T('{0} résultats, les 60 premiers sont affichés. Précise ta recherche ou choisis une catégorie.', hits.length) }));
         return;
       }
       const wrapG = h('div', { class: 'groups' });
@@ -1580,8 +1900,14 @@
           wrapG.append(group(t.id, t.label, list.length, () => h('div', { class: 'exlist' }, list.map((ex) => exRow(ex)))));
         }
       }
+      // Favoris : exporter seulement les favoris, ou importer ceux d'un fichier.
+      if (tab === 'fav' && !pick) {
+        body.append(h('div', { class: 'tools' },
+          h('button', { type: 'button', class: 'pill', onclick: exportFavs }, icon('export'), T('Exporter les favoris')),
+          h('button', { type: 'button', class: 'pill', onclick: () => favIn.click() }, icon('import'), T('Importer')), favIn));
+      }
       if (!wrapG.childElementCount) {
-        body.append(h('p', { class: 'empty-note', text: tab === 'fav' ? 'Aucun favori pour l’instant. Touche l’étoile à côté d’un exercice pour le retrouver ici, rangé par catégorie.' : 'Aucun exercice dans cet onglet.' }));
+        body.append(h('p', { class: 'empty-note', text: tab === 'fav' ? T('Aucun favori pour l’instant. Touche l’étoile à côté d’un exercice pour le retrouver ici, rangé par catégorie.') : T('Aucun exercice dans cet onglet.') }));
         return;
       }
       body.append(wrapG);
@@ -1597,17 +1923,17 @@
   function viewHistory() {
     const wrap = h('main', { class: 'page history' });
     const fileIn = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Historique' }),
-      h('button', { type: 'button', class: 'textbtn danger', text: 'Tout supprimer', onclick: wipeAll })));
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: T('Historique') }),
+      h('button', { type: 'button', class: 'textbtn danger', text: T('Tout supprimer'), onclick: wipeAll })));
     wrap.append(h('div', { class: 'tools' },
-      h('button', { type: 'button', class: 'pill', onclick: exportData }, icon('export'), 'Exporter'),
-      h('button', { type: 'button', class: 'pill', onclick: () => fileIn.click() }, icon('import'), 'Importer'), fileIn));
+      h('button', { type: 'button', class: 'pill', onclick: exportData }, icon('export'), T('Exporter')),
+      h('button', { type: 'button', class: 'pill', onclick: () => fileIn.click() }, icon('import'), T('Importer')), fileIn));
     const list = h('div');
     wrap.append(list);
 
     function render() {
       list.textContent = '';
-      if (!S.entries.length) { list.append(h('p', { class: 'empty-note', text: 'Aucune série enregistrée. Elles apparaîtront ici dès ta première validation.' })); return; }
+      if (!S.entries.length) { list.append(h('p', { class: 'empty-note', text: T('Aucune série enregistrée. Elles apparaîtront ici dès ta première validation.') })); return; }
       const sorted = [...S.entries].sort((a, b) => b.ts - a.ts || (b.created || 0) - (a.created || 0));
       let cur = '';
       for (const e of sorted) {
@@ -1615,9 +1941,9 @@
         if (k !== cur) { cur = k; list.append(h('div', { class: 'dayhead', text: dayLabel(new Date(e.ts)) })); }
         const ex = getEx(e.exerciseId, e.name);
         list.append(h('div', { class: 'hrow' },
-          h('button', { type: 'button', class: 'hedit', 'aria-label': 'Modifier : ' + dn(ex) + ', ' + entryText(e), onclick: () => editEntry(e, render) }, h('div', { class: 'nm', text: dn(ex) }),
-            h('div', { class: 'meta' }, h('b', { text: entryText(e) }), (e.c === 1 ? '' : ' · total ' + fmtNum(e.w * e.r)) + ' · ' + fTime.format(e.ts))),
-          h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Supprimer cette série', onclick: () => removeOne(e) }, icon('trash'))));
+          h('button', { type: 'button', class: 'hedit', 'aria-label': T('Modifier : ') + dn(ex) + ', ' + entryText(e), onclick: () => editEntry(e, render) }, h('div', { class: 'nm', text: dn(ex) }),
+            h('div', { class: 'meta' }, h('b', { text: entryText(e) }), (e.c === 1 ? '' : T(' · total ') + fmtNum(e.w * e.r)) + ' · ' + fTime.format(e.ts))),
+          h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Supprimer cette série'), onclick: () => removeOne(e) }, icon('trash'))));
       }
     }
     function removeOne(e) {
@@ -1625,14 +1951,14 @@
       if (idx < 0) return;
       S.entries.splice(idx, 1);
       saveUser(); render();
-      toast('Série supprimée', { ms: 5000, action: () => { S.entries.push(e); saveUser(); render(); } });
+      toast(T('Série supprimée'), { ms: 5000, action: () => { S.entries.push(e); saveUser(); render(); } });
     }
     async function wipeAll() {
       const nSess = Object.keys(S.sessions).length + Object.keys(S.days).length;
-      if (!S.entries.length && !nSess) { toast('Il n’y a rien à supprimer.'); return; }
-      const ok = await confirmDialog({ title: 'Êtes-vous sûr de vouloir faire ça ?', text: 'Toutes les séries (' + S.entries.length + '), les noms et notes de séances seront supprimés. Tes favoris, tes notes d’exercices et tes séances types sont conservés.', yes: 'Oui', no: 'Non' });
+      if (!S.entries.length && !nSess) { toast(T('Il n’y a rien à supprimer.')); return; }
+      const ok = await confirmDialog({ title: T('Êtes-vous sûr de vouloir faire ça ?'), text: T('Toutes les séries (') + S.entries.length + T('), les noms et notes de séances seront supprimés. Tes favoris, tes notes d’exercices et tes séances types sont conservés.'), yes: T('Oui'), no: T('Non') });
       if (!ok) return;
-      S.entries = []; S.sessions = {}; S.days = {}; await saveUser(); render(); toast('Historique supprimé');
+      S.entries = []; S.sessions = {}; S.days = {}; await saveUser(); render(); toast(T('Historique supprimé'));
     }
     fileIn.addEventListener('change', async () => {
       const f = fileIn.files && fileIn.files[0]; fileIn.value = '';
@@ -1643,44 +1969,152 @@
     render();
     return wrap;
   }
+  /* ---------- export et import ----------
+     Export complet (Historique) : tout ce que tu as rempli. Exports partiels : favoris (onglet Favoris
+     de la bibliothèque) ou séances types (Mes séances). Un import ajoute ce qui manque, sans rien
+     effacer ni créer de doublon. */
+  const stamp = () => dayKey(Date.now());
   async function exportData() {
-    const data = { app: 'WorkLog', version: DATA_V, exportedAt: new Date().toISOString(), entries: S.entries, favorites: [...S.favs], sessions: S.sessions,
-      days: S.days, notes: S.notes, plans: S.plans, folders: S.folders };
-    const ok = await shareFile('worklog-' + dayKey(Date.now()) + '.json', JSON.stringify(data, null, 2), 'application/json');
-    if (ok) toast('Sauvegarde prête : enregistre-la dans ton dossier.');
+    const data = Object.assign({ app: 'WorkLog', version: DATA_V, kind: 'all', exportedAt: new Date().toISOString() }, userData());
+    data.favorites = data.favs; delete data.favs;
+    const ok = await shareFile('worklog-' + stamp() + '.json', JSON.stringify(data, null, 2), 'application/json');
+    if (ok) toast(T('Sauvegarde prête : enregistre-la dans ton dossier.'));
   }
-  async function importFile(file) {
-    try {
-      if (file.size > 20 * 1024 * 1024) throw new Error('trop gros');
-      const d = JSON.parse(await file.text());
-      if (!d || d.app !== 'WorkLog' || !Array.isArray(d.entries)) throw new Error('format');
-      const sig = (e) => (e.c === 1 ? [e.exerciseId, e.ts, 'c', e.dur, e.dist] : [e.exerciseId, e.ts, e.w, e.r]).join('|');
-      const ids = new Set(S.entries.map((e) => e.id)); const sigs = new Set(S.entries.map(sig));
-      let added = 0; let dupes = 0; let invalid = 0;
-      for (const raw of d.entries) {
-        if (!validEntry(raw)) { invalid++; continue; }
-        if (ids.has(raw.id) || sigs.has(sig(raw))) { dupes++; continue; }
-        const e = normEntry(raw);
-        S.entries.push(e); ids.add(e.id); sigs.add(sig(e)); added++;
+  async function exportFavs() {
+    if (!S.favs.size) { toast(T('Aucun favori à exporter.')); return; }
+    const names = {};
+    for (const id of S.favs) names[id] = getEx(id).name;
+    const data = { app: 'WorkLog', version: DATA_V, kind: 'favorites', exportedAt: new Date().toISOString(), favorites: [...S.favs], names };
+    const ok = await shareFile('worklog-favoris-' + stamp() + '.json', JSON.stringify(data, null, 2), 'application/json');
+    if (ok) toast(T('{0} prêts : enregistre le fichier.', plural(S.favs.size, 'favori', 'favoris')));
+  }
+  async function exportPlans(ids) {
+    const plans = S.plans.filter((p) => ids.includes(p.id));
+    if (!plans.length) return;
+    const data = { app: 'WorkLog', version: DATA_V, kind: 'plans', exportedAt: new Date().toISOString(), plans,
+      folders: [...new Set(plans.map((p) => p.folder).filter(Boolean))] };
+    const ok = await shareFile('worklog-seances-' + stamp() + '.json', JSON.stringify(data, null, 2), 'application/json');
+    if (ok) toast(T('{0} prêtes : enregistre le fichier.', plural(plans.length, 'séance', 'séances')));
+  }
+  /* Choix des séances types à exporter : toutes, ou seulement celles cochées. */
+  function exportPlansSheet() {
+    if (!S.plans.length) { toast(T('Aucune séance type à exporter.')); return; }
+    const sel = new Set(S.plans.map((p) => p.id));
+    bottomSheet((box, close) => {
+      box.append(h('h2', { class: 'bs-title', text: T('Exporter des séances') }));
+      const all = h('input', { type: 'checkbox' });
+      const go = h('button', { type: 'button', class: 'btn primary wide' });
+      const boxes = [];
+      const paint = () => { all.checked = sel.size === S.plans.length; all.indeterminate = sel.size > 0 && sel.size < S.plans.length; go.textContent = T('Exporter ({0})', sel.size); go.disabled = !sel.size; boxes.forEach(([cb, id]) => { cb.checked = sel.has(id); }); };
+      all.addEventListener('change', () => { if (all.checked) S.plans.forEach((p) => sel.add(p.id)); else sel.clear(); paint(); });
+      box.append(h('label', { class: 'gs-row allrow' }, all, h('span', { class: 'gl', text: T('Tout sélectionner') })));
+      const list = h('div', { class: 'gs-list' });
+      const folders = allFolders().concat(['']);
+      for (const f of folders) {
+        const ps = S.plans.filter((p) => p.folder === f).sort((a, b) => planTitle(a).localeCompare(planTitle(b), LANG));
+        if (!ps.length) continue;
+        list.append(h('p', { class: 'gs-head', text: f || T('Sans dossier') }));
+        for (const p of ps) {
+          const cb = h('input', { type: 'checkbox' });
+          cb.addEventListener('change', () => { if (cb.checked) sel.add(p.id); else sel.delete(p.id); paint(); });
+          boxes.push([cb, p.id]);
+          list.append(h('label', { class: 'gs-row' }, cb, h('span', { class: 'gl', text: planTitle(p) }), h('span', { class: 'gm', text: plural(p.items.length, 'exercice', 'exercices') })));
+        }
       }
-      (Array.isArray(d.favorites) ? d.favorites : []).forEach((id) => { if (typeof id === 'string') S.favs.add(id); });
-      // Noms de séances : on ajoute ceux qui manquent, sans écraser ceux déjà présents.
+      go.addEventListener('click', () => close(() => exportPlans([...sel])));
+      box.append(list, go, h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: T('Annuler'), onclick: () => close() }));
+      paint();
+    });
+  }
+  /* Ajoute le contenu d'un fichier WorkLog. parts : ce qu'on prend du fichier ('favs', 'plans') ; absent = tout. */
+  function mergeData(d, parts) {
+    const want = (k) => !parts || parts.includes(k);
+    const res = { added: 0, dupes: 0, invalid: 0, favs: 0, plans: 0, plansDup: 0 };
+    if (want('entries') && Array.isArray(d.entries)) {
+      // Chaque série a son identifiant : une série déjà présente n'est pas ajoutée deux fois
+      // (deux séries identiques faites à la même minute restent bien deux séries).
+      const ids = new Set(S.entries.map((e) => e.id));
+      for (const raw of d.entries) {
+        if (!validEntry(raw)) { res.invalid++; continue; }
+        if (ids.has(raw.id)) { res.dupes++; continue; }
+        const e = normEntry(raw);
+        S.entries.push(e); ids.add(e.id); res.added++;
+      }
+    }
+    if (want('favs')) {
+      const favs = Array.isArray(d.favorites) ? d.favorites : Array.isArray(d.favs) ? d.favs : [];
+      favs.forEach((id) => { if (typeof id === 'string' && !S.favs.has(id)) { S.favs.add(id); res.favs++; } });
+    }
+    if (want('all')) {
+      // Noms de séances, notes, journées : on ajoute ceux qui manquent, sans écraser ceux déjà présents.
       for (const [k, v] of Object.entries(cleanSessions(d.sessions))) if (!S.sessions[k]) S.sessions[k] = v;
-      // Notes, séances types, journées et dossiers : on ajoute ce qui manque, sans rien écraser.
       for (const [k, v] of Object.entries(cleanNotes(d.notes))) if (!S.notes[k]) S.notes[k] = v;
       for (const [k, v] of Object.entries(cleanDays(d.days))) if (!S.days[k]) S.days[k] = v;
-      const have = new Set(S.plans.map((p) => p.id));
-      for (const p of cleanPlans(d.plans)) if (!have.has(p.id)) S.plans.push(p);
-      S.folders = cleanFolders(S.folders.concat(Array.isArray(d.folders) ? d.folders : []));
+    }
+    if (want('plans')) {
+      const sigOf = (p) => planSig(Object.assign({}, p, { folder: '' }));
+      const have = new Set(S.plans.map((p) => p.id)); const sigs = new Set(S.plans.map(sigOf));
+      for (const p of cleanPlans(d.plans)) {
+        if (have.has(p.id) || sigs.has(sigOf(p))) { res.plansDup++; continue; }
+        S.plans.push(p); have.add(p.id); sigs.add(sigOf(p)); res.plans++;
+        if (p.folder && !S.folders.includes(p.folder)) S.folders.push(p.folder);
+      }
+      S.folders = cleanFolders(S.folders.concat(want('all') && Array.isArray(d.folders) ? d.folders : []));
+    }
+    if (want('all')) {
+      const have = new Set(S.schedules.map((x) => x.id));
+      for (const sc of cleanSchedules(d.schedules)) if (!have.has(sc.id) && S.plans.some((p) => p.id === sc.plan)) S.schedules.push(sc);
+      const st = cleanSettings(d.settings);
+      if (st.bw && !bwKg()) S.settings.bw = st.bw;
+      if (st.nas.url && !S.settings.nas.url) S.settings.nas = st.nas;
+    }
+    return res;
+  }
+  async function readWorkLog(file) {
+    if (file.size > 20 * 1024 * 1024) throw new Error('trop gros');
+    const d = JSON.parse(await file.text());
+    if (!d || d.app !== 'WorkLog') throw new Error('format');
+    return d;
+  }
+  /* Import depuis Historique : tout le contenu du fichier. */
+  async function importFile(file) {
+    try {
+      const d = await readWorkLog(file);
+      if (!Array.isArray(d.entries) && !Array.isArray(d.plans) && !Array.isArray(d.favorites)) throw new Error('format');
+      const r = mergeData(d, d.kind === 'favorites' ? ['favs'] : d.kind === 'plans' ? ['plans'] : null);
       await saveUser();
       await migrateAliases();
-      toast(added + (added > 1 ? ' séries ajoutées' : ' série ajoutée') + (dupes ? ', ' + dupes + ' déjà présente' + (dupes > 1 ? 's' : '') : '') + (invalid ? ', ' + invalid + ' ligne' + (invalid > 1 ? 's' : '') + ' invalide' + (invalid > 1 ? 's ignorées' : ' ignorée') : ''), { ms: 4500 });
+      const bits = [];
+      if (Array.isArray(d.entries)) bits.push(plural(r.added, 'série ajoutée', 'séries ajoutées') + (r.dupes ? ', ' + plural(r.dupes, 'déjà présente', 'déjà présentes') : '') + (r.invalid ? ', ' + plural(r.invalid, 'ligne invalide ignorée', 'lignes invalides ignorées') : ''));
+      if (r.favs) bits.push(plural(r.favs, 'favori ajouté', 'favoris ajoutés'));
+      if (r.plans) bits.push(plural(r.plans, 'séance type ajoutée', 'séances types ajoutées'));
+      toast(bits.join(' · ') || T('Rien de nouveau dans ce fichier.'), { ms: 4500 });
       return true;
     } catch (e) {
-      toast('Fichier non reconnu : choisis une sauvegarde WorkLog (.json).');
+      toast(T('Fichier non reconnu : choisis une sauvegarde WorkLog (.json).'));
       return false;
     }
   }
+  /* Import partiel : seulement les favoris, ou seulement les séances types, d'un fichier WorkLog (partiel ou complet). */
+  async function importPart(file, part) {
+    try {
+      const d = await readWorkLog(file);
+      const r = mergeData(d, [part]);
+      await saveUser();
+      await migrateAliases();
+      if (part === 'favs') toast(r.favs ? plural(r.favs, 'favori ajouté', 'favoris ajoutés') : T('Aucun nouveau favori dans ce fichier.'));
+      else toast(r.plans ? plural(r.plans, 'séance ajoutée', 'séances ajoutées') + (r.plansDup ? ', ' + plural(r.plansDup, 'déjà présente', 'déjà présentes') : '') : T('Aucune nouvelle séance dans ce fichier.'), { ms: 4500 });
+      return true;
+    } catch (e) {
+      toast(T('Fichier non reconnu : choisis un fichier WorkLog (.json).'));
+      return false;
+    }
+  }
+  const filePicker = (onFile) => {
+    const inp = h('input', { type: 'file', accept: 'application/json,.json', hidden: true });
+    inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.value = ''; if (f) onFile(f); });
+    return inp;
+  };
 
   /* ---------- séances : données d'une journée ---------- */
   function daysIndex() {
@@ -1720,15 +2154,140 @@
       const sets = (it.sets || []).filter(keepSet);
       if (sets.length) d.plan[it.ex] = sets.map(cleanSet);
     }
+    // La journée garde le lien vers la séance type d'origine (pour la retirer si la séance type est supprimée).
+    if (src.id && S.plans.some((p) => p.id === src.id)) d.src = [...new Set((d.src || []).concat(src.id))];
     const main = GROUPS.has(src.main) ? src.main : guessMain(src.items.map((it) => it.ex));
     if (main && !S.sessions[key]) S.sessions[key] = { name: (src.name || '').trim(), main, sec: (src.sec || []).filter((x) => GROUPS.has(x) && x !== main) };
   }
   const sessionTitle = (s) => s.name || GROUPS.get(s.main).label;
 
+  /* ---------- programmation des séances types ----------
+     Une date précise : la séance est ajoutée tout de suite à ce jour du calendrier.
+     Une répétition (chaque semaine, toutes les 2 à 4 semaines, certains jours) : chaque date est
+     affichée dans le calendrier et ajoutée au jour même (ou quand on ouvre ce jour à l'avance). */
+  const wdOf = (key) => (keyDate(key).getDay() + 6) % 7;   // 0 = lundi … 6 = dimanche
+  const mondayOf = (key) => { const d = keyDate(key); d.setDate(d.getDate() - wdOf(key)); return d.getTime(); };
+  const WD = (style) => [0, 1, 2, 3, 4, 5, 6].map((i) => new Intl.DateTimeFormat(LOC(), { weekday: style }).format(new Date(2024, 0, 1 + i)));
+  function occurs(sc, key) {
+    if (key < sc.start || (sc.until && key > sc.until) || !sc.days.includes(wdOf(key))) return false;
+    return Math.round((mondayOf(key) - mondayOf(sc.start)) / (7 * 86400000)) % sc.every === 0;
+  }
+  const pendingFor = (key) => S.schedules.filter((sc) => !sc.made.includes(key) && occurs(sc, key) && S.plans.some((p) => p.id === sc.plan));
+  /* Ajoute au jour les séances programmées (aujourd'hui ou un jour à venir). */
+  function materialize(key) {
+    const tk = todayKey();
+    if (key < tk) return false;
+    const list = pendingFor(key);
+    if (!list.length) return false;
+    for (const sc of list) { startDay(key, S.plans.find((x) => x.id === sc.plan)); sc.made.push(key); }
+    S.schedules.forEach((sc) => { sc.made = sc.made.filter((k) => k >= tk); });
+    saveUser();
+    return true;
+  }
+  const joinList = (arr) => (arr.length < 2 ? arr.join('') : arr.slice(0, -1).join(', ') + ' ' + T('et') + ' ' + arr[arr.length - 1]);
+  function schedText(sc) {
+    const names = WD('long'); const days = joinList(sc.days.map((i) => names[i]));
+    const rep = sc.every === 1 ? T('chaque {0}', days) : T('toutes les {0} semaines : {1}', sc.every, days);
+    return rep + ' · ' + T('à partir du {0}', fDayShort.format(keyDate(sc.start))) + (sc.until ? ' · ' + T('jusqu’au {0}', fDayShort.format(keyDate(sc.until))) : '');
+  }
+  /* Retire d'un ou plusieurs jours les exercices prévus (pas encore faits) d'une séance type.
+     keys absent : tous les jours liés à cette séance type. Les séries déjà faites restent. */
+  function unplan(p, keys) {
+    const ids = new Set(p.items.map((it) => it.ex));
+    const nm = p.name.trim();
+    for (const [k, d] of Object.entries(S.days)) {
+      if (keys && !keys.includes(k)) continue;
+      const linked = (d.src || []).includes(p.id) || (!d.src && nm && S.sessions[k] && S.sessions[k].name === nm);
+      if (!linked) continue;
+      const done = new Set(dayEntries(k).map((e) => e.exerciseId));
+      d.order = d.order.filter((id) => done.has(id) || !ids.has(id));
+      for (const id of Object.keys(d.plan)) if (!done.has(id) && ids.has(id)) delete d.plan[id];
+      if (d.src) { d.src = d.src.filter((x) => x !== p.id); if (!d.src.length) delete d.src; }
+      if (!done.size && S.sessions[k] && (!S.sessions[k].name || S.sessions[k].name === nm)) delete S.sessions[k];
+      if (!d.order.length && !d.note) delete S.days[k];
+    }
+  }
+  /* Supprime une séance type : sa programmation et ses exercices prévus non faits disparaissent du calendrier. */
+  async function removePlan(p) {
+    S.plans = S.plans.filter((x) => x.id !== p.id);
+    S.schedules = S.schedules.filter((sc) => sc.plan !== p.id);
+    unplan(p);
+    await saveUser();
+  }
+  async function removeSchedule(sc) {
+    const p = S.plans.find((x) => x.id === sc.plan);
+    S.schedules = S.schedules.filter((x) => x !== sc);
+    const tk = todayKey();
+    if (p) unplan(p, sc.made.filter((k) => k >= tk && !dayEntries(k).length));
+    await saveUser();
+  }
+  /* Fenêtre « Programmer » : séance type, date, répétition (jours de la semaine, fin facultative). */
+  function scheduleDialog(opts) {
+    const plans = S.plans.slice().sort((a, b) => planTitle(a).localeCompare(planTitle(b), LANG));
+    if (!plans.length) { toast(T('Crée d’abord une séance type (Séances › Créer une séance).')); return; }
+    const tk = todayKey();
+    let planId = opts.plan ? opts.plan.id : plans[0].id;
+    const planSel = opts.plan ? null : h('select', { class: 'field left', id: 'sc-plan' }, plans.map((p) => h('option', { value: p.id, text: planTitle(p) })));
+    if (planSel) planSel.addEventListener('change', () => { planId = planSel.value; });
+    const dateIn = h('input', { class: 'field left', type: 'date', id: 'sc-date', min: tk });
+    dateIn.value = opts.date && opts.date >= tk ? opts.date : tk;
+    const repSel = h('select', { class: 'field left', id: 'sc-rep' },
+      [['0', T('Une seule fois')], ['1', T('Chaque semaine')], ['2', T('Toutes les 2 semaines')], ['3', T('Toutes les 3 semaines')], ['4', T('Toutes les 4 semaines')]].map(([v, t]) => h('option', { value: v, text: t })));
+    const days = new Set([wdOf(dateIn.value)]);
+    const dayBox = h('div', { class: 'wdays', role: 'group', 'aria-label': T('Jours de la semaine') });
+    const untilIn = h('input', { class: 'field left', type: 'date', id: 'sc-until', min: tk });
+    const repBox = h('div', { class: 'repbox', hidden: true }, h('span', { class: 'lbl', text: T('Jours') }), dayBox,
+      h('label', { class: 'lbl', for: 'sc-until', text: T('Jusqu’au (facultatif)') }), untilIn);
+    const msg = h('p', { class: 'form-msg', role: 'alert' });
+    function paintDays() {
+      dayBox.textContent = '';
+      const short = WD('narrow'); const long = WD('long');
+      short.forEach((t, i) => dayBox.append(h('button', { type: 'button', class: 'wd', 'aria-pressed': String(days.has(i)), 'aria-label': long[i], text: t,
+        onclick: () => { if (days.has(i)) { if (days.size > 1) days.delete(i); } else days.add(i); paintDays(); } })));
+    }
+    paintDays();
+    repSel.addEventListener('change', () => { repBox.hidden = repSel.value === '0'; });
+    dateIn.addEventListener('change', () => { if (isKey(dateIn.value) && days.size === 1) { days.clear(); days.add(wdOf(dateIn.value)); paintDays(); } msg.textContent = ''; });
+    let close = null;
+    async function save() {
+      const date = dateIn.value;
+      if (!isKey(date) || date < tk) { msg.textContent = T('Choisis une date à partir d’aujourd’hui.'); return; }
+      const p = S.plans.find((x) => x.id === planId);
+      if (!p) return;
+      if (!p.items.length) { msg.textContent = T('Cette séance type n’a pas encore d’exercice.'); return; }
+      const every = Number(repSel.value);
+      if (!every) {
+        startDay(date, p);
+        if (date === tk) p.last = tk;
+        await saveUser();
+        close();
+        toast(T('« {0} » prévue le {1}', planTitle(p), fDayLong.format(keyDate(date))));
+      } else {
+        const until = untilIn.value;
+        if (until && (!isKey(until) || until < date)) { msg.textContent = T('La date de fin doit être après la date de début.'); return; }
+        const sc = { id: uid(), plan: p.id, start: date, every, days: [...days].sort(), until: until || '', made: [] };
+        S.schedules.push(sc);
+        materialize(tk);
+        await saveUser();
+        close();
+        toast(T('« {0} » programmée {1}', planTitle(p), schedText(sc)), { ms: 5000 });
+      }
+      if (opts.onDone) opts.onDone(date);
+    }
+    const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+      h('h2', { id: 'dlg-t', text: opts.plan ? T('Programmer « {0} »', planTitle(opts.plan)) : T('Prévoir une séance') }),
+      planSel ? h('label', { class: 'lbl', for: 'sc-plan', text: T('Séance type') }) : null, planSel,
+      h('label', { class: 'lbl', for: 'sc-date', text: T('Date') }), dateIn,
+      h('label', { class: 'lbl', for: 'sc-rep', text: T('Répétition') }), repSel, repBox, msg,
+      h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: T('Annuler'), onclick: () => close() }),
+        h('button', { type: 'button', class: 'btn primary', text: T('Programmer'), onclick: save })));
+    close = openModal(box);
+  }
+
   /* ---------- calendrier ---------- */
   function viewCalendar(arg, ui) {
     const wrap = h('main', { class: 'page sessions' });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Calendrier' }), h('span')));
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: T('Calendrier') }), h('span')));
     let sel = /^\d{4}-\d{2}-\d{2}$/.test(ui.sel || '') ? ui.sel : (arg && arg.day) || todayKey();
     if (!S.cal || (arg && arg.day && !ui.sel)) { const d = keyDate(sel); S.cal = { y: d.getFullYear(), m: d.getMonth() }; }
     S.getUI = () => ({ sel });
@@ -1739,36 +2298,38 @@
 
     function render() {
       box.textContent = '';
+      materialize(sel);   // séance programmée ce jour-là (aujourd'hui ou à venir) : ajoutée au jour
       const { y, m } = S.cal;
       const now = new Date();
       const isCurrent = y === now.getFullYear() && m === now.getMonth();
       const byDay = daysIndex();
       box.append(h('div', { class: 'monthbar' },
-        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Mois précédent', onclick: () => { S.cal = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }; render(); } }, icon('left')),
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Mois précédent'), onclick: () => { S.cal = m === 0 ? { y: y - 1, m: 11 } : { y, m: m - 1 }; render(); } }, icon('left')),
         h('h2', { text: fMonth.format(new Date(y, m, 1)) }),
-        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Mois suivant', disabled: isCurrent, onclick: () => { S.cal = m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 }; render(); } }, icon('right'))));
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Mois suivant'), onclick: () => { S.cal = m === 11 ? { y: y + 1, m: 0 } : { y, m: m + 1 }; render(); } }, icon('right'))));
       const grid = h('div', { class: 'cal' });
-      ['L', 'M', 'M', 'J', 'V', 'S', 'D'].forEach((d) => grid.append(h('div', { class: 'wd', 'aria-hidden': 'true', text: d })));
+      WD('narrow').forEach((d) => grid.append(h('div', { class: 'wd', 'aria-hidden': 'true', text: d.toUpperCase() })));
       const lead = (new Date(y, m, 1).getDay() + 6) % 7;
       for (let i = 0; i < lead; i++) grid.append(h('div'));
       const nDays = new Date(y, m + 1, 0).getDate();
-      let sessions = 0;
+      let sessions = 0; let plannedN = 0;
       for (let d = 1; d <= nDays; d++) {
         const k = y + '-' + pad2(m + 1) + '-' + pad2(d);
         const has = byDay.has(k);
-        const planned = !has && S.days[k] && S.days[k].order.length > 0;
-        if (has) sessions++;
+        const planned = !has && ((S.days[k] && S.days[k].order.length > 0) || (k >= todayKey() && pendingFor(k).length > 0));
+        if (has) sessions++; else if (planned) plannedN++;
         const named = has && S.sessions[k];
         const isToday = isCurrent && d === now.getDate();
         grid.append(h('button', {
           type: 'button', class: 'day' + (has ? ' has' : '') + (planned ? ' planned' : '') + (named ? ' named' : '') + (isToday ? ' today' : '') + (k === sel ? ' sel' : ''), text: String(d),
           style: named ? { '--c': GROUPS.get(named.main).color } : null, 'aria-pressed': String(k === sel),
-          'aria-label': d + ' ' + fMonth.format(new Date(y, m, 1)) + (has ? ', séance' : planned ? ', séance prévue' : '') + (named ? ' : ' + sessionTitle(named) : ''),
+          'aria-label': d + ' ' + fMonth.format(new Date(y, m, 1)) + (has ? T(', séance') : planned ? T(', séance prévue') : '') + (named ? ' : ' + sessionTitle(named) : ''),
           onclick: () => select(k),
         }));
       }
       box.append(grid);
-      box.append(h('p', { class: 'cal-note', text: (sessions ? plural(sessions, 'jour', 'jours') + ' d’entraînement ce mois-ci. ' : 'Aucune séance ce mois-ci. ') + 'Touche un jour pour voir son détail en dessous.' }));
+      box.append(h('p', { class: 'cal-note', text: (sessions ? plural(sessions, 'jour', 'jours') + ' ' + T('d’entraînement ce mois-ci.') + ' ' : plannedN ? '' : T('Aucune séance ce mois-ci.') + ' ')
+        + (plannedN ? plural(plannedN, 'séance prévue', 'séances prévues') + '. ' : '') + T('Touche un jour pour voir son détail en dessous.') }));
       detail.textContent = '';
       const sd = keyDate(sel);
       if (sd.getFullYear() === y && sd.getMonth() === m) detail.append(dayDetail(sel, render, select));
@@ -1781,71 +2342,78 @@
   /* Ancien lien direct vers une journée : on ouvre le calendrier sur ce jour. */
   function viewSession(key, ui) { return viewCalendar({ day: key }, ui || {}); }
   function dayDetail(key, refresh, select) {
-    const body = h('section', { class: 'daydetail', 'aria-label': 'Détail du ' + dayLabel(keyDate(key)) });
+    const body = h('section', { class: 'daydetail', 'aria-label': T('Détail du {0}', dayLabel(keyDate(key))) });
     const isToday = key === todayKey();
     const render = refresh;
 
     function build() {
       body.textContent = '';
-      body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? ' · aujourd’hui' : '') }));
+      body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? T(' · aujourd’hui') : '') }));
       const entries = dayEntries(key);
       const order = dayOrder(key);
       const meta = S.days[key];
       if (entries.length || order.length) {
         const nameBox = h('div', { class: 'sess-name' });
         const s = S.sessions[key];
-        if (!s) nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }, icon('tag'), 'Nommer la séance'));
+        if (!s) nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }, icon('tag'), T('Nommer la séance')));
         else {
           nameBox.append(h('div', { class: 'card named', style: { '--c': GROUPS.get(s.main).color } },
             h('div', { class: 'row' }, h('strong', { class: 'nm', text: sessionTitle(s) }),
-              h('button', { type: 'button', class: 'textbtn', text: 'Modifier', onclick: () => sessionDialog(key, entries, render) })),
+              h('button', { type: 'button', class: 'textbtn', text: T('Modifier'), onclick: () => sessionDialog(key, entries, render) })),
             h('div', { class: 'tags' }, tag(s.main, true), s.sec.map((id) => tag(id)))));
         }
         body.append(nameBox);
       }
       body.append(noteBox(() => (S.days[key] || {}).note, (v) => { const d = dayMeta(key, true); d.note = v; },
-        'Note de séance : sensations, fatigue…', 'Note de la séance'));
+        T('Note de séance : sensations, fatigue…'), T('Note de la séance')));
       if (entries.length) {
         const st = dayStats(entries);
-        body.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' kg au total' : '') }));
+        body.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' ' + T('kg au total') : '') }));
       }
       if (!order.length) {
-        body.append(h('p', { class: 'empty-note pad', text: isToday ? 'Rien de prévu aujourd’hui. Ajoute des exercices ou lance une de tes séances types.' : 'Aucun exercice ce jour-là.' }));
+        body.append(h('p', { class: 'empty-note pad', text: isToday ? T('Rien de prévu aujourd’hui. Ajoute des exercices ou lance une de tes séances types.') : T('Aucun exercice ce jour-là.') }));
       } else {
         const list = h('div', { class: 'dlist' });
         for (const id of order) {
           const sets = entries.filter((e) => e.exerciseId === id);
           const ex = getEx(id, sets[0] && sets[0].name);
           const planned = !sets.length && meta && meta.plan[id] ? meta.plan[id] : null;
-          const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? 'À faire · ' + plural(planned.length, 'série prévue', 'séries prévues') : 'À faire';
+          const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? T('À faire · ') + plural(planned.length, 'série prévue', 'séries prévues') : T('À faire');
           const head = h('div', { class: 'dhead' },
-            h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex), title: 'Maintenir et glisser pour déplacer' }, icon('grip')),
+            h('span', { class: 'handle', role: 'button', 'aria-label': T('Déplacer ') + dn(ex), title: T('Maintenir et glisser pour déplacer') }, icon('grip')),
             h('button', { type: 'button', class: 'open', onclick: () => go('exercise', { id, day: key }) }, thumb(ex, { zoom: true }),
               h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st' + (sets.length ? '' : ' todo'), text: status }))),
             h('span', { class: 'chev' }, icon('right')));
           list.append(h('div', { class: 'sitem', 'data-id': id },
             h('article', { class: 'dcard' + (sets.length ? '' : ' todo') },
-              swipeable(head, () => removeFromDay(id), 'Retirer ' + dn(ex) + ' de la séance'),
-              sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': 'Modifier la série ' + entryText(e), onclick: () => editEntry(e, render) },
+              swipeable(head, () => removeFromDay(id), T('Retirer ') + dn(ex) + T(' de la séance')),
+              sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': T('Modifier la série ') + entryText(e), onclick: () => editEntry(e, render) },
                 h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: entryText(e) }), e.c === 1 ? null : h('span', { class: 'tot', text: fmtNum(e.w * e.r) })),
-                () => deleteEntry(e, render), 'Supprimer la série')),
-              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: p.dur !== undefined ? (p.dur !== '' ? fmtDur(p.dur) : '… s') : (p.w !== '' ? fmtNum(p.w) + ' kg' : '… kg') + ' × ' + (p.r !== '' ? fmtNum(p.r) : '…') }))) : null)));
+                () => deleteEntry(e, render), T('Supprimer la série'))),
+              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: plannedText(p) }))) : null)));
         }
         sortable(list, (ids) => { const d = dayMeta(key, true); d.order = ids; saveUser(); });
-        body.append(list, h('p', { class: 'hint', text: 'Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.' }));
+        body.append(list, h('p', { class: 'hint', text: T('Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.') }));
       }
-      body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), 'Ajouter un exercice'));
+      body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), T('Ajouter un exercice')));
       const doneIds = new Set(entries.map((e) => e.exerciseId));
       if (order.some((id) => !doneIds.has(id))) {
         body.append(h('button', { type: 'button', class: 'textbtn danger center clearplan', onclick: () => clearPlanned(key, render) },
-          entries.length ? 'Retirer les exercices prévus non faits' : 'Retirer la séance prévue'));
+          entries.length ? T('Retirer les exercices prévus non faits') : T('Retirer la séance prévue')));
       }
-      if (isToday && S.plans.length) body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => go('seances', { tab: 'plans' }) }, icon('folder'), 'Lancer une séance type'));
+      if (key >= todayKey() && S.plans.length) {
+        body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => scheduleDialog({ date: key, onDone: (k) => (select ? select(k) : render()) }) }, icon('folder'), isToday ? T('Lancer ou programmer une séance type') : T('Prévoir une séance type')));
+      }
+      const scs = S.schedules.filter((sc) => occurs(sc, key) && S.plans.some((p) => p.id === sc.plan));
+      if (scs.length) {
+        body.append(h('div', { class: 'sched-note' }, scs.map((sc) => h('p', {}, h('b', { text: planTitle(S.plans.find((p) => p.id === sc.plan)) }), ' · ' + schedText(sc)))));
+      }
       if (entries.length) {
         body.append(h('section', { class: 'sec tight acts-day' },
-          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key, select) }, icon('copy'), 'Refaire cette séance aujourd’hui'),
-          h('button', { type: 'button', class: 'pill', onclick: () => dayToPlan(key) }, icon('folder'), 'Enregistrer comme séance type'),
-          h('button', { type: 'button', class: 'pill', onclick: () => exportActivity(key) }, icon('export'), 'Exporter l’activité (Strava…)')));
+          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key, select) }, icon('copy'), T('Refaire cette séance aujourd’hui')),
+          h('button', { type: 'button', class: 'pill', onclick: () => dayToPlan(key) }, icon('folder'), T('Enregistrer comme séance type')),
+          h('button', { type: 'button', class: 'pill', onclick: () => copySummary(key) }, icon('copy'), T('Copier pour Strava')),
+          h('button', { type: 'button', class: 'pill', onclick: () => exportActivity(key) }, icon('export'), T('Exporter l’activité (fichier)'))));
       }
     }
     function removeFromDay(id) {
@@ -1855,7 +2423,7 @@
       const d = S.days[key];
       if (d) { d.order = d.order.filter((x) => x !== id); delete d.plan[id]; }
       saveUser(); render();
-      toast(removed.length ? 'Exercice et ' + plural(removed.length, 'série supprimés', 'séries supprimés') : 'Exercice retiré', { ms: 6000,
+      toast(removed.length ? T('Exercice et {0} supprimés', plural(removed.length, 'série', 'séries')) : T('Exercice retiré'), { ms: 6000,
         action: () => { S.entries.push(...removed); if (old) S.days[key] = old; saveUser(); render(); } });
     }
     build();
@@ -1878,15 +2446,17 @@
     }
     if (!done.size) delete S.sessions[key];
     saveUser(); after();
-    toast(fromHome && done.size ? 'Séance du jour retirée de l’accueil, tes séries sont gardées' : done.size ? 'Exercices prévus retirés' : 'Séance prévue retirée', { ms: 6000, action: () => {
+    toast(fromHome && done.size ? T('Séance du jour retirée de l’accueil, tes séries sont gardées') : done.size ? T('Exercices prévus retirés') : T('Séance prévue retirée'), { ms: 6000, action: () => {
       if (oldD) S.days[key] = oldD; else delete S.days[key];
       if (oldS) S.sessions[key] = oldS; else delete S.sessions[key];
       saveUser(); after();
     } });
   }
   /* Séries faites d'un exercice, sous forme de séries prévues (charges, ou durée pour un exercice tenu). */
+  const plannedText = (p) => (p.dur !== undefined ? (p.dur !== '' ? fmtDur(p.dur) : T('… s'))
+    : (p.bw ? bwText(fin(p.w) ? p.w : 0) : p.w !== '' ? fmtNum(p.w) + ' kg' : T('… kg')) + T(' × ') + (p.r !== '' ? fmtNum(p.r) : '…'));
   const isHold = (id) => cardioKind(S.byId.get(id)) === 'hold';
-  const doneSets = (entries, id) => entries.filter((e) => e.exerciseId === id && (e.c !== 1 || isHold(id))).map((e) => (e.c === 1 ? { w: '', r: '', dur: e.dur } : { w: e.w, r: e.r }));
+  const doneSets = (entries, id) => entries.filter((e) => e.exerciseId === id && (e.c !== 1 || isHold(id))).map((e) => (e.c === 1 ? { w: '', r: '', dur: e.dur } : e.bw ? { w: e.x || '', r: e.r, bw: 1 } : { w: e.w, r: e.r }));
   function redoDay(key, select) {
     const tk = todayKey();
     const entries = dayEntries(key);
@@ -1895,16 +2465,60 @@
       items: dayOrder(key).map((id) => ({ ex: id, sets: doneSets(entries, id) })) });
     saveUser();
     if (select) select(tk); else go('calendar', { day: tk });
-    toast('Séance recopiée pour aujourd’hui : ajuste les charges si besoin.');
+    toast(T('Séance recopiée pour aujourd’hui : ajuste les charges si besoin.'));
   }
   function dayToPlan(key) {
     const entries = dayEntries(key);
     const s = S.sessions[key];
-    const p = { id: uid(), name: s ? sessionTitle(s) : 'Séance du ' + fDayShort.format(keyDate(key)), folder: '', main: s ? s.main : '', sec: s ? s.sec.slice() : [],
+    const p = { id: uid(), name: s ? sessionTitle(s) : T('Séance du {0}', fDayShort.format(keyDate(key))), folder: '', main: s ? s.main : '', sec: s ? s.sec.slice() : [],
       items: dayOrder(key).map((id) => ({ ex: id, sets: doneSets(entries, id) })), created: Date.now(), last: key };
     S.planDraft = { p, isNew: true, base: planSig(emptyPlan()) };
     go('plan', p.id);
-    toast('Vérifie la séance puis touche « Valider »');
+    toast(T('Vérifie la séance puis touche « Valider »'));
+  }
+  /* Résumé texte d'une journée, à coller dans la description de l'activité enregistrée par ta montre
+     sur Strava : nom de la séance, puis chaque exercice avec ses séries. */
+  function summaryText(key) {
+    const ents = dayEntries(key);
+    const s = S.sessions[key];
+    const lines = [(s ? sessionTitle(s) : T('Séance')) + T(' – WorkLog')];
+    for (const id of dayOrder(key)) {
+      const sets = ents.filter((e) => e.exerciseId === id);
+      if (!sets.length) continue;
+      const ex = getEx(id, sets[0].name);
+      // Séries identiques regroupées : « 3 × 10 à 52 kg » devient « 52 kg × 10 (×3) ».
+      const parts = []; let prev = null; let n = 0;
+      const flush = () => { if (prev) parts.push(prev + (n > 1 ? T(' (×') + n + ')' : '')); };
+      for (const e of sets) { const t = entryText(e); if (t === prev) n++; else { flush(); prev = t; n = 1; } }
+      flush();
+      lines.push('• ' + dn(ex) + ' : ' + parts.join(', '));
+    }
+    const st = dayStats(ents);
+    lines.push(plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' ' + T('kg au total') : ''));
+    if (S.days[key] && S.days[key].note) lines.push('', S.days[key].note);
+    return lines.join('\n');
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* on essaie autrement */ }
+    const ta = h('textarea', { style: { position: 'fixed', top: '0', left: '0', opacity: '0' } });
+    ta.value = text; document.body.append(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+  async function copySummary(key) {
+    const text = summaryText(key);
+    if (await copyText(text)) toast(T('Résumé copié : colle-le dans la description de ton activité sur Strava.'), { ms: 5000 });
+    else {
+      // Copie impossible : on affiche le texte pour le sélectionner à la main.
+      let close = null;
+      const ta = h('textarea', { class: 'field left sumtext', rows: '8', readonly: true }); ta.value = text;
+      close = openModal(h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+        h('h2', { id: 'dlg-t', text: T('Résumé de la séance') }), h('p', { text: T('Sélectionne le texte puis copie-le.') }), ta,
+        h('button', { type: 'button', class: 'btn primary wide', text: T('Fermer'), onclick: () => close() })));
+      setTimeout(() => ta.select(), 50);
+    }
   }
   /* Fichier d'activité .tcx (format accepté par Strava, Garmin…) pour une journée faite. */
   function exportActivity(key) {
@@ -1916,7 +2530,7 @@
     const dist = Math.round(ents.reduce((n, e) => n + (e.c === 1 && e.dist > 0 ? e.dist * 1000 : 0), 0));
     const kcal = Math.round(ents.reduce((n, e) => n + (e.c === 1 && e.kcal > 0 ? e.kcal : 0), 0));
     const s = S.sessions[key];
-    const lines = [s ? sessionTitle(s) : 'Séance WorkLog'];
+    const lines = [s ? sessionTitle(s) : T('Séance WorkLog')];
     for (const id of dayOrder(key)) {
       const sets = ents.filter((e) => e.exerciseId === id);
       if (sets.length) lines.push(getEx(id, sets[0].name).name + ' : ' + sets.map(entryText).join(', '));
@@ -1934,7 +2548,7 @@
       + '     <Trackpoint><Time>' + iso(start + secs * 1000) + '</Time><DistanceMeters>' + dist + '</DistanceMeters></Trackpoint>\n    </Track>\n'
       + '   </Lap>\n   <Notes>' + esc(lines.join('\n')) + '</Notes>\n  </Activity>\n </Activities>\n</TrainingCenterDatabase>\n';
     shareFile('worklog-' + key + '.tcx', xml, 'application/vnd.garmin.tcx+xml').then((ok) => {
-      if (ok) toast('Fichier prêt : importe-le sur strava.com (Téléverser une activité > Fichier).', { ms: 6000 });
+      if (ok) toast(T('Fichier prêt : importe-le sur strava.com (Téléverser une activité > Fichier).'), { ms: 6000 });
     });
   }
 
@@ -1948,10 +2562,10 @@
     let main = cur ? cur.main : (guess ? guess[0] : '');
     const sec = new Set(cur ? cur.sec : []);
 
-    const nameIn = h('input', { class: 'field left', type: 'text', id: 'sess-nm', maxlength: '60', placeholder: 'Ex. Push, Haut du corps, Jambes lourdes', autocomplete: 'off', enterkeyhint: 'done' });
+    const nameIn = h('input', { class: 'field left', type: 'text', id: 'sess-nm', maxlength: '60', placeholder: T('Ex. Push, Haut du corps, Jambes lourdes'), autocomplete: 'off', enterkeyhint: 'done' });
     nameIn.value = cur ? cur.name : '';
     const sel = h('select', { class: 'field left', id: 'sess-main' },
-      h('option', { value: '', text: 'Choisir un groupe' }),
+      h('option', { value: '', text: T('Choisir un groupe') }),
       GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
     sel.value = main;
     const msg = h('p', { class: 'form-msg', role: 'alert' });
@@ -1960,34 +2574,55 @@
 
     let close = null;
     async function save() {
-      if (!GROUPS.has(main)) { msg.textContent = 'Choisis le groupe musculaire principal.'; sel.focus(); return; }
+      if (!GROUPS.has(main)) { msg.textContent = T('Choisis le groupe musculaire principal.'); sel.focus(); return; }
       S.sessions[key] = { name: nameIn.value.trim().slice(0, 60), main, sec: [...sec] };
       await saveUser();
-      close(); onDone(); toast('Séance enregistrée');
+      close(); onDone(); toast(T('Séance enregistrée'));
     }
-    async function clear() {
+    /* « Supprimer la séance » : le nom et les exercices prévus pas encore faits disparaissent,
+       les séries déjà faites restent ; retour à la page précédente. */
+    async function remove() {
+      close();
+      const done = new Set(dayEntries(key).map((e) => e.exerciseId));
+      const ok = await confirmDialog({ title: T('Supprimer la séance du {0} ?', fDayLong.format(keyDate(key))),
+        text: done.size ? T('Les exercices prévus pas encore faits sont retirés. Tes séries déjà faites restent dans le calendrier.') : T('La séance prévue et son nom sont retirés du calendrier.'), yes: T('Supprimer'), no: T('Annuler') });
+      if (!ok) return;
+      const oldD = S.days[key] ? JSON.parse(JSON.stringify(S.days[key])) : null;
+      const oldS = S.sessions[key] ? JSON.parse(JSON.stringify(S.sessions[key])) : null;
       delete S.sessions[key];
+      const d = S.days[key];
+      if (d) {
+        d.order = d.order.filter((id) => done.has(id));
+        for (const id of Object.keys(d.plan)) if (!done.has(id)) delete d.plan[id];
+        delete d.src;
+        if (!d.order.length && !d.note) delete S.days[key];
+      }
       await saveUser();
-      close(); onDone(); toast('Nom de la séance retiré');
+      backNow();
+      toast(done.size ? T('Séance supprimée, tes séries déjà faites sont gardées') : T('Séance supprimée'), { ms: 6000, sticky: true, action: () => {
+        if (oldD) S.days[key] = oldD; else delete S.days[key];
+        if (oldS) S.sessions[key] = oldS;
+        saveUser(); go('calendar', { day: key });
+      } });
     }
     const box = h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
-      h('h2', { id: 'dlg-t', text: cur ? 'Modifier la séance' : 'Nommer la séance' }),
-      h('label', { class: 'lbl', for: 'sess-nm', text: 'Nom de la séance' }), nameIn,
-      h('label', { class: 'lbl', for: 'sess-main', text: 'Groupe musculaire principal' }), sel,
-      h('label', { class: 'lbl', for: 'sess-sec', text: 'Groupes secondaires' }), chipBox,
+      h('h2', { id: 'dlg-t', text: cur ? T('Modifier la séance') : T('Nommer la séance') }),
+      h('label', { class: 'lbl', for: 'sess-nm', text: T('Nom de la séance') }), nameIn,
+      h('label', { class: 'lbl', for: 'sess-main', text: T('Groupe musculaire principal') }), sel,
+      h('label', { class: 'lbl', for: 'sess-sec', text: T('Groupes secondaires') }), chipBox,
       msg,
       h('div', { class: 'acts' },
-        h('button', { type: 'button', class: 'btn ghost', text: 'Annuler', onclick: () => close() }),
-        h('button', { type: 'button', class: 'btn primary', text: 'Enregistrer', onclick: save })),
-      cur ? h('button', { type: 'button', class: 'textbtn danger center', text: 'Retirer le nom de cette séance', onclick: clear }) : null);
+        h('button', { type: 'button', class: 'btn ghost', text: T('Annuler'), onclick: () => close() }),
+        h('button', { type: 'button', class: 'btn primary', text: T('Enregistrer'), onclick: save })),
+      cur || (S.days[key] && S.days[key].order.length) ? h('button', { type: 'button', class: 'textbtn danger center', text: T('Supprimer la séance'), onclick: remove }) : null);
     close = openModal(box);
   }
 
   /* ---------- page Séances : séances types (en dossiers) et séances réalisées ---------- */
   const emptyPlan = () => ({ id: uid(), name: '', folder: '', main: '', sec: [], items: [], created: Date.now(), last: null });
   const clonePlan = (p) => JSON.parse(JSON.stringify(p));
-  const planSig = (p) => JSON.stringify([p.name.trim(), p.folder, p.main, [...p.sec].sort(), p.items.map((it) => [it.ex, it.sets.map((x) => [numOrBlank(x.w), numOrBlank(x.r), x.dur === undefined ? null : durOrBlank(x.dur)])])]);
-  const planMissing = (p) => [!p.name.trim() ? 'un nom' : null, !p.items.length ? 'au moins un exercice' : null].filter(Boolean);
+  const planSig = (p) => JSON.stringify([p.name.trim(), p.folder, p.main, [...p.sec].sort(), p.items.map((it) => [it.ex, it.sets.map((x) => [x.bw ? signedOrBlank(x.w) : numOrBlank(x.w), numOrBlank(x.r), x.dur === undefined ? null : durOrBlank(x.dur), x.bw ? 1 : 0])])]);
+  const planMissing = (p) => [!p.name.trim() ? T('un nom') : null, !p.items.length ? T('au moins un exercice') : null].filter(Boolean);
   const allFolders = () => [...new Set(S.folders.concat(S.plans.map((x) => x.folder)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'fr'));
   /* « Créer une séance » : un brouillon, enregistré seulement avec « Valider ». */
   function createPlan(folder) {
@@ -2007,20 +2642,20 @@
     d.isNew = false; d.base = planSig(p);
     saveUser();
   }
-  const planTitle = (p) => p.name.trim() || 'Séance sans nom';
+  const planTitle = (p) => p.name.trim() || T('Séance sans nom');
   function startPlanToday(p) {
-    if (!p.items.length) { toast('Ajoute au moins un exercice à cette séance.'); return; }
+    if (!p.items.length) { toast(T('Ajoute au moins un exercice à cette séance.')); return; }
     const tk = todayKey();
     startDay(tk, p);
     p.last = tk;
     saveUser();
     go('calendar', { day: tk });
-    toast('« ' + planTitle(p) + ' » ajoutée à aujourd’hui');
+    toast(T('« {0} » ajoutée à aujourd’hui', planTitle(p)));
   }
   async function newFolder(after) {
-    const n = await promptDialog('Nouveau dossier', 'Nom du dossier', '');
+    const n = await promptDialog(T('Nouveau dossier'), T('Nom du dossier'), '');
     if (!n) return null;
-    if (allFolders().some((f) => f.toLowerCase() === n.toLowerCase())) { toast('Ce dossier existe déjà.'); return allFolders().find((f) => f.toLowerCase() === n.toLowerCase()); }
+    if (allFolders().some((f) => f.toLowerCase() === n.toLowerCase())) { toast(T('Ce dossier existe déjà.')); return allFolders().find((f) => f.toLowerCase() === n.toLowerCase()); }
     S.folders.push(n);
     await saveUser();
     if (after) after(n);
@@ -2030,20 +2665,21 @@
     let tab = ui.tab || (arg && arg.tab) || (S.plans.length ? 'plans' : 'done');
     let filter = GROUPS.has(ui.filter) ? ui.filter : 'all';
     let pfilter = GROUPS.has(ui.pfilter) ? ui.pfilter : 'all';
-    const closedF = new Set(Array.isArray(ui.closed) ? ui.closed : []);
-    S.getUI = () => ({ tab, filter, pfilter, closed: [...closedF] });
+    // Dossiers fermés par défaut ; on garde ceux qu'on a ouverts en revenant sur la page.
+    const openF = new Set(Array.isArray(ui.openF) ? ui.openF : []);
+    S.getUI = () => ({ tab, filter, pfilter, openF: [...openF] });
     const wrap = h('main', { class: 'page seances' });
-    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: 'Séances' }), h('span')));
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: T('Séances') }), h('span')));
     const tabBar = h('div', { class: 'tabs two', role: 'tablist' });
     const body = h('div');
     wrap.append(tabBar, body);
-    const chipsFor = (tops, cur, count, set) => h('div', { class: 'chips scroll', role: 'group', 'aria-label': 'Filtrer par groupe musculaire' },
-      [['all', 'Toutes']].concat(tops.map((t) => [t.id, t.label])).map(([id, label]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(cur === id),
+    const chipsFor = (tops, cur, count, set) => h('div', { class: 'chips scroll', role: 'group', 'aria-label': T('Filtrer par groupe musculaire') },
+      [['all', T('Toutes')]].concat(tops.map((t) => [t.id, t.label])).map(([id, label]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(cur === id),
         onclick: () => { set(id); render(); window.scrollTo(0, 0); } }, label, h('span', { class: 'n', text: String(count(id)) }))));
 
     function renderTabs() {
       tabBar.textContent = '';
-      [['plans', 'Mes séances'], ['done', 'Réalisées']].forEach(([id, label]) => tabBar.append(h('button', { type: 'button', role: 'tab', class: 'tab',
+      [['plans', T('Mes séances')], ['done', T('Réalisées')]].forEach(([id, label]) => tabBar.append(h('button', { type: 'button', role: 'tab', class: 'tab',
         'aria-selected': String(tab === id), text: label, onclick: () => { if (tab !== id) { tab = id; render(); window.scrollTo(0, 0); } } })));
     }
 
@@ -2052,63 +2688,69 @@
       if (!p || p.folder === folder) return;
       p.folder = folder;
       if (folder && !S.folders.includes(folder)) S.folders.push(folder);
-      if (folder) closedF.delete(folder); else closedF.delete('__none');
+      openF.add(folder || '__none');
       saveUser(); render();
-      toast('« ' + planTitle(p) + ' » déplacée dans ' + (folder ? '« ' + folder + ' »' : '« Sans dossier »'));
+      toast(T('« {0} » déplacée dans « {1} »', planTitle(p), folder || T('Sans dossier')));
     }
     function moveMenu(p) {
       const items = allFolders().filter((f) => f !== p.folder).map((f) => ({ label: f, icon: 'folder', run: () => movePlan(p.id, f) }));
-      if (p.folder) items.push({ label: 'Sans dossier', run: () => movePlan(p.id, '') });
-      items.push({ label: 'Nouveau dossier…', icon: 'folderplus', run: () => newFolder((n) => movePlan(p.id, n)) });
-      actionSheet('Déplacer « ' + planTitle(p) + ' » vers', items);
+      if (p.folder) items.push({ label: T('Sans dossier'), run: () => movePlan(p.id, '') });
+      items.push({ label: T('Nouveau dossier…'), icon: 'folderplus', run: () => newFolder((n) => movePlan(p.id, n)) });
+      actionSheet(T('Déplacer « {0} » vers', planTitle(p)), items);
     }
     function planMenu(p) {
       actionSheet(planTitle(p), [
-        { label: 'Déplacer vers…', icon: 'folder', run: () => moveMenu(p) },
-        { label: 'Renommer', icon: 'tag', run: async () => {
-          const n = await promptDialog('Renommer la séance', 'Nom de la séance', p.name, 60);
-          if (n) { p.name = n; await saveUser(); render(); toast('Séance renommée'); }
+        { label: T('Programmer…'), icon: 'play', run: () => scheduleDialog({ plan: p, onDone: () => render() }) },
+        { label: T('Déplacer vers…'), icon: 'folder', run: () => moveMenu(p) },
+        { label: T('Renommer'), icon: 'tag', run: async () => {
+          const n = await promptDialog(T('Renommer la séance'), T('Nom de la séance'), p.name, 60);
+          if (n) { p.name = n; await saveUser(); render(); toast(T('Séance renommée')); }
         } },
-        { label: 'Dupliquer', icon: 'copy', run: () => {
+        { label: T('Dupliquer'), icon: 'copy', run: () => {
           const c = clonePlan(p); c.id = uid(); c.name = (p.name + ' (copie)').slice(0, 60); c.created = Date.now(); c.last = null;
-          S.plans.push(c); saveUser(); render(); toast('Séance dupliquée');
+          S.plans.push(c); saveUser(); render(); toast(T('Séance dupliquée'));
         } },
-        { label: 'Supprimer', icon: 'trash', danger: true, run: async () => {
-          const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
+        { label: T('Supprimer'), icon: 'trash', danger: true, run: async () => {
+          const ok = await confirmDialog({ title: T('Supprimer « {0} » ?', planTitle(p)), text: T('Ses exercices prévus pas encore faits et sa programmation sont retirés du calendrier. Tes séries déjà faites restent.'), yes: T('Supprimer'), no: T('Annuler') });
           if (!ok) return;
-          S.plans = S.plans.filter((x) => x !== p); await saveUser(); render(); toast('Séance supprimée');
+          await removePlan(p); render(); toast(T('Séance supprimée'));
         } },
       ]);
     }
     function folderMenu(f) {
-      actionSheet('Dossier « ' + f + ' »', [
-        { label: 'Renommer le dossier', icon: 'tag', run: async () => {
-          const n = await promptDialog('Renommer le dossier', 'Nom du dossier', f);
+      actionSheet(T('Dossier « {0} »', f), [
+        { label: T('Renommer le dossier'), icon: 'tag', run: async () => {
+          const n = await promptDialog(T('Renommer le dossier'), T('Nom du dossier'), f);
           if (!n || n === f) return;
-          if (allFolders().some((x) => x !== f && x.toLowerCase() === n.toLowerCase())) { toast('Ce dossier existe déjà.'); return; }
+          if (allFolders().some((x) => x !== f && x.toLowerCase() === n.toLowerCase())) { toast(T('Ce dossier existe déjà.')); return; }
           S.folders = S.folders.map((x) => (x === f ? n : x));
           if (!S.folders.includes(n)) S.folders.push(n);
           S.plans.forEach((x) => { if (x.folder === f) x.folder = n; });
-          await saveUser(); render(); toast('Dossier renommé');
+          await saveUser(); render(); toast(T('Dossier renommé'));
         } },
-        { label: 'Supprimer le dossier', icon: 'trash', danger: true, run: async () => {
+        { label: T('Supprimer le dossier'), icon: 'trash', danger: true, run: async () => {
           const n = S.plans.filter((x) => x.folder === f).length;
-          const ok = await confirmDialog({ title: 'Supprimer le dossier « ' + f + ' » ?', text: n ? plural(n, 'séance passe', 'séances passent') + ' dans « Sans dossier ». Aucune séance n’est supprimée.' : 'Le dossier est vide.', yes: 'Supprimer', no: 'Annuler' });
+          const ok = await confirmDialog({ title: T('Supprimer le dossier « {0} » ?', f), text: n ? T('{0} dans « Sans dossier ». Aucune séance n’est supprimée.', plural(n, 'séance passe', 'séances passent')) : T('Le dossier est vide.'), yes: T('Supprimer'), no: T('Annuler') });
           if (!ok) return;
           S.folders = S.folders.filter((x) => x !== f);
           S.plans.forEach((x) => { if (x.folder === f) x.folder = ''; });
-          await saveUser(); render(); toast('Dossier supprimé');
+          await saveUser(); render(); toast(T('Dossier supprimé'));
         } },
       ]);
     }
 
+    const plansIn = filePicker(async (f) => { if (await importPart(f, 'plans')) render(); });
     function renderPlans() {
       body.append(h('div', { class: 'plan-btns' },
-        h('button', { type: 'button', class: 'btn primary wide', onclick: () => createPlan() }, icon('plus'), ' Créer une séance'),
-        h('button', { type: 'button', class: 'newfolder', onclick: () => newFolder(() => render()) }, icon('folderplus'), h('span', { text: 'Nouveau dossier' }))));
+        h('button', { type: 'button', class: 'btn primary wide', onclick: () => createPlan() }, icon('plus'), T(' Créer une séance')),
+        h('button', { type: 'button', class: 'newfolder', onclick: () => newFolder(() => render()) }, icon('folderplus'), h('span', { text: T('Nouveau dossier') }))));
+      // Exporter toutes les séances types ou seulement certaines ; importer celles d'un fichier.
+      body.append(h('div', { class: 'tools' },
+        S.plans.length ? h('button', { type: 'button', class: 'pill', onclick: exportPlansSheet }, icon('export'), T('Exporter des séances')) : null,
+        h('button', { type: 'button', class: 'pill', onclick: () => plansIn.click() }, icon('import'), T('Importer')), plansIn));
       if (!S.plans.length && !allFolders().length) {
-        body.append(h('div', { class: 'card empty-card' }, h('strong', { text: 'Aucune séance type' }),
-          h('p', { text: 'Crée une séance (Push, Jambes…), ajoute ses exercices et, si tu veux, les séries et charges prévues. Range-la dans un dossier, puis lance-la le jour où tu la fais.' })));
+        body.append(h('div', { class: 'card empty-card' }, h('strong', { text: T('Aucune séance type') }),
+          h('p', { text: T('Crée une séance (Push, Jambes…), ajoute ses exercices et, si tu veux, les séries et charges prévues. Range-la dans un dossier, puis lance-la le jour où tu la fais.') })));
         return;
       }
       const works = (p, top) => topOf(p.main) === top || p.sec.some((id) => topOf(id) === top);
@@ -2120,8 +2762,8 @@
       const box = h('div', { class: 'folders' });
       const section = (key, cls, summary, ps, emptyText) => {
         const d = h('details', { class: cls, 'data-folder': key === '__none' ? '' : key }, summary);
-        d.open = !closedF.has(key);
-        d.addEventListener('toggle', () => { if (d.open) closedF.delete(key); else closedF.add(key); });
+        d.open = openF.has(key);
+        d.addEventListener('toggle', () => { if (d.open) openF.add(key); else openF.delete(key); });
         d.append(ps.length ? h('div', { class: 'pcards' }, ps.map(planCard)) : h('p', { class: 'empty-note pad', text: emptyText }));
         return d;
       };
@@ -2130,13 +2772,13 @@
         if (!ps.length && pfilter !== 'all') continue;
         box.append(section(f, 'group folder', h('summary', {},
           h('span', { class: 'fsum' }, icon('folder'), h('span', { class: 'fname', text: f }), h('span', { class: 'count', text: String(ps.length) })),
-          h('button', { type: 'button', class: 'fmore', 'aria-label': 'Options du dossier ' + f, onclick: (e) => { e.preventDefault(); e.stopPropagation(); folderMenu(f); } }, icon('dots', 'fill')),
-          icon('down')), ps, 'Dossier vide : glisse une séance ici avec sa poignée, ou utilise « … » puis « Déplacer vers ».'));
+          h('button', { type: 'button', class: 'fmore', 'aria-label': T('Options du dossier ') + f, onclick: (e) => { e.preventDefault(); e.stopPropagation(); folderMenu(f); } }, icon('dots', 'fill')),
+          icon('down')), ps, T('Dossier vide : glisse une séance ici avec sa poignée, ou utilise « … » puis « Déplacer vers ».')));
       }
       const loose = sorted(list.filter((p) => !p.folder));
       if (loose.length || S.plans.length) {
-        box.append(section('__none', 'loose', h('summary', {}, h('span', { class: 'lsum' }, 'Sans dossier', h('span', { class: 'count', text: String(loose.length) })), icon('down')),
-          loose, 'Aucune séance hors dossier.'));
+        box.append(section('__none', 'loose', h('summary', {}, h('span', { class: 'lsum' }, T('Sans dossier'), h('span', { class: 'count', text: String(loose.length) })), icon('down')),
+          loose, T('Aucune séance hors dossier.')));
       }
       body.append(box);
       planDrag(box, movePlan);
@@ -2145,13 +2787,13 @@
       const g = GROUPS.get(p.main);
       const nSets = p.items.reduce((n, it) => n + it.sets.length, 0);
       return h('div', { class: 'pcard', 'data-id': p.id, style: g ? { '--c': g.color } : null },
-        h('span', { class: 'handle phandle', role: 'button', 'aria-label': 'Glisser « ' + planTitle(p) + ' » vers un autre dossier' }, icon('grip')),
+        h('span', { class: 'handle phandle', role: 'button', 'aria-label': T('Glisser « {0} » vers un autre dossier', planTitle(p)) }, icon('grip')),
         h('button', { type: 'button', class: 'pmain', onclick: () => go('plan', p.id) },
           h('div', { class: 'nm', text: planTitle(p) }),
           g ? h('div', { class: 'tags' }, tag(p.main, true), p.sec.map((id) => tag(id))) : null,
-          h('div', { class: 'meta', text: plural(p.items.length, 'exercice', 'exercices') + (nSets ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · faite ' + ago(p.last) : '') })),
-        h('button', { type: 'button', class: 'pgo', 'aria-label': 'Faire « ' + planTitle(p) + ' » aujourd’hui', onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: 'Aujourd’hui' })),
-        h('button', { type: 'button', class: 'pmore', 'aria-label': 'Options de « ' + planTitle(p) + ' »', onclick: () => planMenu(p) }, icon('dots', 'fill')));
+          h('div', { class: 'meta', text: plural(p.items.length, 'exercice', 'exercices') + (nSets ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · ' + T('faite {0}', ago(p.last)) : '') })),
+        h('button', { type: 'button', class: 'pgo', 'aria-label': T('Faire « {0} » aujourd’hui', planTitle(p)), onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: T('Aujourd’hui') })),
+        h('button', { type: 'button', class: 'pmore', 'aria-label': T('Options de « {0} »', planTitle(p)), onclick: () => planMenu(p) }, icon('dots', 'fill')));
     }
     /* Glisser une séance (poignée) et la lâcher sur un autre dossier. */
     function planDrag(box, onDrop) {
@@ -2187,9 +2829,9 @@
         .map((k) => ({ key: k, s: S.sessions[k], st: dayStats(byDay.get(k)) }));
       if (!all.length) {
         body.append(h('div', { class: 'card empty-card' },
-          h('strong', { text: 'Aucune séance nommée' }),
-          h('p', { text: 'Ouvre un jour d’entraînement dans le calendrier, puis touche « Nommer la séance ». Elle apparaîtra ici, classée par groupe musculaire.' }),
-          h('button', { type: 'button', class: 'btn primary', text: 'Ouvrir le calendrier', onclick: () => go('calendar') })));
+          h('strong', { text: T('Aucune séance nommée') }),
+          h('p', { text: T('Ouvre un jour d’entraînement dans le calendrier, puis touche « Nommer la séance ». Elle apparaîtra ici, classée par groupe musculaire.') }),
+          h('button', { type: 'button', class: 'btn primary', text: T('Ouvrir le calendrier'), onclick: () => go('calendar') })));
         return;
       }
       const works = (x, top) => topOf(x.s.main) === top || x.s.sec.some((id) => topOf(id) === top);
@@ -2198,7 +2840,7 @@
       body.append(chipsFor(tops, filter, (id) => (id === 'all' ? all.length : all.filter((x) => works(x, id)).length), (v) => { filter = v; }));
       const list = filter === 'all' ? all : all.filter((x) => works(x, filter));
       if (filter === 'all') {
-        body.append(h('section', { class: 'sec tight' }, h('h2', { text: 'Dernière fois par groupe' }),
+        body.append(h('section', { class: 'sec tight' }, h('h2', { text: T('Dernière fois par groupe') }),
           h('div', { class: 'card lastlist' }, tops.map((t) => {
             const last = all.find((x) => works(x, t.id));
             return h('button', { type: 'button', class: 'lastrow', onclick: () => { filter = t.id; render(); window.scrollTo(0, 0); } },
@@ -2206,9 +2848,9 @@
               h('span', { class: 'w', text: ago(last.key) + ' · ' + fDayShort.format(keyDate(last.key)) }));
           }))));
       } else {
-        body.append(h('p', { class: 'sum pad', text: plural(list.length, 'séance', 'séances') + ' · dernière ' + ago(list[0].key) }));
+        body.append(h('p', { class: 'sum pad', text: plural(list.length, 'séance', 'séances') + ' · ' + T('dernière {0}', ago(list[0].key)) }));
       }
-      body.append(h('section', { class: 'sec tight' }, filter === 'all' ? h('h2', { text: 'Toutes les séances' }) : null, h('div', { class: 'scards' }, list.map(card))));
+      body.append(h('section', { class: 'sec tight' }, filter === 'all' ? h('h2', { text: T('Toutes les séances') }) : null, h('div', { class: 'scards' }, list.map(card))));
     }
     function card(x) {
       const g = GROUPS.get(x.s.main);
@@ -2217,9 +2859,9 @@
         h('div', { class: 'nm', text: sessionTitle(x.s) }),
         h('div', { class: 'tags' }, tag(x.s.main, true), x.s.sec.map((id) => tag(id))),
         h('div', { class: 'figs' },
-          h('div', {}, h('b', { text: String(x.st.nEx) }), h('span', { text: x.st.nEx > 1 ? 'exercices' : 'exercice' })),
-          h('div', {}, h('b', { text: String(x.st.nSets) }), h('span', { text: x.st.nSets > 1 ? 'séries' : 'série' })),
-          h('div', {}, h('b', { text: fmtNum(Math.round(x.st.load)) }), h('span', { text: 'kg soulevés' }))));
+          h('div', {}, h('b', { text: String(x.st.nEx) }), h('span', { text: x.st.nEx > 1 ? T('exercices') : T('exercice') })),
+          h('div', {}, h('b', { text: String(x.st.nSets) }), h('span', { text: x.st.nSets > 1 ? T('séries') : T('série') })),
+          h('div', {}, h('b', { text: fmtNum(Math.round(x.st.load)) }), h('span', { text: T('kg soulevés') }))));
     }
     function render() {
       renderTabs();
@@ -2236,9 +2878,9 @@
     let d = S.planDraft && S.planDraft.p.id === id ? S.planDraft : null;
     if (!d) { const orig = S.plans.find((x) => x.id === id); if (orig) d = S.planDraft = { p: clonePlan(orig), isNew: false, base: planSig(orig) }; }
     const wrap = h('main', { class: 'page plan' });
-    const valBtn = h('button', { type: 'button', class: 'btn primary okbtn valbtn' }, icon('check'), ' Valider');
-    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: d && d.isNew ? 'Nouvelle séance' : 'Séance type' }), d ? valBtn : null, closeBtn()));
-    if (!d) { wrap.append(h('p', { class: 'empty-note', text: 'Cette séance type n’existe plus.' })); return wrap; }
+    const valBtn = h('button', { type: 'button', class: 'btn primary okbtn valbtn' }, icon('check'), T(' Valider'));
+    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: d && d.isNew ? T('Nouvelle séance') : T('Séance type') }), d ? valBtn : null, closeBtn()));
+    if (!d) { wrap.append(h('p', { class: 'empty-note', text: T('Cette séance type n’existe plus.') })); return wrap; }
     const p = d.p;
     const open = new Set(Array.isArray(ui.open) ? ui.open : []);
     S.getUI = () => ({ open: [...open] });
@@ -2251,7 +2893,7 @@
       if (miss.length) { await missingDialog(miss, false); return false; }
       const isNew = d.isNew;
       commitPlan(d);
-      toast(isNew ? 'Séance « ' + planTitle(p) + ' » créée' : 'Modifications enregistrées');
+      toast(isNew ? T('Séance « {0} » créée', planTitle(p)) : T('Modifications enregistrées'));
       return true;
     }
     valBtn.addEventListener('click', async () => {
@@ -2260,21 +2902,21 @@
       if (prevView() === 'seances') backNow(); else replaceNow('seances', { tab: 'plans' }, 'back');
     });
     S.guard = {
-      dirty, save: async () => { commitPlan(d); toast('Séance enregistrée'); S.planDraft = null; return true; },
+      dirty, save: async () => { commitPlan(d); toast(T('Séance enregistrée')); S.planDraft = null; return true; },
       missing: () => planMissing(p), discard: () => { S.planDraft = null; },
-      title: d.isNew ? 'Enregistrer la séance ?' : 'Enregistrer les changements ?',
-      text: d.isNew ? 'Cette séance n’est pas encore créée.' : 'Tu as modifié cette séance sans valider.',
-      no: d.isNew ? 'Ne pas enregistrer' : 'Ne pas enregistrer les changements',
+      title: d.isNew ? T('Enregistrer la séance ?') : T('Enregistrer les changements ?'),
+      text: d.isNew ? T('Cette séance n’est pas encore créée.') : T('Tu as modifié cette séance sans valider.'),
+      no: d.isNew ? T('Ne pas enregistrer') : T('Ne pas enregistrer les changements'),
     };
 
-    const nameIn = h('input', { class: 'field left big', type: 'text', maxlength: '60', placeholder: 'Nom de la séance (ex. Push A)', 'aria-label': 'Nom de la séance', autocomplete: 'off', enterkeyhint: 'done' });
+    const nameIn = h('input', { class: 'field left big', type: 'text', maxlength: '60', placeholder: T('Nom de la séance (ex. Push A)'), 'aria-label': T('Nom de la séance'), autocomplete: 'off', enterkeyhint: 'done' });
     nameIn.value = p.name;
     nameIn.addEventListener('input', () => { p.name = nameIn.value; changed(); });
 
     const folderSel = h('select', { class: 'field left', id: 'pl-folder' });
     function fillFolders() {
       folderSel.textContent = '';
-      folderSel.append(h('option', { value: '', text: 'Sans dossier' }), ...allFolders().concat(p.folder && !allFolders().includes(p.folder) ? [p.folder] : []).map((f) => h('option', { value: f, text: f })), h('option', { value: '__new', text: '+ Nouveau dossier…' }));
+      folderSel.append(h('option', { value: '', text: T('Sans dossier') }), ...allFolders().concat(p.folder && !allFolders().includes(p.folder) ? [p.folder] : []).map((f) => h('option', { value: f, text: f })), h('option', { value: '__new', text: T('+ Nouveau dossier…') }));
       folderSel.value = p.folder;
     }
     fillFolders();
@@ -2286,78 +2928,104 @@
       } else { p.folder = folderSel.value; changed(); }
     });
 
-    const mainSel = h('select', { class: 'field left', id: 'pl-main' }, h('option', { value: '', text: 'Aucun' }), GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
+    const mainSel = h('select', { class: 'field left', id: 'pl-main' }, h('option', { value: '', text: T('Aucun') }), GROUP_LIST.map((g) => h('option', { value: g.id, text: g.full })));
     mainSel.value = p.main;
     const secField = groupsField(() => p.sec, (v) => { p.sec = v; changed(); }, () => p.main, 'pl-sec');
     mainSel.addEventListener('change', () => { p.main = mainSel.value; p.sec = p.sec.filter((x) => x !== p.main); secField.repaint(); changed(); });
 
     wrap.append(nameIn, h('div', { class: 'card pform' },
-      h('label', { class: 'lbl', for: 'pl-folder', text: 'Dossier' }), folderSel,
-      h('label', { class: 'lbl', for: 'pl-main', text: 'Groupe musculaire principal' }), mainSel,
-      h('label', { class: 'lbl', for: 'pl-sec', text: 'Groupes secondaires' }), secField));
+      h('label', { class: 'lbl', for: 'pl-folder', text: T('Dossier') }), folderSel,
+      h('label', { class: 'lbl', for: 'pl-main', text: T('Groupe musculaire principal') }), mainSel,
+      h('label', { class: 'lbl', for: 'pl-sec', text: T('Groupes secondaires') }), secField));
 
     const listBox = h('div');
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: 'Exercices' }), listBox,
-      h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => goNow('library', { pick: 'plan', id: p.id }) }, icon('plus'), 'Ajouter des exercices')));
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Exercices') }), listBox,
+      h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => goNow('library', { pick: 'plan', id: p.id }) }, icon('plus'), T('Ajouter des exercices'))));
 
     function setRows(it) {
       const box = h('div', { class: 'psets' });
       const hold = isHold(it.ex);
       const blank = () => (hold ? { w: '', r: '', dur: '' } : { w: '', r: '' });
       if (!it.sets.length) {
-        box.append(h('p', { class: 'empty-note', text: 'Pas de séries prévues : tu les choisiras le jour même.' }),
-          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push(blank()); changed(); renderList(); } }, 'Prévoir des séries'));
+        box.append(h('p', { class: 'empty-note', text: T('Pas de séries prévues : tu les choisiras le jour même.') }),
+          h('button', { type: 'button', class: 'textbtn', onclick: () => { it.sets.push(blank()); changed(); renderList(); } }, T('Prévoir des séries')));
         return box;
       }
       it.sets.forEach((st, j) => {
         if (hold) {   // exercice à la durée : une durée prévue en secondes (vide = libre)
-          const dIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'secondes', 'aria-label': 'Durée prévue en secondes, série ' + (j + 1), autocomplete: 'off' });
+          const dIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: T('secondes'), 'aria-label': T('Durée prévue en secondes, série ') + (j + 1), autocomplete: 'off' });
           dIn.value = fin(st.dur) ? String(st.dur) : '';
           dIn.addEventListener('input', () => { st.dur = durOrBlank(dIn.value); changed(); });
           box.append(h('div', { class: 'srow hold' }, h('span', { class: 'n', text: String(j + 1) }), dIn, h('span', { class: 'times', text: 's' }),
-            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: '', r: '', dur: durOrBlank(st.dur) }); changed(); renderList(); } }, icon('copy')),
-            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))));
+            h('span', { class: 'racts' },
+              h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Dupliquer la série ') + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: '', r: '', dur: durOrBlank(st.dur) }); changed(); renderList(); } }, icon('copy')),
+              h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Retirer la série ') + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close')))));
           return;
         }
-        const wIn = calcInput({ placeholder: 'kg', 'aria-label': 'Poids prévu, série ' + (j + 1) });
-        const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: 'rép.', 'aria-label': 'Répétitions prévues, série ' + (j + 1), autocomplete: 'off' });
-        wIn.value = fin(st.w) ? fmtIn(st.w) : st.w || '';
+        // Série prévue : charge en kg, ou au poids du corps (PDC) avec un lest + / − facultatif.
+        const ui = { w: st.bw ? (fin(st.w) && st.w ? fmtIn(Math.abs(st.w)) : (typeof st.w === 'string' ? st.w.replace(/^[-−]/, '') : '')) : fin(st.w) ? fmtIn(st.w) : st.w || '',
+          bw: !!st.bw, neg: !!st.bw && ((fin(st.w) && st.w < 0) || !!st.neg) };
+        let chk = null;
+        const sync = () => {
+          if (chk) chk.paint();
+          if (ui.bw) { st.bw = 1; const a = String(ui.w).trim() ? calcEval(ui.w) : ''; st.w = a === '' || !Number.isFinite(a) ? '' : (ui.neg ? -1 : 1) * a; st.neg = ui.neg; } else { delete st.bw; delete st.neg; st.w = numOrBlank(ui.w); }
+          changed();
+        };
+        const wBox = weightField(ui, T('Poids prévu, série ') + (j + 1), sync);
+        const rIn = h('input', { class: 'field', type: 'text', inputmode: 'numeric', placeholder: T('rép.'), 'aria-label': T('Répétitions prévues, série ') + (j + 1), autocomplete: 'off' });
         rIn.value = fin(st.r) ? String(st.r) : st.r || '';
-        wIn.addEventListener('input', () => { st.w = wIn.value; changed(); });
-        wIn.addEventListener('change', () => { st.w = numOrBlank(wIn.value); changed(); });
         rIn.addEventListener('input', () => { const n = parseNum(rIn.value); st.r = Number.isFinite(n) && n > 0 ? Math.round(n) : ''; changed(); });
-        box.append(h('div', { class: 'srow' }, h('span', { class: 'n', text: String(j + 1) }), wIn, h('span', { class: 'times', text: '×' }), rIn,
-          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Dupliquer la série ' + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, { w: numOrBlank(st.w), r: st.r }); changed(); renderList(); } }, icon('copy')),
-          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': 'Retirer la série ' + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))));
+        chk = bwCheck(Object.assign(ui, { base: 0 }), () => { wBox.paint(); sync(); }, true);
+        box.append(h('div', { class: 'srow' }, h('span', { class: 'n', text: String(j + 1) }), wBox, h('span', { class: 'times', text: T('×') }), rIn,
+          h('span', { class: 'racts' },
+            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Dupliquer la série ') + (j + 1), onclick: () => { it.sets.splice(j + 1, 0, Object.assign({}, st)); changed(); renderList(); } }, icon('copy')),
+            h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Retirer la série ') + (j + 1), onclick: () => { it.sets.splice(j, 1); changed(); renderList(); } }, icon('close'))),
+          h('div', { class: 'dt-line' }, chk)));
       });
-      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(hold ? { w: '', r: '', dur: l ? durOrBlank(l.dur) : '' } : l ? { w: numOrBlank(l.w), r: l.r } : { w: '', r: '' }); changed(); renderList(); } }, '+ Ajouter une série'));
+      box.append(h('button', { type: 'button', class: 'textbtn', onclick: () => { const l = it.sets[it.sets.length - 1]; it.sets.push(hold ? { w: '', r: '', dur: l ? durOrBlank(l.dur) : '' } : l ? Object.assign({}, l) : { w: '', r: '' }); changed(); renderList(); } }, T('+ Ajouter une série')));
       return box;
     }
     function renderList() {
       listBox.textContent = '';
-      if (!p.items.length) { listBox.append(h('p', { class: 'empty-note pad', text: 'Aucun exercice pour l’instant.' })); return; }
+      if (!p.items.length) { listBox.append(h('p', { class: 'empty-note pad', text: T('Aucun exercice pour l’instant.') })); return; }
       const list = h('div', { class: 'dlist' });
       p.items.forEach((it) => {
         const ex = getEx(it.ex);
         const n = it.sets.length;
         const isOpen = open.has(it.ex);
         const head = h('div', { class: 'dhead' },
-          h('span', { class: 'handle', role: 'button', 'aria-label': 'Déplacer ' + dn(ex) }, icon('grip')),
+          h('span', { class: 'handle', role: 'button', 'aria-label': T('Déplacer ') + dn(ex) }, icon('grip')),
           h('button', { type: 'button', class: 'open', 'aria-expanded': String(isOpen), onclick: () => { if (open.has(it.ex)) open.delete(it.ex); else open.add(it.ex); renderList(); } }, thumb(ex, { zoom: true }),
-            h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st', text: n ? plural(n, 'série prévue', 'séries prévues') : 'Séries libres' }))),
+            h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st', text: n ? plural(n, 'série prévue', 'séries prévues') : T('Séries libres') }))),
           h('span', { class: 'chev' + (isOpen ? ' up' : '') }, icon('down')));
         list.append(h('div', { class: 'sitem', 'data-id': it.ex },
           h('article', { class: 'dcard' }, swipeable(head, () => {
             const i = p.items.indexOf(it);
             p.items.splice(i, 1); changed(); renderList();
-            toast('Exercice retiré', { ms: 6000, action: () => { p.items.splice(i, 0, it); changed(); renderList(); } });
-          }, 'Retirer ' + dn(ex)), isOpen ? setRows(it) : null)));
+            toast(T('Exercice retiré'), { ms: 6000, action: () => { p.items.splice(i, 0, it); changed(); renderList(); } });
+          }, T('Retirer ') + dn(ex)), isOpen ? setRows(it) : null)));
       });
       sortable(list, (ids) => { p.items = ids.map((x) => p.items.find((it) => it.ex === x)).filter(Boolean); changed(); });
-      listBox.append(list, h('p', { class: 'hint', text: 'Touche un exercice pour prévoir ses séries. Poignée ═ : changer l’ordre. Glisser à gauche : retirer.' }));
+      listBox.append(list, h('p', { class: 'hint', text: T('Touche un exercice pour prévoir ses séries. Poignée ═ : changer l’ordre. Glisser à gauche : retirer.') }));
     }
     renderList();
 
+    /* Programmations de cette séance type, chacune avec un bouton pour l'arrêter. */
+    const schedBox = h('div', { class: 'schedlist' });
+    function renderSched() {
+      schedBox.textContent = '';
+      const list = S.schedules.filter((sc) => sc.plan === p.id);
+      if (!list.length) return;
+      schedBox.append(h('p', { class: 'lbl', text: T('Programmée') }));
+      for (const sc of list) {
+        schedBox.append(h('div', { class: 'schedrow' }, h('span', { text: schedText(sc) }),
+          h('button', { type: 'button', class: 'iconbtn plain mini', 'aria-label': T('Arrêter cette programmation'), onclick: async () => {
+            const ok = await confirmDialog({ title: T('Arrêter cette programmation ?'), text: T('Les dates à venir disparaissent du calendrier. Tes séries déjà faites restent.'), yes: T('Arrêter'), no: T('Annuler') });
+            if (!ok) return;
+            await removeSchedule(sc); renderSched(); toast(T('Programmation arrêtée'));
+          } }, icon('close'))));
+      }
+    }
     if (!d.isNew) {
       wrap.append(h('section', { class: 'sec plan-acts' },
         h('button', { type: 'button', class: 'btn ghost wide', onclick: async () => {
@@ -2365,14 +3033,244 @@
           S.guard = null; S.planDraft = null;
           const saved = S.plans.find((x) => x.id === p.id);
           if (saved) startPlanToday(saved);
-        } }, icon('play'), ' Faire cette séance aujourd’hui'),
-        h('button', { type: 'button', class: 'textbtn danger center', text: 'Supprimer cette séance type', onclick: async () => {
-          const ok = await confirmDialog({ title: 'Supprimer « ' + planTitle(p) + ' » ?', text: 'Tes séances déjà faites restent dans le calendrier.', yes: 'Supprimer', no: 'Annuler' });
+        } }, icon('play'), T(' Faire cette séance aujourd’hui')),
+        h('button', { type: 'button', class: 'btn ghost wide', onclick: async () => {
+          if (dirty() && !(await validate())) return;
+          const saved = S.plans.find((x) => x.id === p.id);
+          if (saved) scheduleDialog({ plan: saved, onDone: () => renderSched() });
+        } }, icon('folder'), T(' Programmer cette séance')),
+        schedBox,
+        h('button', { type: 'button', class: 'textbtn danger center', text: T('Supprimer cette séance type'), onclick: async () => {
+          const ok = await confirmDialog({ title: T('Supprimer « {0} » ?', planTitle(p)), text: T('Ses exercices prévus pas encore faits et sa programmation sont retirés du calendrier. Tes séries déjà faites restent.'), yes: T('Supprimer'), no: T('Annuler') });
           if (!ok) return;
-          S.plans = S.plans.filter((x) => x.id !== p.id); await saveUser();
-          S.guard = null; S.planDraft = null; backNow(); toast('Séance type supprimée');
+          await removePlan(p);
+          S.guard = null; S.planDraft = null; backNow(); toast(T('Séance type supprimée'));
         } })));
+      renderSched();
     }
+    return wrap;
+  }
+
+  /* ---------- synchronisation avec ton NAS (PocketBase) ----------
+     Seule l'adresse que tu as saisie dans Réglages est contactée : rien n'est écrit dans le code de
+     l'app ni envoyé ailleurs. Le jeton de connexion reste sur ce téléphone (jamais exporté) et le mot
+     de passe n'est pas enregistré. Un seul enregistrement par compte, qui contient toutes tes données. */
+  function loadNas() { try { const o = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } }
+  let NAS = loadNas();   // { token, uid, at (date du jeton), base (données communes au téléphone et au NAS), auto, last, err }
+  function saveNas() { try { localStorage.setItem(SYNC_KEY, JSON.stringify(NAS)); } catch (e) { /* ignoré */ } }
+  const nasUrl = () => String(S.settings.nas.url || '').replace(/\/+$/, '');
+  const nasOn = () => !!(nasUrl() && NAS.token && NAS.uid);
+  async function nasFetch(path, opts) {
+    const o = Object.assign({}, opts || {});
+    o.headers = Object.assign({ 'Content-Type': 'application/json' }, NAS.token ? { Authorization: NAS.token } : {});
+    const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 20000); o.signal = ctrl.signal;
+    let r;
+    try { r = await fetch(nasUrl() + path, o); } catch (e) { throw Object.assign(new Error('net'), { code: 'net' }); } finally { clearTimeout(tm); }
+    let body = null;
+    try { body = await r.json(); } catch (e) { body = null; }
+    if (!r.ok) throw Object.assign(new Error('http'), { code: r.status, body });
+    return body;
+  }
+  function nasMsg(e) {
+    if (e.code === 'url') return T('Adresse invalide : elle doit commencer par https://');
+    if (e.code === 'net') return T('Serveur injoignable : vérifie l’adresse et ta connexion.');
+    if (e.code === 400 && e.body && /auth/i.test(JSON.stringify(e.body))) return T('E-mail ou mot de passe incorrect.');
+    if (e.code === 401 || e.code === 403) return T('Connexion refusée ou expirée : reconnecte-toi.');
+    if (e.code === 404) return T('Collection « worklog » introuvable sur le serveur : suis le guide d’installation.');
+    if (e.code === 400) return T('Le serveur a refusé les données : vérifie les réglages de la collection « worklog » (voir le guide).');
+    return T('Erreur du serveur ({0}).', e.code);
+  }
+  async function nasLogin(url, email, pw) {
+    url = url.trim().replace(/\/+$/, '');
+    if (!/^https:\/\/[^\s/]+/i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(url)) throw Object.assign(new Error('url'), { code: 'url' });
+    S.settings.nas = { url, email: email.trim() };
+    NAS = { auto: NAS.auto !== false };
+    const r = await nasFetch('/api/collections/users/auth-with-password', { method: 'POST', body: JSON.stringify({ identity: email.trim(), password: pw }) });
+    NAS.token = r && r.token; NAS.uid = r && r.record && r.record.id; NAS.at = Date.now();
+    if (!NAS.token || !NAS.uid) throw Object.assign(new Error('http'), { code: 401 });
+    saveNas();
+    await saveUser({ quiet: true });
+  }
+  function nasLogout() { NAS = { auto: NAS.auto !== false }; saveNas(); }
+  /* Le jeton est renouvelé quand l'app s'ouvre (il reste valable tant que tu ouvres l'app régulièrement). */
+  async function nasRefresh() {
+    if (Date.now() - (NAS.at || 0) < 86400000) return;
+    const r = await nasFetch('/api/collections/users/auth-refresh', { method: 'POST' });
+    if (r && r.token) { NAS.token = r.token; NAS.at = Date.now(); saveNas(); }
+  }
+  async function nasGet() {
+    const r = await nasFetch('/api/collections/worklog/records?perPage=1&filter=' + encodeURIComponent('user="' + NAS.uid + '"'));
+    return r && Array.isArray(r.items) && r.items[0] ? r.items[0] : null;
+  }
+  async function nasPush(rec) {
+    const data = Object.assign({ app: 'WorkLog', version: DATA_V, kind: 'all', savedAt: S.savedAt }, userData());
+    const body = JSON.stringify({ user: NAS.uid, savedAt: S.savedAt, data });
+    if (rec) await nasFetch('/api/collections/worklog/records/' + rec.id, { method: 'PATCH', body });
+    else await nasFetch('/api/collections/worklog/records', { method: 'POST', body });
+    NAS.base = S.savedAt;
+  }
+  function applyRemote(d) {
+    S.entries = (Array.isArray(d.entries) ? d.entries : []).filter(validEntry).map(normEntry);
+    S.favs = new Set((Array.isArray(d.favs) ? d.favs : Array.isArray(d.favorites) ? d.favorites : []).filter((x) => typeof x === 'string'));
+    S.sessions = cleanSessions(d.sessions); S.days = cleanDays(d.days); S.notes = cleanNotes(d.notes);
+    S.plans = cleanPlans(d.plans); S.folders = cleanFolders(d.folders); S.schedules = cleanSchedules(d.schedules);
+    S.settings.bw = cleanSettings(d.settings).bw;   // l'adresse du NAS reste celle de ce téléphone
+  }
+  const remoteAt = (rec) => (rec && fin(rec.savedAt) && rec.savedAt ? rec.savedAt : rec && rec.data && fin(rec.data.savedAt) ? rec.data.savedAt : 0);
+  let nasBusy = null; let nasTimer = null; let nasQuiet = false;
+  function nasSoon() {
+    if (!nasOn() || NAS.auto === false || nasQuiet) return;
+    clearTimeout(nasTimer);
+    nasTimer = setTimeout(() => { nasSync(); }, 4000);
+  }
+  function rerender() { if (!guarded()) { snapshot(); render(S.stack[S.stack.length - 1]); } }
+  /* Synchronise : envoie les changements faits sur ce téléphone et récupère ceux faits ailleurs.
+     Si les deux ont changé depuis la dernière fois, les données sont fusionnées (rien n'est perdu). */
+  async function nasSync(opts) {
+    if (!nasOn()) return false;
+    if (nasBusy) return nasBusy;
+    nasBusy = (async () => {
+      let pulled = false;
+      try {
+        await nasRefresh();
+        const rec = await nasGet();
+        const base = NAS.base || 0;
+        const rAt = remoteAt(rec);
+        const localChanged = S.savedAt > base;
+        if (!rec) await nasPush(null);
+        else if (rAt > base) {
+          nasQuiet = true;
+          try {
+            if (localChanged) {   // modifié ici et ailleurs : on fusionne puis on renvoie le tout
+              mergeData(rec.data || {});
+              await saveUser({ quiet: true });
+              await nasPush(rec);
+            } else {   // modifié seulement ailleurs : on reprend les données du NAS
+              applyRemote(rec.data || {});
+              await saveUser({ quiet: true, at: rAt });
+              NAS.base = rAt;
+            }
+          } finally { nasQuiet = false; }
+          pulled = true;
+        } else if (localChanged) await nasPush(rec);
+        NAS.last = Date.now(); NAS.err = '';
+        saveNas();
+        if (pulled) { rerender(); toast(T('Données mises à jour depuis ton NAS')); } else if (opts && opts.loud) toast(T('Synchronisation terminée'));
+        return true;
+      } catch (e) {
+        NAS.err = nasMsg(e); saveNas();
+        if (opts && opts.loud) toast(NAS.err, { ms: 5000 });
+        return false;
+      } finally { nasBusy = null; if (opts && opts.after) opts.after(); }
+    })();
+    return nasBusy;
+  }
+  /* Remplace les données de ce téléphone par celles du NAS. */
+  async function nasPullAll() {
+    try {
+      const rec = await nasGet();
+      if (!rec) { toast(T('Aucune donnée sur ton NAS pour l’instant.')); return false; }
+      nasQuiet = true;
+      try { applyRemote(rec.data || {}); await saveUser({ quiet: true, at: remoteAt(rec) }); } finally { nasQuiet = false; }
+      NAS.base = remoteAt(rec); NAS.last = Date.now(); NAS.err = ''; saveNas();
+      toast(T('Données récupérées depuis ton NAS'));
+      return true;
+    } catch (e) { NAS.err = nasMsg(e); saveNas(); toast(NAS.err, { ms: 5000 }); return false; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && nasOn() && NAS.auto !== false && Date.now() - (NAS.last || 0) > 60000) nasSync();
+  });
+
+  /* ---------- réglages ---------- */
+  function viewSettings() {
+    const wrap = h('main', { class: 'page settings' });
+    wrap.append(h('header', { class: 'bar' }, closeBtn(), h('h1', { class: 'grow', text: T('Réglages') }), h('span')));
+
+    // Langue de l'application (les noms d'exercices suivent la langue).
+    const setLang = (l) => {
+      if (l === LANG) return;
+      try { localStorage.setItem(LANG_KEY, l); } catch (e) { /* ignoré */ }
+      location.reload();
+    };
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Langue') }),
+      h('div', { class: 'tabs two', role: 'tablist', 'aria-label': T('Langue') },
+        [['fr', 'Français'], ['en', 'English']].map(([l, label]) => h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': String(LANG === l), text: label, onclick: () => setLang(l) }))),
+      h('p', { class: 'hint', text: T('Toute l’application, y compris les noms des exercices.') })));
+
+    // Poids du corps : utilisé pour les séries « PDC ».
+    const bwIn = h('input', { class: 'field', type: 'text', inputmode: 'decimal', id: 'st-bw', placeholder: 'kg', autocomplete: 'off', enterkeyhint: 'done' });
+    bwIn.value = bwKg() ? fmtIn(bwKg()) : '';
+    const bwMsg = h('p', { class: 'form-msg', role: 'alert' });
+    const saveBw = async () => {
+      const v = bwIn.value.trim();
+      if (!v) { if (S.settings.bw !== '') { S.settings.bw = ''; await saveUser(); } return; }
+      const n = calcEval(v);
+      if (!(n > 0 && n < 400)) { bwMsg.textContent = T('Poids du corps : un nombre en kilos.'); bwIn.classList.add('invalid'); return; }
+      bwMsg.textContent = ''; bwIn.classList.remove('invalid');
+      const r = Math.round(n * 10) / 10;
+      if (r !== S.settings.bw) { S.settings.bw = r; await saveUser(); toast(T('Poids du corps enregistré : {0} kg', fmtNum(r))); }
+      bwIn.value = fmtIn(r);
+    };
+    bwIn.addEventListener('change', saveBw);
+    bwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') bwIn.blur(); });
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Poids du corps') }),
+      h('div', { class: 'card' }, h('div', { class: 'bwrow' }, h('label', { for: 'st-bw', text: T('Ton poids') }), bwIn, h('span', { text: 'kg' })), bwMsg,
+        h('p', { class: 'hint', text: T('Utilisé pour les séries au poids du corps (case « PDC ») : le poids soulevé = ton poids + le lest, ou − l’assistance. Les séries déjà enregistrées gardent le poids de l’époque.') }))));
+
+    // Synchronisation avec le NAS.
+    const nasBox = h('div', { class: 'card nas' });
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Synchronisation avec ton NAS') }), nasBox));
+    function renderNas() {
+      nasBox.textContent = '';
+      const guide = h('a', { class: 'textbtn guide', href: 'docs/synchronisation-nas.html', target: '_blank', rel: 'noopener' }, T('Guide d’installation (Synology + PocketBase)'));
+      if (!nasOn()) {
+        const url = h('input', { class: 'field left', type: 'url', id: 'nas-url', placeholder: 'https://worklog.exemple.synology.me', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' });
+        const mail = h('input', { class: 'field left', type: 'email', id: 'nas-mail', placeholder: T('e-mail du compte PocketBase'), autocomplete: 'username', autocapitalize: 'none' });
+        const pw = h('input', { class: 'field left', type: 'password', id: 'nas-pw', autocomplete: 'current-password' });
+        url.value = S.settings.nas.url || ''; mail.value = S.settings.nas.email || '';
+        const msg = h('p', { class: 'form-msg', role: 'alert', text: NAS.err || '' });
+        const btn = h('button', { type: 'button', class: 'btn primary wide', text: T('Se connecter') });
+        btn.addEventListener('click', async () => {
+          msg.textContent = '';
+          if (!url.value.trim() || !mail.value.trim() || !pw.value) { msg.textContent = T('Remplis l’adresse, l’e-mail et le mot de passe.'); return; }
+          btn.disabled = true; btn.textContent = T('Connexion…');
+          try {
+            await nasLogin(url.value, mail.value, pw.value);
+            NAS.err = ''; saveNas();
+            await nasSync({ loud: true });
+          } catch (e) { msg.textContent = nasMsg(e); }
+          btn.disabled = false; btn.textContent = T('Se connecter');
+          if (nasOn()) renderNas();
+        });
+        nasBox.append(h('p', { class: 'intro', text: T('Sauvegarde automatique de toutes tes données sur ton propre serveur PocketBase (par exemple sur ton Synology). Rien ne part ailleurs : l’app ne contacte que l’adresse ci-dessous.') }),
+          h('label', { class: 'lbl', for: 'nas-url', text: T('Adresse du serveur') }), url,
+          h('label', { class: 'lbl', for: 'nas-mail', text: T('E-mail') }), mail,
+          h('label', { class: 'lbl', for: 'nas-pw', text: T('Mot de passe') }), pw, msg, btn,
+          h('p', { class: 'hint', text: T('Le mot de passe n’est pas enregistré : seul un jeton de connexion reste sur ce téléphone.') }), guide);
+        return;
+      }
+      const auto = h('input', { type: 'checkbox' });
+      auto.checked = NAS.auto !== false;
+      auto.addEventListener('change', () => { NAS.auto = auto.checked; saveNas(); if (auto.checked) nasSync(); });
+      const status = NAS.err ? h('p', { class: 'nas-err', text: NAS.err })
+        : h('p', { class: 'nas-ok', text: NAS.last ? T('Dernière synchronisation : {0}', fDateTime.format(NAS.last)) : T('Pas encore synchronisé') });
+      const syncBtn = h('button', { type: 'button', class: 'btn primary wide', text: T('Synchroniser maintenant') });
+      syncBtn.addEventListener('click', async () => { syncBtn.disabled = true; syncBtn.textContent = T('Synchronisation…'); await nasSync({ loud: true }); renderNas(); });
+      nasBox.append(
+        h('p', { class: 'nas-who' }, h('b', { text: S.settings.nas.url }), h('br'), S.settings.nas.email || ''),
+        status,
+        h('label', { class: 'gs-row' }, auto, h('span', { class: 'gl', text: T('Synchroniser automatiquement') })),
+        h('p', { class: 'hint', text: T('À l’ouverture de l’app et quelques secondes après chaque modification. iOS ne laisse pas une app web travailler quand elle est fermée.') }),
+        syncBtn,
+        h('button', { type: 'button', class: 'btn ghost wide', text: T('Remplacer par les données du NAS'), onclick: async () => {
+          const ok = await confirmDialog({ title: T('Remplacer les données de ce téléphone ?'), text: T('Les données de ce téléphone sont remplacées par celles enregistrées sur ton NAS.'), yes: T('Remplacer'), no: T('Annuler') });
+          if (ok && await nasPullAll()) renderNas();
+        } }),
+        h('button', { type: 'button', class: 'textbtn danger center', text: T('Se déconnecter'), onclick: () => { nasLogout(); renderNas(); toast(T('Déconnecté du NAS : tes données restent sur ce téléphone.')); } }),
+        guide);
+    }
+    renderNas();
+    wrap.append(h('p', { class: 'ver-line', text: T('WorkLog version {0}', APP_VERSION) }));
     return wrap;
   }
 
@@ -2387,6 +3285,7 @@
     history.replaceState({ i: 0, view: 'home', arg: null }, '');
     render(S.stack[0]);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+    if (nasOn() && NAS.auto !== false) nasSync();
   }
   boot();
 })();

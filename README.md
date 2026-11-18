@@ -1,6 +1,6 @@
 # WorkLog
 
-Application web personnelle (PWA pour iPhone) pour suivre ses exercices et ses charges à la salle de sport. Les données restent sur le téléphone.
+Application web personnelle (PWA pour iPhone) pour suivre ses exercices et ses charges à la salle de sport. Les données restent sur le téléphone, avec en option une synchronisation vers ton propre serveur (voir `docs/synchronisation-nas.html`).
 
 ## Organisation du dépôt
 
@@ -9,11 +9,12 @@ Application web personnelle (PWA pour iPhone) pour suivre ses exercices et ses c
 | `index.html` | page de l'application |
 | `sw.js` | fonctionnement hors connexion (doit rester à la racine) |
 | `manifest.webmanifest` | icône et nom sur l'écran d'accueil |
-| `js/` | code : `app.js`, `mannequin.js`, `exercices-3d.js` |
+| `js/` | code : `app.js`, `mannequin.js`, `exercices-3d.js`, `i18n.js` (textes en anglais) |
 | `css/` | styles : `style.css` |
-| `data/` | liste des exercices (`data-v3.json`) et schéma du corps (`bodymap.json`) |
+| `data/` | liste des exercices (`data-v3.json`), noms français des exercices (`names-fr.json`) et schéma du corps (`bodymap.json`) |
 | `models/` | mannequin 3D (`mannequin.bin`, `mannequin-peau.jpg`) |
 | `icons/` | icônes de l'application |
+| `docs/` | guide de synchronisation avec un NAS (`synchronisation-nas.html`) et collection PocketBase à importer (`pocketbase-worklog.json`) |
 | `.github/workflows/deploy.yml` | déballage du zip et publication du site |
 | `CHANGELOG.md` | historique des versions |
 | `CREDITS.txt` | crédits des données, images et modèles |

@@ -422,6 +422,8 @@
   const MG = { quad: 'quadriceps', ham: 'ischios', add: 'adducteurs', abd: 'abducteurs', calf: 'mollets', tib: 'jambiers', glute: 'fessiers', obl: 'obliques', low: 'lombaires',
     lat: 'dorsaux', pec: 'pectoraux', trap: 'trapezes', neck: 'cou', cuff: 'coiffe', delt: 'deltoides', biceps: 'biceps', triceps: 'triceps', forearm: 'avant_bras', serr: 'dentele', abs: 'abdominaux' };
   const MZ = { psoas: 'psoas', pir: 'piriforme', tfl: 'tfl', rhomb: 'rhomboides', deltP: 'deltpost' };
+  // Langue de l'interface (réglée dans WorkLog › Réglages).
+  function EN_UI() { try { return localStorage.getItem('worklog.lang') === 'en'; } catch (e) { return false; } }
   function define(list) { for (const e of list) EX.set(e.id, Object.assign({}, e, { K: null, S: null, fit: null, tint: null })); }
   function ready(ex) {
     if (ex.S) return;
@@ -716,11 +718,13 @@
     opts = opts || {};
     const canvas = document.createElement('canvas');
     canvas.className = 'm3d' + (opts.thumb ? ' m3d-thumb' : '') + (opts.cls ? ' ' + opts.cls : '');
-    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', (opts.thumb ? 'Animation : ' : 'Animation en 3D, à faire tourner au doigt : ') + ex.name);
+    const en = EN_UI();
+    canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', (opts.thumb ? (en ? 'Animation: ' : 'Animation : ') : (en ? '3D animation, turn it with your finger: ' : 'Animation en 3D, à faire tourner au doigt : ')) + (en && ex.en ? ex.en : ex.name));
     const c0 = ex.cam || {};
     const v = { canvas, ctx: canvas.getContext('2d'), ex, thumb: !!opts.thumb, on: !opts.thumb, last: 0, seen: false, shown: false, born: performance.now(), fixed: opts.time,
       cam: { yaw: (c0.yaw == null ? 60 : c0.yaw) * D2R, pitch: (c0.pitch == null ? 14 : c0.pitch) * D2R } };
-    canvas._play = (on) => { v.on = !!on; if (on) kick(); };
+    // Vignette hors de l'écran : l'image du canvas est libérée (largeur 0) et redessinée en revenant.
+    canvas._play = (on) => { v.on = !!on; if (on) kick(); else if (v.thumb) { canvas.width = 0; canvas.height = 0; } };
     canvas._view = v;
     if (!opts.thumb) {
       let drag = null;
@@ -745,8 +749,8 @@
 
   window.WL3D = {
     define, view, has: (id) => EX.has(id),
-    credit: 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
-    list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
+    credit: EN_UI() ? '3D model: “Male base muscular anatomy” by Harshit Prajapati, CC BY 4.0, modified.' : 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
+    list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, en: e.en || '', leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
     _dbg: { snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();

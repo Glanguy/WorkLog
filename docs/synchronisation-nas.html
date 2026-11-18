@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>WorkLog : synchronisation avec ton NAS</title>
+<style>
+  :root { --paper: #FBF8F3; --ink: #2E2838; --muted: #6E6680; --deep: #7459C4; --deep-ink: #5B43A8; --lav-soft: #F1ECFB; --line: #E6DFF3; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 18px 60px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 8px 0 6px; letter-spacing: -.01em; }
+  h2 { font-size: 19px; margin: 34px 0 8px; color: var(--deep-ink); }
+  h3 { font-size: 16px; margin: 22px 0 6px; }
+  p, li { margin: 6px 0; }
+  ol, ul { padding-left: 22px; }
+  .lead { color: var(--muted); margin-top: 0; }
+  .box { background: #fff; border: 1.5px solid var(--line); border-radius: 16px; padding: 14px 16px; margin: 14px 0; }
+  .note { background: var(--lav-soft); border-radius: 14px; padding: 12px 14px; margin: 14px 0; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; background: var(--lav-soft); padding: 1px 5px; border-radius: 6px; overflow-wrap: anywhere; }
+  pre { background: #2E2838; color: #F4F0FA; border-radius: 14px; padding: 14px; overflow-x: auto; font-size: 13.5px; line-height: 1.45; }
+  pre code { background: none; padding: 0; color: inherit; }
+  a { color: var(--deep-ink); }
+  b { font-weight: 650; }
+</style>
+</head>
+<body>
+<main>
+<h1>Synchroniser WorkLog avec ton NAS</h1>
+<p class="lead">Guide pour un Synology DS224+ (DSM 7.2) avec PocketBase. Tes données ne vont que sur ton NAS : rien n'est écrit dans le code de l'app, sur GitHub ou chez un service tiers.</p>
+
+<div class="note">
+  <p><b>Comment ça marche.</b> PocketBase est un petit serveur (un seul programme) qui tourne dans Container Manager sur ton NAS. WorkLog y garde un enregistrement par compte, avec toutes tes données (séries, favoris, séances, notes, séances types, programmations, poids du corps). L'app envoie tes modifications quelques secondes après chaque changement et récupère celles faites ailleurs quand elle s'ouvre. Si deux appareils ont changé en même temps, les données sont fusionnées : rien n'est perdu.</p>
+  <p><b>Limite d'iOS :</b> une app web ne travaille pas quand elle est fermée. La synchronisation se fait donc quand WorkLog est ouverte.</p>
+</div>
+
+<h2>1. Installer PocketBase sur le NAS</h2>
+<ol>
+  <li>Dans DSM, ouvre le <b>Centre de paquets</b> et installe <b>Container Manager</b> (le DS224+ le prend en charge).</li>
+  <li>Dans <b>File Station</b>, crée le dossier <code>docker/pocketbase</code> (le dossier partagé <code>docker</code> existe en général après l'installation de Container Manager), puis le sous-dossier <code>pb_data</code> dedans.</li>
+  <li>Ouvre <b>Container Manager › Projet › Créer</b>. Nom : <code>pocketbase</code>. Chemin : <code>/docker/pocketbase</code>. Source : <b>Créer docker-compose.yml</b>, et colle :
+<pre><code>services:
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: pocketbase
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pb_data:/pb_data
+    environment:
+      TZ: Europe/Paris</code></pre>
+  </li>
+  <li>Termine l'assistant : le projet démarre. Dans <b>Container › pocketbase › Journal</b>, PocketBase affiche une adresse du type <code>http://0.0.0.0:8090/_/#/pbinstal/…</code> : ouvre-la en remplaçant <code>0.0.0.0</code> par l'adresse locale du NAS (par exemple <code>http://192.168.1.20:8090/_/…</code>) et crée ton compte administrateur (superuser).</li>
+</ol>
+<p>L'image <code>ghcr.io/muchobien/pocketbase</code> est une image communautaire très utilisée qui suit les versions officielles de PocketBase.</p>
+
+<h2>2. Préparer PocketBase pour WorkLog</h2>
+<ol>
+  <li>Dans le tableau de bord PocketBase (<code>http://IP-du-NAS:8090/_/</code>), va dans <b>Settings › Import collections</b>.</li>
+  <li>Colle le contenu du fichier <a href="pocketbase-worklog.json">pocketbase-worklog.json</a> (il est dans ce même dossier <code>docs</code> du dépôt), puis <b>Review</b> et <b>Confirm</b>. Ça crée la collection <code>worklog</code> : un enregistrement par compte, que seul ce compte peut lire et modifier.</li>
+  <li><b>Interdis la création de comptes depuis l'extérieur</b> : <b>Collections › users › ⚙ › API Rules</b>, règle <b>Create</b> : clique sur le cadenas pour la réserver aux superusers, puis enregistre.</li>
+  <li>Crée ton compte : <b>Collections › users › New record</b>, avec ton e-mail, un mot de passe solide, et coche <b>Verified</b>.</li>
+  <li>Facultatif : dans <b>Collections › users › ⚙ › Options › Auth token</b>, mets une durée plus longue (par exemple <code>2592000</code> secondes, soit 30 jours). WorkLog renouvelle son jeton chaque jour où tu l'ouvres ; tu n'auras à te reconnecter que si tu ne l'ouvres pas pendant cette durée.</li>
+</ol>
+
+<h2>3. Rendre le NAS joignable en HTTPS</h2>
+<p>WorkLog est servie en HTTPS par GitHub Pages : le navigateur refuse qu'elle parle à un serveur en simple HTTP. Il faut donc une adresse en <code>https://</code> vers PocketBase. Deux possibilités :</p>
+
+<h3>A. Tailscale (recommandé : rien n'est ouvert sur Internet)</h3>
+<ol>
+  <li>Installe le paquet <b>Tailscale</b> sur le NAS (Centre de paquets) et l'app <b>Tailscale</b> sur l'iPhone, avec le même compte.</li>
+  <li>Dans la console Tailscale (<b>DNS</b>), active <b>MagicDNS</b> et <b>HTTPS Certificates</b>.</li>
+  <li>Active le service SSH du NAS (Panneau de configuration › Terminal et SNMP), connecte-toi en SSH et lance :
+<pre><code>sudo tailscale serve --bg 8090</code></pre>
+  Le NAS répond alors à une adresse du type <code>https://ds224.ton-reseau.ts.net</code>, seulement pour tes appareils connectés à Tailscale.</li>
+  <li>C'est cette adresse que tu mets dans WorkLog. La synchronisation marche dès que Tailscale est actif sur l'iPhone, à la maison comme dehors.</li>
+</ol>
+
+<h3>B. Proxy inversé de DSM avec un certificat Let's Encrypt</h3>
+<ol>
+  <li><b>Panneau de configuration › Accès externe › DDNS</b> : crée une adresse, par exemple <code>ton-nom.synology.me</code>, en cochant l'obtention d'un certificat Let's Encrypt.</li>
+  <li><b>Panneau de configuration › Portail de connexion › Avancé › Proxy inversé › Créer</b> : source <code>HTTPS</code>, nom d'hôte <code>ton-nom.synology.me</code>, port <code>8443</code> (par exemple) ; destination <code>HTTP</code>, <code>localhost</code>, port <code>8090</code>.</li>
+  <li><b>Sécurité › Certificat › Paramètres</b> : associe le certificat Let's Encrypt à ce proxy inversé.</li>
+  <li>Sur ta box, redirige le port <code>8443</code> vers le NAS. L'adresse à mettre dans WorkLog est <code>https://ton-nom.synology.me:8443</code>.</li>
+</ol>
+<p>Avec cette méthode, PocketBase est joignable depuis Internet (protégé par ton mot de passe). Garde la création de comptes verrouillée (étape 2.3) et un mot de passe solide.</p>
+
+<h2>4. Connecter WorkLog</h2>
+<ol>
+  <li>Dans WorkLog : menu de l'accueil › <b>Réglages › Synchronisation avec ton NAS</b>.</li>
+  <li>Adresse du serveur (celle de l'étape 3), e-mail et mot de passe du compte créé à l'étape 2.4, puis <b>Se connecter</b>.</li>
+  <li>La première synchronisation envoie tes données. Sur un autre appareil, la même connexion les récupère (et fusionne avec ce qu'il y a déjà).</li>
+</ol>
+<div class="box">
+  <p><b>Ce qui reste sur le téléphone :</b> l'adresse du serveur, ton e-mail et un jeton de connexion. Le mot de passe n'est pas enregistré.</p>
+  <p><b>Boutons utiles :</b> « Synchroniser maintenant », « Remplacer par les données du NAS » (les données du NAS écrasent celles du téléphone), « Se déconnecter » (tes données restent sur le téléphone).</p>
+  <p><b>À savoir :</b> une série supprimée sur un appareil pendant qu'un autre appareil a aussi été modifié peut revenir lors de la fusion. Supprime-la à nouveau si besoin.</p>
+</div>
+
+<h2>5. Sauvegarder le NAS lui-même</h2>
+<p>Toutes les données PocketBase sont dans <code>/docker/pocketbase/pb_data</code>. Ajoute ce dossier à <b>Hyper Backup</b> pour en garder une copie. L'export complet de WorkLog (Historique › Exporter) reste aussi disponible.</p>
+</main>
+</body>
+</html>
