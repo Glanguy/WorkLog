@@ -3,9 +3,10 @@
    - Liste des exercices : cache d'abord, mise à jour en arrière-plan.
    - Images et animations d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
    Les séries, favoris et séances sont dans IndexedDB, pas ici. */
-const CACHE = 'worklog-0.7.0';
+const CACHE = 'worklog-0.7.1';
 const IMG_CACHE = 'worklog-img-v1';
-const IMG_MAX = 500;
+const IMG_MAX = 1500;   // environ 130 Mo d'images au plus
+let puts = 0;
 const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/i18n.js', 'js/mannequin.js', 'js/exercices-3d.js', 'models/mannequin.bin', 'models/mannequin-peau.jpg', 'manifest.webmanifest', 'data/data-v3.json', 'data/names-fr.json', 'data/bodymap.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 const DATA = /\/(data-v3|names-fr|bodymap)\.json$|\/mannequin(\.bin|-peau\.jpg)$/;   // cache d'abord (le mannequin change seulement avec la version)
 const IMG_HOSTS = ['cdn.jsdelivr.net', 'raw.githubusercontent.com'];
@@ -20,7 +21,7 @@ self.addEventListener('activate', (e) => {
 function timeout(ms) { return new Promise((res) => setTimeout(() => res(null), ms)); }
 async function trim(cache) {
   const keys = await cache.keys();
-  if (keys.length > IMG_MAX) await Promise.all(keys.slice(0, keys.length - IMG_MAX + 50).map((k) => cache.delete(k)));
+  if (keys.length > IMG_MAX) for (const k of keys.slice(0, keys.length - IMG_MAX + 100)) await cache.delete(k);
 }
 
 self.addEventListener('fetch', (e) => {
@@ -33,7 +34,11 @@ self.addEventListener('fetch', (e) => {
       const hit = await c.match(req.url);
       if (hit) return hit;
       const r = await fetch(req);
-      if (r && r.ok && r.type !== 'opaque') { try { await c.put(req.url, r.clone()); trim(c); } catch (err) { /* quota : on continue sans cache */ } }
+      // L'image est rendue tout de suite ; la mise en cache se fait à côté, et le tri des plus
+      // anciennes seulement de temps en temps (pas à chaque image).
+      if (r && r.ok && r.type !== 'opaque') {
+        e.waitUntil(c.put(req.url, r.clone()).then(() => { if (++puts % 60 === 0) return trim(c); }).catch(() => { /* quota : on continue sans cache */ }));
+      }
       return r;
     }));
     return;

@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.0';
+  const APP_VERSION = '0.7.1';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -188,7 +188,7 @@
     plans: [],           // séances types : { id, name, folder, main, sec, items: [{ ex, sets: [{ w, r }] }], created, last }
     folders: [],         // noms des dossiers de séances types
     schedules: [],       // programmations répétées : { id, plan, start, every (semaines), days [0 = lundi … 6], until, made: [dates déjà ajoutées] }
-    settings: { bw: '', nas: { url: '', email: '' } },   // réglages : poids du corps (kg), adresse du NAS
+    settings: { bw: '', pct: 70, nas: { url: '', email: '' } },   // réglages : poids du corps (kg), adresse du NAS
     savedAt: 0,          // date de la dernière modification des données
     guard: null,         // saisie non validée sur la page en cours : { dirty(), save() }
     draft: null,         // saisie à remettre après « Annuler » : { id, rows }
@@ -237,7 +237,17 @@
   let thumbIO = null;
   function watchThumb(el) {
     if (!('IntersectionObserver' in window)) { el._play(true); return; }
-    if (!thumbIO) thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => en.target._play && en.target._play(en.isIntersecting)), { rootMargin: '120px 0px' });
+    // Une vignette ne se charge que si elle reste à l'écran un court instant : un défilement rapide
+    // ne lance pas des centaines de chargements d'images pour rien.
+    if (!thumbIO) {
+      thumbIO = new IntersectionObserver((ents) => ents.forEach((en) => {
+        const t = en.target;
+        if (!t._play) return;
+        clearTimeout(t._wait);
+        if (en.isIntersecting) t._wait = setTimeout(() => { if (t.isConnected) t._play(true); }, 140);
+        else t._play(false);
+      }), { rootMargin: '60px 0px' });
+    }
     thumbIO.observe(el);
   }
   /* Exercice maison (src 2) : le mannequin 3D animé. big : grande vue qu'on fait tourner au doigt. */
@@ -467,7 +477,8 @@
     const s = o && typeof o === 'object' ? o : {};
     const bw = fin(s.bw) && s.bw > 0 && s.bw < 400 ? Math.round(s.bw * 10) / 10 : '';
     const nas = s.nas && typeof s.nas === 'object' ? s.nas : {};
-    return { bw, nas: { url: str(nas.url, 300).trim(), email: str(nas.email, 200).trim() } };
+    const pct = [60, 70, 80].includes(s.pct) ? s.pct : 70;   // graphique « Répétitions à X % »
+    return { bw, pct, nas: { url: str(nas.url, 300).trim(), email: str(nas.email, 200).trim() } };
   }
   const cleanFolders = (a) => [...new Set((Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 40)))];
 
@@ -606,7 +617,7 @@
   function ensureCalcBar() {
     if (calcBar) return calcBar;
     calcBar = h('div', { class: 'calcbar', hidden: true, role: 'toolbar', 'aria-label': T('Calcul du poids') },
-      ['+', '−', T('×'), T('÷'), '(', ')'].map((k) => h('button', { type: 'button', class: 'ck', 'data-k': k, text: k })),
+      ['+', '−', T('×'), T('÷')].map((k) => h('button', { type: 'button', class: 'ck', 'data-k': k, text: k })),
       h('button', { type: 'button', class: 'ck eq', 'data-k': '=', text: '=' }));
     const press = (b) => {
       const inp = calcTarget;
@@ -1051,7 +1062,7 @@
      La flèche retour et le balayage depuis le bord gauche utilisent l'historique du
      navigateur : on revient sur la page précédente telle qu'on l'avait laissée. */
   const app = () => document.getElementById('app');
-  const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan, settings: viewSettings });
+  const VIEWS = () => ({ home: viewHome, library: viewLibrary, exercise: viewExercise, history: viewHistory, calendar: viewCalendar, session: viewSession, seances: viewSeances, plan: viewPlan, settings: viewSettings, exhistory: viewExHistory });
   /* Transitions : nouvelle page qui arrive de la droite, flèche = page qui part vers la droite,
      croix = page qui descend. Le balayage depuis le bord garde l'animation du navigateur. */
   const reduceMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -1296,10 +1307,10 @@
 
   /* ---------- fiche exercice ---------- */
   const RANGES = [
-    { k: '2s', label: T('2 semaines'), days: 14 },
-    { k: '1m', label: T('1 mois'), days: 30.44 },
-    { k: '3m', label: T('3 mois'), days: 91.3 },
-    { k: '6m', label: T('6 mois'), days: 182.6 },
+    { k: '2s', label: T('2 semaines'), short: T('2 sem.'), days: 14 },
+    { k: '1m', label: T('1 mois'), short: T('1 m'), days: 30.44 },
+    { k: '3m', label: T('3 mois'), short: T('3 m'), days: 91.3 },
+    { k: '6m', label: T('6 mois'), short: T('6 m'), days: 182.6 },
   ];
   function viewExercise(arg, ui) {
     const id = typeof arg === 'string' ? arg : (arg && arg.id) || '';
@@ -1307,10 +1318,14 @@
     const known = S.entries.find((e) => e.exerciseId === id);
     const ex = getEx(id, known && known.name);
     const kind = cardioKind(ex);
-    const metrics = kind ? CARDIO[kind].metrics : ['e1rm', 'max', 'vol'];
+    // Graphiques de musculation, du plus utile au plus spécialisé.
+    const metrics = kind ? CARDIO[kind].metrics : ['e1rm', 'max', 'vol', 'rel', 'pct', 'fat'];
     let range = RANGES.some((r) => r.k === ui.range) ? ui.range : '2s';
     let metric = metrics.includes(ui.metric) ? ui.metric : metrics[0];
-    S.getUI = () => ({ range, metric });
+    let explainOpen = !!ui.explain;   // « En savoir plus » déplié
+    // Sections repliables : « Dernière séance » fermée par défaut, « Progression » et « Nouvelle série » ouvertes.
+    const openSec = Object.assign({ last: false, prog: true, form: true }, ui.openSec || {});
+    S.getUI = () => ({ range, metric, explain: explainOpen, openSec });
     const wrap = h('main', { class: 'page exercise' });
     const fromHome = prevView() === 'home' || prevView() === null;
     wrap.append(h('header', { class: 'bar' }, fromHome ? closeBtn() : backBtn(), h('div', { class: 'grow' }), ex.missing ? null : starBtn(ex.id), fromHome ? null : closeBtn()));
@@ -1333,48 +1348,90 @@
 
     function mine() { return S.entries.filter((e) => e.exerciseId === ex.id).sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0)); }
 
+    /* « Dernière séance » : les 2 derniers jours où l'exercice a été fait, et l'historique complet à part. */
+    const lastSub = h('span', { class: 'fsub' });
     function renderRecent() {
       recent.textContent = '';
       const byDay = new Map();
       for (const e of mine()) { const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
-      const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 3);
-      if (!days.length) { recent.append(h('p', { class: 'empty-note', text: T('Aucune série pour l’instant. Note ta première série en bas de la page.') })); return; }
-      for (const [, list] of days) {
+      const all = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+      const days = all.slice(0, 2);
+      const dayName = (k) => (k === todayKey() ? T('Aujourd’hui') : cap(fDayLong.format(keyDate(k))));
+      lastSub.textContent = days.length ? (days[0][0] === todayKey() ? T('Aujourd’hui') : cap(fDayShort.format(keyDate(days[0][0])))) + ' · ' + plural(days[0][1].length, 'série', 'séries') : T('Aucune série');
+      if (!days.length) { recent.append(h('p', { class: 'empty-note', text: T('Aucune série pour l’instant. Note ta première série dans « Nouvelle série ».') })); return; }
+      for (const [k, list] of days) {
         recent.append(h('div', { class: 'day' },
-          h('div', { class: 'dlabel', text: cap(fDayLong.format(list[0].ts)) }),
+          h('div', { class: 'dlabel', text: dayName(k) }),
           h('div', { class: 'sets' }, list.map((e) => h('span', { class: 'setpair' },
             h('button', { type: 'button', class: 'set', 'aria-label': T('Modifier la série ') + entryText(e), text: entryText(e), onclick: () => editEntry(e, refresh) }),
             h('button', { type: 'button', class: 'setdup', 'aria-label': T('Dupliquer la série ') + entryText(e) + T(' dans « Nouvelle série »'), onclick: () => copyToForm(e) }, icon('copy')))))));
       }
       recent.append(h('p', { class: 'hint', text: T('Touche une série pour la modifier ou la supprimer ; le bouton à côté la recopie dans « Nouvelle série ».') }));
+      recent.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => go('exhistory', ex.id) }, T('Voir tout l’historique') + (all.length > 2 ? ' (' + plural(all.length, 'jour', 'jours') + ')' : '')));
     }
 
+    /* Une ligne fine : le graphique affiché (touche pour en choisir un autre) et la période. */
     function renderChart() {
       chartBox.textContent = '';
+      const M = METRICS[metric];
+      const head = h('div', { class: 'chart-head' });
       if (metrics.length > 1) {
-        chartBox.append(h('div', { class: 'tabs' + (metrics.length === 2 ? ' two' : ''), role: 'tablist', 'aria-label': T('Donnée affichée') },
-          metrics.map((m) => h('button', { type: 'button', role: 'tab', class: 'tab', 'aria-selected': String(metric === m), text: METRICS[m].label, onclick: () => { metric = m; renderChart(); } }))));
-      }
-      chartBox.append(h('div', { class: 'chips fit', role: 'group', 'aria-label': T('Période') },
-        RANGES.map((r) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(range === r.k), text: r.label, onclick: () => { range = r.k; renderChart(); } }))));
+        head.append(h('button', { type: 'button', class: 'metric-btn', 'aria-haspopup': 'dialog', 'aria-label': T('Graphique affiché : {0}. Toucher pour en choisir un autre.', M.label), onclick: pickMetric },
+          h('span', { text: metric === 'pct' ? T('Répétitions à {0} %', S.settings.pct || 70) : M.label }), icon('down')));
+      } else head.append(h('span', { class: 'metric-one', text: M.label }));
+      head.append(h('div', { class: 'seg', role: 'group', 'aria-label': T('Période') },
+        RANGES.map((r) => h('button', { type: 'button', class: 'segb', 'aria-pressed': String(range === r.k), 'aria-label': r.label, text: r.short, onclick: () => { range = r.k; renderChart(); } }))));
+      chartBox.append(head);
       const all = mine();
       const end = Math.max(Date.now(), all.length ? all[all.length - 1].ts : 0);
       const start = end - RANGES.find((r) => r.k === range).days * 86400000;
-      chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end, METRICS[metric]));
+      chartBox.append(buildChart(all.filter((e) => e.ts >= start && e.ts <= end), start, end, M,
+        { hist: all, pct: S.settings.pct || 70, explain: explainOpen, onExplain: (v) => { explainOpen = v; } }));
+      if (metric === 'pct') {
+        chartBox.append(h('div', { class: 'pctrow' }, h('span', { text: T('Pourcentage de ta force estimée') }),
+          h('div', { class: 'seg', role: 'group', 'aria-label': T('Pourcentage') }, [60, 70, 80].map((v) => h('button', { type: 'button', class: 'segb', 'aria-pressed': String((S.settings.pct || 70) === v), text: v + ' %',
+            onclick: () => { S.settings.pct = v; saveUser(); renderChart(); } })))));
+      }
+    }
+    /* Liste des graphiques, chacun avec une phrase qui dit ce qu'il mesure. */
+    function pickMetric() {
+      bottomSheet((box, close) => {
+        box.append(h('h2', { class: 'bs-title', text: T('Graphique affiché') }));
+        for (const m of metrics) {
+          const M = METRICS[m];
+          box.append(h('button', { type: 'button', class: 'mrow' + (m === metric ? ' on' : ''), 'aria-pressed': String(m === metric),
+            onclick: () => close(() => { metric = m; renderChart(); }) },
+          h('span', { class: 'mt' }, h('b', { text: M.label }), h('span', { text: M.desc })), m === metric ? icon('check') : null));
+        }
+        box.append(h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: T('Fermer'), onclick: () => close() }));
+      });
     }
 
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Dernières séances') }), h('div', { class: 'card' }, recent)));
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Progression') }), h('div', { class: 'card' }, chartBox)));
+    /* Section repliable ; son état est gardé quand on revient sur la page. */
+    function fold(key, title, body, sub) {
+      const d = h('details', { class: 'sec fold' }, h('summary', {}, h('span', { class: 'ft' }, h('h2', { text: title }), sub || null), icon('down')), body);
+      d.open = !!openSec[key];
+      d.addEventListener('toggle', () => { openSec[key] = d.open; });
+      return d;
+    }
+    wrap.append(fold('last', T('Dernière séance'), h('div', { class: 'card' }, recent), lastSub));
+    wrap.append(fold('prog', T('Progression'), h('div', { class: 'card' }, chartBox)));
     let draft = null;
     if (S.draft && S.draft.id === id) { draft = S.draft.rows; S.draft = null; }
     const planned = dayCtx && S.days[dayCtx] && S.days[dayCtx].plan[id] && !dayEntries(dayCtx).some((e) => e.exerciseId === id) ? S.days[dayCtx].plan[id] : null;
     const form = buildForm(ex, { day: dayCtx, draft, planned, arg }, refresh);
-    wrap.append(form);
+    const formTitle = form.querySelector('h2');
+    const formFold = fold('form', formTitle.textContent, form.querySelector('.card'));
+    wrap.append(formFold);
+    /* Recopie une série dans « Nouvelle série » : la ligne remplie clignote brièvement (pas de message). */
     function copyToForm(e) {
+      formFold.open = true;
       const row = form.fill(e);
       const f = row.nodes && (row.nodes.r || row.nodes.min);
-      if (f) f.closest('.srow, .crow').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
-      toast(T('Série recopiée dans « Nouvelle série » : ajuste-la puis valide.'));
+      const line = f && f.closest('.srow, .crow');
+      if (!line) return;
+      line.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+      line.classList.remove('flash'); void line.offsetWidth; line.classList.add('flash');
     }
     refresh();
     return wrap;
@@ -1386,60 +1443,157 @@
   const round1 = (v) => Math.round(v * 10) / 10;
   const maxBy = (list, f) => list.reduce((a, b) => (f(b) > f(a) ? b : a));
   const sumOf = (list, f) => list.reduce((n, e) => n + (fin(f(e)) ? f(e) : 0), 0);
-  const METRICS = {
-    e1rm: { label: T('Force estimée'), note: T('Force estimée (kg) : ta meilleure série du jour'),
-      agg: (l) => { const b = maxBy(l, e1rm); return { v: round1(e1rm(b)), best: b }; }, tick: fmtNum,
-      detail: (p) => [fmtNum(p.v) + ' kg ' + T('estimés'), T('Meilleure série : ') + entryText(p.best)] },
-    max: { label: T('Charge max'), note: T('Charge la plus lourde du jour (kg) ; × = répétitions faites à cette charge'),
-      agg: (l) => { const w = Math.max(...l.map((e) => e.w)); const b = maxBy(l.filter((e) => e.w === w), (e) => e.r); return { v: w, best: b, mark: T('×') + fmtNum(b.r) }; }, tick: fmtNum,
-      detail: (p) => [fmtNum(p.v) + T(' kg × ') + fmtNum(p.best.r) + ' ' + T('rép.'), p.best.bw ? entryText(p.best) : ''] },
-    vol: { label: T('Volume'), note: T('Volume du jour (kg) : poids × répétitions de toutes les séries'),
-      agg: (l) => ({ v: Math.round(sumOf(l, (e) => e.w * e.r)), n: l.length }), tick: fmtNum,
-      detail: (p) => [fmtNum(p.v) + ' kg', plural(p.n, 'série', 'séries')] },
-    dur: { label: T('Durée'), note: T('Durée totale du jour (minutes)'), agg: (l) => ({ v: sumOf(l, (e) => e.dur) / 60, s: sumOf(l, (e) => e.dur), n: l.length }), tick: (v) => fmtNum(Math.round(v)),
-      detail: (p) => [fmtDur(p.s), plural(p.n, 'série', 'séries')] },
-    speed: { label: T('Vitesse'), note: T('Meilleure vitesse moyenne du jour (km/h)'), agg: (l) => { const ok = l.filter((e) => speedOf(e)); if (!ok.length) return null; const b = maxBy(ok, speedOf); return { v: speedOf(b), best: b }; },
-      tick: (v) => fmtNum(Math.round(v)), detail: (p) => [fmtNum(Math.round(p.v * 10) / 10) + ' km/h', entryText(p.best)] },
-    hold: { label: T('Durée'), note: T('Plus longue tenue du jour (secondes)'), agg: (l) => { const b = maxBy(l, (e) => e.dur); return { v: b.dur, best: b, n: l.length, s: sumOf(l, (e) => e.dur) }; },
-      tick: (v) => fmtNum(Math.round(v)), detail: (p) => [fmtDur(p.v), plural(p.n, 'série', 'séries') + ' · ' + T('total') + ' ' + fmtDur(p.s)] },
-    lvl: { label: T('Niveau'), note: T('Niveau le plus haut du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.lvl)); if (!ok.length) return null; const b = maxBy(ok, (e) => e.lvl); return { v: b.lvl, best: b }; },
-      tick: fmtNum, detail: (p) => [T('niveau') + ' ' + fmtNum(p.v), entryText(p.best)] },
-    rounds: { label: T('Tours'), note: T('Nombre de tours du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.rounds)); if (!ok.length) return null; return { v: sumOf(ok, (e) => e.rounds), n: ok.length }; },
-      tick: fmtNum, detail: (p) => [plural(p.v, 'tour', 'tours'), plural(p.n, 'série', 'séries')] },
-  };
-  /* Explication du calcul de la force estimée, avec l'exemple de la série retenue. */
-  function e1rmExplain(p) {
-    const box = h('div', { class: 'explain' });
-    box.append(h('strong', { text: T('Comment la force estimée est calculée') }),
-      h('p', { text: T('Pour chaque série : poids × (1 + répétitions ÷ 30). C’est la formule d’Epley, qui estime la charge que tu pourrais soulever une seule fois (ton « 1RM »). Une série d’une seule répétition compte pour son poids.') }),
-      h('p', { text: T('Le point du jour est ta meilleure série. Si tu as pris plus lourd en faisant moins de répétitions, le graphique montre quand même ce progrès, ce que le total soulevé (onglet Volume) ne fait pas.') }));
-    if (p && p.best) {
-      const b = p.best;
-      box.append(h('p', { class: 'ex' }, T('Exemple, ta meilleure série du {0} : ', fDayShort.format(b.ts)),
-        h('b', { text: b.r <= 1 ? fmtNum(b.w) + T(' kg × 1 → ') + fmtNum(round1(e1rm(b))) + ' kg'
-          : fmtNum(b.w) + T(' kg × ') + fmtNum(b.r) + ' → ' + fmtNum(b.w) + T(' × (1 + ') + fmtNum(b.r) + T(' ÷ 30) = ') + fmtNum(round1(e1rm(b))) + ' kg' })));
+  const isLift = (e) => e.c !== 1 && fin(e.w) && fin(e.r) && e.w > 0 && e.r > 0;
+  /* Force de référence d'un jour : la meilleure force estimée des 3 mois qui précèdent (ce jour compris),
+     calculée seulement sur les séries de 1 à 10 répétitions (là où la formule est fiable). */
+  function refMax(hist, key) {
+    const end = keyDate(key).getTime() + 86400000; const start = end - 92 * 86400000;
+    let best = null;
+    for (const e of hist) {
+      if (!isLift(e) || e.r > 10 || e.ts < start || e.ts >= end) continue;
+      const v = e1rm(e);
+      if (!best || v > best.v) best = { v, e };
     }
-    box.append(h('p', { class: 'small', text: T('L’estimation est plus fiable entre 1 et 12 répétitions. Au poids du corps, le calcul utilise le poids total (poids du corps + lest, ou moins l’assistance).') }));
-    return box;
+    return best;
+  }
+  const predReps = (R, w) => 30 * (R / w - 1);   // répétitions que la formule d'Epley prévoit à la charge w
+  const para = (t) => h('p', { text: t });
+  const exLine = (label, formula) => h('p', { class: 'ex' }, label, h('b', { text: formula }));
+  /* Historique complet d'un exercice, ouvert par-dessus sa page : toutes les séries, jour par jour. */
+  function viewExHistory(arg) {
+    const id = String(arg || '');
+    const known = S.entries.find((e) => e.exerciseId === id);
+    const ex = getEx(id, known && known.name);
+    const wrap = h('main', { class: 'page exhistory' });
+    wrap.append(h('header', { class: 'bar' }, backBtn(), h('h1', { class: 'grow', text: T('Historique') }), closeBtn()));
+    wrap.append(h('p', { class: 'ex-sub', text: dn(ex) }));
+    const body = h('div');
+    function renderList() {
+      body.textContent = '';
+      const byDay = new Map();
+      for (const e of S.entries.filter((x) => x.exerciseId === id).sort((a, b) => b.ts - a.ts || (b.created || 0) - (a.created || 0))) {
+        const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e);
+      }
+      if (!byDay.size) { body.append(h('p', { class: 'empty-note', text: T('Aucune série pour cet exercice.') })); return; }
+      body.append(h('p', { class: 'hint', text: T('{0} · touche une série pour la modifier ou la supprimer.', plural(byDay.size, 'jour', 'jours')) }));
+      const card = h('div', { class: 'card recent' });
+      for (const [k, list] of byDay) {
+        list.sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
+        card.append(h('div', { class: 'day' }, h('div', { class: 'dlabel', text: k === todayKey() ? T('Aujourd’hui') : cap(fDayLong.format(keyDate(k))) + ' ' + keyDate(k).getFullYear() }),
+          h('div', { class: 'sets' }, list.map((e) => h('button', { type: 'button', class: 'set', 'aria-label': T('Modifier la série ') + entryText(e), text: entryText(e), onclick: () => editEntry(e, renderList) })))));
+      }
+      body.append(card);
+    }
+    renderList();
+    wrap.append(h('section', { class: 'sec' }, body));
+    return wrap;
   }
 
-  /* Graphique : un point par jour. Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur. */
-  function buildChart(all, start, end, M) {
+  /* Données affichables : un point par jour. agg(séries du jour, contexte) → { v, best, mark… } ;
+     explain(point, contexte) → explication affichée avec « En savoir plus ». */
+  const METRICS = {
+    e1rm: { label: T('Force estimée'), desc: T('Ta force, même si tu changes de charge ou de répétitions'), note: T('Force estimée (kg) : ta meilleure série du jour'),
+      agg: (l) => { const ok = l.filter(isLift); if (!ok.length) return null; const b = maxBy(ok, e1rm); return { v: round1(e1rm(b)), best: b }; }, tick: fmtNum,
+      detail: (pt) => [fmtNum(pt.v) + ' kg ' + T('estimés'), T('Meilleure série : ') + entryText(pt.best)],
+      explain: (pt) => {
+        const b = pt.best;
+        return [para(T('Pour chaque série : poids × (1 + répétitions ÷ 30). C’est la formule d’Epley, qui estime la charge que tu pourrais soulever une seule fois (ton « 1RM »). Une série d’une seule répétition compte pour son poids.')),
+          para(T('Le point du jour est ta meilleure série. Si tu as pris plus lourd en faisant moins de répétitions, le graphique montre quand même ce progrès, ce que le total soulevé (Volume) ne fait pas.')),
+          exLine(T('Exemple, ta meilleure série du {0} : ', fDayShort.format(b.ts)), b.r <= 1 ? fmtNum(b.w) + T(' kg × 1 → ') + fmtNum(round1(e1rm(b))) + ' kg'
+            : fmtNum(b.w) + T(' kg × ') + fmtNum(b.r) + ' → ' + fmtNum(b.w) + T(' × (1 + ') + fmtNum(b.r) + T(' ÷ 30) = ') + fmtNum(round1(e1rm(b))) + ' kg'),
+          h('p', { class: 'small', text: T('L’estimation est plus fiable entre 1 et 12 répétitions. Au poids du corps, le calcul utilise le poids total (poids du corps + lest, ou moins l’assistance).') })];
+      } },
+    max: { label: T('Charge max'), desc: T('La charge la plus lourde du jour'), note: T('Charge la plus lourde du jour (kg) ; × = répétitions faites à cette charge'),
+      agg: (l) => { const ok = l.filter(isLift); if (!ok.length) return null; const w = Math.max(...ok.map((e) => e.w)); const b = maxBy(ok.filter((e) => e.w === w), (e) => e.r); return { v: w, best: b, mark: T('×') + fmtNum(b.r) }; }, tick: fmtNum,
+      detail: (pt) => [fmtNum(pt.v) + T(' kg × ') + fmtNum(pt.best.r) + ' ' + T('rép.'), pt.best.bw ? entryText(pt.best) : ''],
+      explain: () => [para(T('La charge la plus lourde soulevée ce jour-là. Le petit nombre au-dessus du point (×8, par exemple) indique les répétitions faites à cette charge.')),
+        para(T('C’est la mesure la plus parlante, mais elle ne montre pas un progrès en répétitions à charge égale : pour ça, regarde la force estimée.'))] },
+    vol: { label: T('Volume'), desc: T('La quantité de travail du jour'), note: T('Volume du jour (kg) : poids × répétitions de toutes les séries'),
+      agg: (l) => { const ok = l.filter(isLift); if (!ok.length) return null; return { v: Math.round(sumOf(ok, (e) => e.w * e.r)), n: ok.length }; }, tick: fmtNum,
+      detail: (pt) => [fmtNum(pt.v) + ' kg', plural(pt.n, 'série', 'séries')],
+      explain: (pt) => [para(T('La somme de poids × répétitions de toutes tes séries du jour. C’est la quantité de travail, un des principaux moteurs de la prise de muscle : il monte si tu fais plus de séries, plus de répétitions ou plus lourd.')),
+        exLine(T('Ce jour-là : '), T('{0} pour {1} kg au total', plural(pt.n, 'série', 'séries'), fmtNum(pt.v)))] },
+    rel: { label: T('Endurance relative'), desc: T('Tes répétitions comparées à celles que ta force prévoit'), note: T('Endurance relative (%) : 100 % = autant de répétitions que prévu par ta force'),
+      empty: () => T('Il faut une série à 85 % de ta force estimée ou moins (une charge plus légère que tes séries lourdes) pour calculer l’endurance relative.'),
+      agg: (l, k, c) => {
+        const R = refMax(c.hist, k); if (!R) return null;
+        // La série qui sert de référence ne se mesure pas contre elle-même.
+        const ok = l.filter((e) => isLift(e) && e !== R.e && e.w <= 0.85 * R.v);
+        if (!ok.length) return null;
+        const ratio = (e) => (e.r / predReps(R.v, e.w)) * 100;
+        const b = maxBy(ok, ratio);
+        return { v: Math.round(ratio(b)), best: b, R: R.v, pred: predReps(R.v, b.w) };
+      }, tick: fmtNum,
+      detail: (pt) => [pt.v + ' %', entryText(pt.best) + ' · ' + T('{0} rép. prévues', fmtNum(round1(pt.pred)))],
+      explain: (pt) => [para(T('Compare les répétitions faites à une charge légère ou moyenne avec celles que ta force prévoit à cette charge.')),
+        para(T('Référence : ta meilleure force estimée des 3 derniers mois (séries de 1 à 10 répétitions). À une charge donnée, la formule d’Epley prévoit 30 × (référence ÷ charge − 1) répétitions. Endurance relative = répétitions faites ÷ répétitions prévues.')),
+        para(T('100 % = autant que prévu. Au-dessus, ton muscle tient mieux que ta force ne le laisse prévoir ; en dessous, c’est l’endurance qui te limite. Seules les séries à 85 % de ta référence ou moins comptent ; le point du jour est la meilleure.')),
+        exLine(T('Ce jour-là : '), T('référence {0} kg ; à {1} kg, 30 × ({0} ÷ {1} − 1) = {2} rép. prévues ; tu en as fait {3} → {4} %', fmtNum(round1(pt.R)), fmtNum(pt.best.w), fmtNum(round1(pt.pred)), fmtNum(pt.best.r), pt.v))] },
+    pct: { label: T('Répétitions à X %'), desc: T('Tes répétitions à un même pourcentage de ta force'), note: T('Répétitions faites à {0} % de ta force estimée', '{pct}'),
+      empty: (c) => T('Aucune série autour de {0} % de ta force estimée (entre {1} et {2} %) sur cette période. Choisis un autre pourcentage ci-dessous.', c.pct, c.pct - 5, c.pct + 5),
+      agg: (l, k, c) => {
+        const R = refMax(c.hist, k); if (!R) return null;
+        const X = c.pct / 100;
+        const ok = l.filter((e) => isLift(e) && Math.abs(e.w / R.v - X) <= 0.05);
+        if (!ok.length) return null;
+        const b = maxBy(ok, (e) => e.r);
+        return { v: b.r, best: b, R: R.v, mark: fmtNum(b.w) + ' kg' };
+      }, tick: fmtNum,
+      detail: (pt) => [fmtNum(pt.v) + ' ' + T('rép.'), T('à {0} kg, soit {1} % de {2} kg', fmtNum(pt.best.w), Math.round((pt.best.w / pt.R) * 100), fmtNum(round1(pt.R)))],
+      explain: (pt, c) => [para(T('Le nombre de répétitions faites à {0} % de ta force estimée (référence : ta meilleure force estimée des 3 derniers mois, séries de 1 à 10 répétitions). C’est le test d’endurance classique : à charge relative égale, plus de répétitions = plus d’endurance.', c.pct)),
+        para(T('Une série compte si sa charge est à 5 points près du pourcentage choisi (entre {0} et {1} % pour {2} %). Choisis le pourcentage avec les boutons sous le graphique.', c.pct - 5, c.pct + 5, c.pct)),
+        exLine(T('Ce jour-là : '), T('{0} kg × {1}, soit {2} % de ta référence de {3} kg', fmtNum(pt.best.w), fmtNum(pt.best.r), Math.round((pt.best.w / pt.R) * 100), fmtNum(round1(pt.R))))] },
+    fat: { label: T('Indice de fatigue'), desc: T('La baisse de répétitions d’une série à l’autre'), note: T('Indice de fatigue (%) : plus c’est bas, mieux tu tiens'), zero: true,
+      empty: () => T('Il faut au moins 2 séries à la même charge le même jour pour calculer l’indice de fatigue.'),
+      agg: (l) => {
+        const groups = new Map();
+        for (const e of l.filter(isLift)) { if (!groups.has(e.w)) groups.set(e.w, []); groups.get(e.w).push(e); }
+        let pick = null;
+        for (const [w, g] of groups) if (g.length >= 2 && (!pick || g.length > pick.g.length || (g.length === pick.g.length && w > pick.w))) pick = { w, g };
+        if (!pick) return null;
+        const g = pick.g.slice().sort((a, b) => a.ts - b.ts || (a.created || 0) - (b.created || 0));
+        const f = g[0]; const z = g[g.length - 1];
+        return { v: Math.max(0, Math.round(((f.r - z.r) / f.r) * 100)), best: f, n: g.length, w: pick.w, r0: f.r, r1: z.r };
+      }, tick: fmtNum,
+      detail: (pt) => [pt.v + ' %', T('{0} à {1} kg : {2} → {3} rép.', plural(pt.n, 'série', 'séries'), fmtNum(pt.w), fmtNum(pt.r0), fmtNum(pt.r1))],
+      explain: (pt) => [para(T('Combien tes répétitions baissent d’une série à l’autre à la même charge : (répétitions de la 1re série − répétitions de la dernière) ÷ répétitions de la 1re série.')),
+        para(T('0 % = tu tiens le même nombre de répétitions jusqu’au bout. Plus c’est bas, mieux ton muscle récupère entre les séries. Il faut au moins 2 séries à la même charge le même jour ; s’il y a plusieurs charges, c’est celle où tu as fait le plus de séries qui compte.')),
+        exLine(T('Ce jour-là : '), T('{0} à {1} kg, {2} → {3} rép. : ({2} − {3}) ÷ {2} = {4} %', plural(pt.n, 'série', 'séries'), fmtNum(pt.w), fmtNum(pt.r0), fmtNum(pt.r1), pt.v))] },
+    dur: { label: T('Durée'), note: T('Durée totale du jour (minutes)'), agg: (l) => ({ v: sumOf(l, (e) => e.dur) / 60, s: sumOf(l, (e) => e.dur), n: l.length }), tick: (v) => fmtNum(Math.round(v)),
+      detail: (pt) => [fmtDur(pt.s), plural(pt.n, 'série', 'séries')] },
+    speed: { label: T('Vitesse'), note: T('Meilleure vitesse moyenne du jour (km/h)'), agg: (l) => { const ok = l.filter((e) => speedOf(e)); if (!ok.length) return null; const b = maxBy(ok, speedOf); return { v: speedOf(b), best: b }; },
+      tick: (v) => fmtNum(Math.round(v)), detail: (pt) => [fmtNum(Math.round(pt.v * 10) / 10) + ' km/h', entryText(pt.best)] },
+    hold: { label: T('Durée'), note: T('Plus longue tenue du jour (secondes)'), agg: (l) => { const b = maxBy(l, (e) => e.dur); return { v: b.dur, best: b, n: l.length, s: sumOf(l, (e) => e.dur) }; },
+      tick: (v) => fmtNum(Math.round(v)), detail: (pt) => [fmtDur(pt.v), plural(pt.n, 'série', 'séries') + ' · ' + T('total') + ' ' + fmtDur(pt.s)] },
+    lvl: { label: T('Niveau'), note: T('Niveau le plus haut du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.lvl)); if (!ok.length) return null; const b = maxBy(ok, (e) => e.lvl); return { v: b.lvl, best: b }; },
+      tick: fmtNum, detail: (pt) => [T('niveau') + ' ' + fmtNum(pt.v), entryText(pt.best)] },
+    rounds: { label: T('Tours'), note: T('Nombre de tours du jour'), agg: (l) => { const ok = l.filter((e) => fin(e.rounds)); if (!ok.length) return null; return { v: sumOf(ok, (e) => e.rounds), n: ok.length }; },
+      tick: fmtNum, detail: (pt) => [plural(pt.v, 'tour', 'tours'), plural(pt.n, 'série', 'séries')] },
+  };
+  for (const M of Object.values(METRICS)) { if (!M.desc) M.desc = M.note; if (!M.explain) M.explain = () => [para(M.note)]; }
+
+  /* Graphique : un point par jour. Bornes : minimum −10 % arrondi à l'entier inférieur, maximum +10 % arrondi au supérieur.
+     c : contexte (toutes les séries de l'exercice, pourcentage choisi, état de « En savoir plus »). */
+  function buildChart(all, start, end, M, c) {
+    c = c || { hist: all, pct: 70 };
     const box = h('div');
     const byDay = new Map();
     for (const e of all) { const k = dayKey(e.ts); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); }
     const pts = [];
     for (const [k, list] of byDay) {
-      const a = M.agg(list);
-      if (a && fin(a.v) && a.v > 0) pts.push(Object.assign(a, { key: k, t: Math.min(end, keyDate(k).getTime() + 12 * 3600000) }));
+      const a = M.agg(list, k, c);
+      if (a && fin(a.v) && (a.v > 0 || M.zero)) pts.push(Object.assign(a, { key: k, t: Math.min(end, keyDate(k).getTime() + 12 * 3600000) }));
     }
+    const note = M.note.replace('{pct}', c.pct);
     if (!pts.length) {
-      box.append(h('p', { class: 'empty-note', text: all.length ? T('Pas de donnée « {0} » sur cette période.', T(M.label).toLowerCase()) : T('Aucune série sur cette période.') }));
+      box.append(h('p', { class: 'empty-note', text: !all.length ? T('Aucune série sur cette période.') : M.empty ? M.empty(c) : T('Pas de donnée « {0} » sur cette période.', M.label.toLowerCase()) }));
+      if (all.length) box.append(h('p', { class: 'hint', text: M.desc }));
       return box;
     }
-    const vals = pts.map((p) => p.v);
-    const lo = Math.max(0, Math.floor(Math.min(...vals) * 0.9));
+    const vals = pts.map((pt) => pt.v);
+    const lo = M.zero ? 0 : Math.max(0, Math.floor(Math.min(...vals) * 0.9));
     let hi = Math.ceil(Math.max(...vals) * 1.1);
+    if (M.zero) hi = Math.max(hi, 10);
     if (hi <= lo) hi = lo + 1;
     const W = 340; const H = 220; const m = { l: 44, r: 16, t: 22, b: 28 };
     const x = (t) => m.l + ((t - start) / (end - start || 1)) * (W - m.l - m.r);
@@ -1461,34 +1615,47 @@
 
     const sorted = pts.sort((a, b) => a.t - b.t);
     if (sorted.length > 1) {
-      svg.append(sv('path', { class: 'area', d: 'M' + x(sorted[0].t).toFixed(1) + ' ' + (H - m.b) + sorted.map((p) => ' L' + x(p.t).toFixed(1) + ' ' + y(p.v).toFixed(1)).join('') + ' L' + x(sorted[sorted.length - 1].t).toFixed(1) + ' ' + (H - m.b) + ' Z' }));
-      svg.append(sv('path', { class: 'line', d: sorted.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ') }));
+      svg.append(sv('path', { class: 'area', d: 'M' + x(sorted[0].t).toFixed(1) + ' ' + (H - m.b) + sorted.map((pt) => ' L' + x(pt.t).toFixed(1) + ' ' + y(pt.v).toFixed(1)).join('') + ' L' + x(sorted[sorted.length - 1].t).toFixed(1) + ' ' + (H - m.b) + ' Z' }));
+      svg.append(sv('path', { class: 'line', d: sorted.map((pt, i) => (i ? 'L' : 'M') + x(pt.t).toFixed(1) + ' ' + y(pt.v).toFixed(1)).join(' ') }));
     }
-    // Petit texte au-dessus des points (répétitions de la charge max), seulement s'il y a la place.
-    if (sorted.some((p) => p.mark) && sorted.length <= 14) {
-      sorted.forEach((p) => { if (p.mark) svg.append(sv('text', { class: 'mark', x: x(p.t), y: y(p.v) - 10, 'text-anchor': 'middle' }, p.mark)); });
+    // Petit texte au-dessus des points, seulement s'il y a la place.
+    if (sorted.some((pt) => pt.mark) && sorted.length <= 14) {
+      sorted.forEach((pt) => { if (pt.mark) svg.append(sv('text', { class: 'mark', x: x(pt.t), y: y(pt.v) - 10, 'text-anchor': 'middle' }, pt.mark)); });
     }
     const detail = h('div', { class: 'detail', 'aria-live': 'polite' });
-    const explain = h('div');
+    // « En savoir plus » : l'explication du calcul, repliée par défaut.
+    const more = h('button', { type: 'button', class: 'morebtn', 'aria-expanded': String(!!c.explain) });
+    const explain = h('div', { class: 'explain', hidden: !c.explain });
+    let cur = sorted.length - 1;
+    const paintExplain = () => {
+      more.textContent = '';
+      more.append(h('span', { text: c.explain ? T('Masquer l’explication') : T('En savoir plus') }), icon('down'));
+      more.setAttribute('aria-expanded', String(!!c.explain));
+      explain.hidden = !c.explain;
+      explain.textContent = '';
+      if (c.explain) explain.append(h('strong', { text: T('Comment c’est calculé') }), ...M.explain(sorted[cur], c));
+    };
+    more.addEventListener('click', () => { c.explain = !c.explain; if (c.onExplain) c.onExplain(c.explain); paintExplain(); });
     const dots = [];
     const select = (i) => {
+      cur = i;
       dots.forEach((d, j) => d.setAttribute('class', j === i ? 'dot on' : 'dot'));
       const [a, b] = M.detail(sorted[i]);
       detail.textContent = '';
       detail.append(h('strong', { text: a }), h('span', { class: 'sub', text: (b ? b + ' · ' : '') + cap(fDayLong.format(keyDate(sorted[i].key))) }));
-      if (M === METRICS.e1rm) { explain.textContent = ''; explain.append(e1rmExplain(sorted[i])); }
+      paintExplain();
     };
-    sorted.forEach((p) => {
-      const dot = sv('circle', { class: 'dot', cx: x(p.t), cy: y(p.v), r: 5.5 });
+    sorted.forEach((pt) => {
+      const dot = sv('circle', { class: 'dot', cx: x(pt.t), cy: y(pt.v), r: 5.5 });
       dots.push(dot); svg.append(dot);
     });
-    sorted.forEach((p, i) => {
-      const hit = sv('circle', { class: 'hit', cx: x(p.t), cy: y(p.v), r: 18, tabindex: '0', role: 'button', 'aria-label': M.detail(p).filter(Boolean).join(', ') + ', ' + fDayShort.format(keyDate(p.key)) });
+    sorted.forEach((pt, i) => {
+      const hit = sv('circle', { class: 'hit', cx: x(pt.t), cy: y(pt.v), r: 18, tabindex: '0', role: 'button', 'aria-label': M.detail(pt).filter(Boolean).join(', ') + ', ' + fDayShort.format(keyDate(pt.key)) });
       hit.addEventListener('click', () => select(i));
       hit.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } });
       svg.append(hit);
     });
-    box.append(h('p', { class: 'chart-note', text: T(M.note) }), svg, detail, explain);
+    box.append(h('p', { class: 'chart-note', text: note }), svg, detail, more, explain);
     select(sorted.length - 1);
     return box;
   }
@@ -1834,6 +2001,19 @@
       let content = null;
       const ensure = () => { if (!content) { content = fill(); d.append(content); } };
       if (toggled.has(key)) { d.open = true; ensure(); }
+      // Une seule catégorie ouverte à la fois (à chaque niveau). La catégorie touchée reste à la même
+      // place à l'écran, même si celle qu'on referme au-dessus contenait des centaines d'exercices.
+      const sum = d.firstChild;
+      sum.addEventListener('click', (e) => {
+        e.preventDefault();
+        const top = sum.getBoundingClientRect().top;
+        const opening = !d.open;
+        if (opening && d.parentElement) d.parentElement.querySelectorAll(':scope > details.group[open]').forEach((o) => { if (o !== d) o.open = false; });
+        d.open = opening;
+        if (opening) ensure();   // contenu ajouté tout de suite, pour que la page ait sa hauteur finale
+        const shift = sum.getBoundingClientRect().top - top;
+        if (shift) window.scrollBy(0, shift);
+      });
       d.addEventListener('toggle', () => {
         if (d.open) { ensure(); toggled.add(key); } else {
           toggled.delete(key);
@@ -3181,6 +3361,70 @@
     if (document.visibilityState === 'visible' && nasOn() && NAS.auto !== false && Date.now() - (NAS.last || 0) > 60000) nasSync();
   });
 
+  /* ---------- diagnostic (Réglages › Diagnostic, désactivé par défaut) ----------
+     Un petit compteur en direct en bas de l'écran, et un relevé enregistré toutes les 2 secondes.
+     Si l'app se fige ou s'arrête sans être fermée normalement, le dernier relevé s'affiche à la
+     réouverture, prêt à être copié et envoyé. */
+  const DIAG_KEY = 'worklog.diag';
+  const DIAG_LOG = 'worklog.diag.log';
+  let diagBox = null; let diagTimer = null; let diagLast = 0; let diagGap = 0;
+  const diagOn = () => { try { return localStorage.getItem(DIAG_KEY) === '1'; } catch (e) { return false; } };
+  function diagRead() { try { const a = JSON.parse(localStorage.getItem(DIAG_LOG) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  function diagWrite(a) { try { localStorage.setItem(DIAG_LOG, JSON.stringify(a.slice(-40))); } catch (e) { /* ignoré */ } }
+  function diagSnap() {
+    const imgs = [...document.images];
+    const top = S.stack[S.stack.length - 1];
+    return { t: Date.now(), v: top ? top.view : '', rows: document.querySelectorAll('.exrow').length, open: document.querySelectorAll('details.group[open]').length,
+      img: imgs.filter((i) => i.getAttribute('src')).length, gif: imgs.filter((i) => /\.gif/.test(i.getAttribute('src') || '')).length,
+      cv: document.querySelectorAll('canvas').length, el: document.getElementsByTagName('*').length, y: Math.round(window.scrollY), gap: diagGap };
+  }
+  function diagTick() {
+    const now = Date.now();
+    // Retard du relevé : si l'app a été bloquée, ce relevé arrive en retard.
+    const late = diagLast ? now - diagLast - 2000 : 0;
+    diagLast = now;
+    if (late > diagGap) diagGap = late;
+    const sn = diagSnap();
+    if (diagBox) diagBox.textContent = T('{0} lignes · {1} images ({2} gifs) · {3} cat. ouvertes · {4} éléments', sn.rows, sn.img, sn.gif, sn.open, sn.el) + (late > 400 ? ' · ' + T('bloqué {0} s', (late / 1000).toFixed(1)) : '');
+    const log = diagRead(); log.push(sn); diagWrite(log);
+  }
+  function diagStart() {
+    if (diagTimer) return;
+    diagBox = h('div', { class: 'diagbox', 'aria-hidden': 'true' });
+    document.body.append(diagBox);
+    diagLast = 0; diagGap = 0;
+    diagTick();
+    diagTimer = setInterval(diagTick, 2000);
+  }
+  function diagStop() { clearInterval(diagTimer); diagTimer = null; if (diagBox) { diagBox.remove(); diagBox = null; } }
+  // Fermeture normale (changement d'app, fermeture) : le relevé est marqué « propre ».
+  const diagClean = () => { if (!diagTimer) return; const log = diagRead(); log.push({ t: Date.now(), clean: true }); diagWrite(log); };
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') diagClean(); else if (diagTimer) { diagLast = 0; diagTick(); } });
+  window.addEventListener('pagehide', diagClean);
+  function diagReport(log) {
+    const fmt = (x) => fTime.format(x.t) + ' · ' + x.v + ' · ' + T('{0} lignes · {1} images ({2} gifs) · {3} cat. ouvertes · {4} éléments', x.rows, x.img, x.gif, x.open, x.el) + ' · canvas ' + x.cv + ' · y ' + x.y + (x.gap > 400 ? ' · ' + T('bloqué {0} s', (x.gap / 1000).toFixed(1)) : '');
+    const last = log.filter((x) => !x.clean).slice(-8);
+    return [T('WorkLog {0} · rapport de diagnostic', APP_VERSION), navigator.userAgent, ...last.map(fmt)].join('\n');
+  }
+  /* À l'ouverture : si la dernière session s'est arrêtée sans fermeture normale, on montre son relevé. */
+  function diagBoot() {
+    if (!diagOn()) return;
+    const log = diagRead();
+    const last = log[log.length - 1];
+    if (last && !last.clean && Date.now() - last.t < 86400000) {
+      const text = diagReport(log);
+      let close = null;
+      const ta = h('textarea', { class: 'field left sumtext', rows: '8', readonly: true }); ta.value = text;
+      close = openModal(h('div', { class: 'dialog sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'dlg-t' },
+        h('h2', { id: 'dlg-t', text: T('WorkLog s’est arrêté') }),
+        h('p', { text: T('La dernière fois, l’app s’est figée ou arrêtée sans être fermée normalement. Voici ce qui se passait juste avant : copie-le et envoie-le.') }), ta,
+        h('div', { class: 'acts' }, h('button', { type: 'button', class: 'btn ghost', text: T('Fermer'), onclick: () => close() }),
+          h('button', { type: 'button', class: 'btn primary', text: T('Copier le rapport'), onclick: async () => { if (await copyText(text)) { toast(T('Rapport copié')); close(); } else ta.select(); } }))));
+    }
+    diagWrite([]);
+    diagStart();
+  }
+
   /* ---------- réglages ---------- */
   function viewSettings() {
     const wrap = h('main', { class: 'page settings' });
@@ -3270,6 +3514,17 @@
         guide);
     }
     renderNas();
+
+    // Diagnostic : compteur en direct et relevé en cas de blocage.
+    const dg = h('input', { type: 'checkbox' });
+    dg.checked = diagOn();
+    dg.addEventListener('change', () => {
+      try { localStorage.setItem(DIAG_KEY, dg.checked ? '1' : '0'); } catch (e) { /* ignoré */ }
+      if (dg.checked) { diagWrite([]); diagStart(); } else { diagStop(); diagWrite([]); }
+    });
+    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Diagnostic') }),
+      h('div', { class: 'card' }, h('label', { class: 'gs-row' }, dg, h('span', { class: 'gl', text: T('Activer le diagnostic') })),
+        h('p', { class: 'hint', text: T('Affiche en bas de l’écran le nombre de lignes, d’images et de catégories ouvertes. Si l’app se fige, le relevé de juste avant s’affiche à la réouverture, prêt à être copié.') }))));
     wrap.append(h('p', { class: 'ver-line', text: T('WorkLog version {0}', APP_VERSION) }));
     return wrap;
   }
@@ -3286,6 +3541,9 @@
     render(S.stack[0]);
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     if (nasOn() && NAS.auto !== false) nasSync();
+    diagBoot();
+    // Écran « Tourne ton téléphone », affiché seulement en paysage (l'app est faite pour le portrait).
+    document.body.append(h('div', { id: 'rotate', 'aria-hidden': 'true' }, h('div', {}, h('b', { text: T('Tourne ton téléphone') }), h('span', { text: T('WorkLog s’utilise en portrait.') }))));
   }
   boot();
 })();

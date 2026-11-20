@@ -1,5 +1,36 @@
 # WorkLog : historique des versions
 
+## 0.7.1
+**Plantage de la bibliothèque**
+- Cause la plus probable : en ouvrant plusieurs catégories sans les refermer (Épaules, Pectoraux, Dos, Biceps…), la page gardait des centaines de lignes d'exercices et lançait un chargement d'image pour chaque vignette croisée en défilant ; la mise en cache des images faisait en plus un tri complet à chaque image. Safari finissait par arrêter de dessiner la page (zones blanches, plus rien de cliquable).
+- Une seule catégorie ouverte à la fois, à chaque niveau, dans la bibliothèque comme dans l'ajout d'exercices à une séance. La catégorie qu'on ouvre reste à sa place à l'écran, même si celle qu'on referme au-dessus contenait des centaines d'exercices.
+- Les lignes hors de l'écran ne sont plus dessinées par Safari.
+- Une vignette ne se charge que si elle reste à l'écran un court instant : un défilement rapide ne lance plus des centaines de chargements. Les exercices à l'écran restent animés, ceux qui en sortent sont retirés de la mémoire.
+- Mise en cache des images allégée : l'image s'affiche sans attendre l'écriture dans le cache, le tri des plus anciennes se fait toutes les 60 images au lieu de chaque image, et le cache garde jusqu'à 1 500 images.
+
+**Diagnostic (Réglages › Diagnostic)**
+- Option à activer ou désactiver, désactivée par défaut. Activée : un compteur discret en bas de l'écran (lignes, images, gifs, catégories ouvertes, éléments de la page) et un relevé toutes les 2 secondes.
+- Si l'app se fige ou s'arrête sans être fermée normalement, le relevé de juste avant s'affiche à la réouverture, avec « Copier le rapport ».
+
+**Graphiques**
+- Une seule ligne fine au-dessus du graphique : le nom du graphique affiché (le toucher ouvre la liste des graphiques, chacun avec une phrase qui dit ce qu'il mesure) et la période (2 sem., 1 m, 3 m, 6 m).
+- 6 graphiques de musculation, dans cet ordre : Force estimée (par défaut), Charge max, Volume, Endurance relative, Répétitions à X %, Indice de fatigue.
+- Endurance relative : répétitions faites à une charge légère ou moyenne ÷ répétitions prévues par ta force (formule d'Epley à l'envers, référence = ta meilleure force estimée des 3 derniers mois sur des séries de 1 à 10 répétitions). 100 % = autant que prévu ; au-dessus, ton muscle tient mieux. Seules les séries à 85 % de la référence ou moins comptent.
+- Répétitions à X % : répétitions faites à 60, 70 ou 80 % de ta force estimée (à 5 points près), choix sous le graphique ; c'est le test d'endurance classique.
+- Indice de fatigue : (répétitions de la 1re série − répétitions de la dernière) ÷ répétitions de la 1re série, sur les séries faites à la même charge le même jour. Plus c'est bas, mieux tu tiens.
+- L'explication du calcul n'apparaît plus d'office : bouton « En savoir plus » sous la meilleure série, avec un exemple chiffré tiré de tes séries, pour chaque graphique.
+
+**Page exercice**
+- Sections repliables : « Dernière séance » (fermée par défaut, avec un résumé dans son titre), « Progression » et « Nouvelle série » (ouvertes). La partie visuelle (schéma et animation) reste toujours affichée.
+- « Dernière séance » montre les 2 derniers jours où l'exercice a été fait, et un bouton « Voir tout l'historique ».
+- Nouvelle page « Historique » par-dessus l'exercice : toutes les séries de cet exercice, jour par jour ; toucher une série pour la modifier ou la supprimer.
+- Recopier une série (bouton à côté d'une série) : plus de message, la ligne remplie clignote brièvement.
+
+**Autres**
+- Messages plus fins, affichés en haut de l'écran : ils ne cachent plus « Valider ».
+- Barre au-dessus du clavier : verre translucide et touches + − × ÷ = arrondies et espacées ; parenthèses retirées.
+- L'app est faite pour le portrait : blocage dans ses réglages d'installation, et écran « Tourne ton téléphone » si le téléphone est en paysage.
+
 ## 0.7.0
 **Graphiques**
 - Un seul point par jour (avant : un point par série, d'où les traits verticaux quand on fait plusieurs séries le même jour).
