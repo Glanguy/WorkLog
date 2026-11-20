@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.1';
+  const APP_VERSION = '0.7.2';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -255,6 +255,99 @@
     const c = W3 && W3.view(ex.id, { thumb: !big, cls });
     return c || h('span', { class: 'ph ' + (cls || '') });
   }
+  /* ---------- vignettes dessinées dans un canvas ----------
+     Safari garde dans sa mémoire graphique chaque gif animé et chaque grande photo affichés par une
+     balise <img>, même une fois retirés de la page. En parcourant des centaines d'exercices, cette
+     mémoire déborde et Safari arrête de dessiner la page (écran blanc, rien de cliquable), alors que
+     l'app, elle, tourne toujours (c'est ce qu'a montré le diagnostic de la 0.7.1).
+     Les vignettes des listes sont donc dessinées par l'app dans un petit canvas : le gif est décodé
+     image par image (js/gifreader.js), les photos sont réduites à la taille de la vignette, et tout est
+     libéré (canvas vidé, données oubliées) dès que la vignette sort de l'écran. */
+  const ANIM = new Set();   // vignettes animées actuellement à l'écran
+  let animRaf = 0;
+  function animLoop(now) {
+    animRaf = 0;
+    for (const a of ANIM) if (now >= a.next) a.step(now);
+    if (ANIM.size && document.visibilityState !== 'hidden') animRaf = requestAnimationFrame(animLoop);
+  }
+  const animKick = () => { if (!animRaf && ANIM.size) animRaf = requestAnimationFrame(animLoop); };
+  document.addEventListener('visibilitychange', animKick);
+  async function fetchBytes(ex, kind) {
+    try {
+      let r = await fetch(mediaUrl(ex, kind));
+      if (!r.ok) r = await fetch(mediaUrl(ex, kind, true));
+      if (!r.ok) return null;
+      return r;
+    } catch (e) { return null; }
+  }
+  /* Gif ExerciseDB : décodé et dessiné image par image dans un canvas 180 × 180. */
+  function gifThumb(ex) {
+    const c = h('canvas', { class: 'thumb sq cv', 'aria-hidden': 'true', width: '0', height: '0' });
+    let on = false; let gen = 0; let anim = null;
+    const stop = () => { if (anim) { ANIM.delete(anim); anim = null; } c.width = 0; c.height = 0; };
+    c._play = async (v) => {
+      if (v === on) return;
+      on = v; const my = ++gen;
+      if (!on) { stop(); return; }
+      const r = await fetchBytes(ex, 'a');
+      const buf = r ? new Uint8Array(await r.arrayBuffer().catch(() => new ArrayBuffer(0))) : null;
+      if (my !== gen) return;
+      let rd = null;
+      try { rd = buf && buf.length && window.GifReader ? new window.GifReader(buf) : null; } catch (e) { rd = null; }
+      if (!rd) { c.classList.add('broken'); return; }
+      c.classList.remove('broken');
+      c.width = rd.width; c.height = rd.height;
+      const ctx = c.getContext('2d');
+      const img = ctx.createImageData(rd.width, rd.height);
+      const n = rd.numFrames();
+      let i = 0;
+      const delay = (k) => { try { return Math.max(60, (rd.frameInfo(k).delay || 10) * 10); } catch (e) { return 100; } };
+      const draw = () => {
+        if (i === 0) img.data.fill(0);
+        try { rd.decodeAndBlitFrameRGBA(i, img.data); } catch (e) { /* image abîmée : on garde la précédente */ }
+        ctx.putImageData(img, 0, 0);
+      };
+      draw();
+      if (n > 1) {
+        anim = { next: performance.now() + delay(0), step(now) { i = (i + 1) % n; draw(); this.next = now + delay(i); } };
+        ANIM.add(anim); animKick();
+      }
+    };
+    return c;
+  }
+  /* Deux photos free-exercise-db (750 × 500) réduites à la taille de la vignette, qui alternent. */
+  function photoThumb(ex) {
+    const el = h('span', { class: 'thumb tflip' });
+    const a = h('canvas', { width: '0', height: '0' });
+    const b = h('canvas', { class: 'b', width: '0', height: '0' });
+    el.append(a, b);
+    let on = false; let gen = 0;
+    const paint = async (cv, k, my) => {
+      const r = await fetchBytes(ex, k);
+      if (!r || my !== gen) return false;
+      let bmp = null;
+      try { bmp = await createImageBitmap(await r.blob()); } catch (e) { return false; }
+      if (my !== gen) { bmp.close(); return false; }
+      const W = 216; const H = 144;   // 3 × la taille affichée
+      cv.width = W; cv.height = H;
+      const sc = Math.max(W / bmp.width, H / bmp.height);
+      const w = bmp.width * sc; const hh = bmp.height * sc;
+      cv.getContext('2d').drawImage(bmp, (W - w) / 2, (H - hh) / 2, w, hh);
+      bmp.close();   // la grande photo décodée est libérée tout de suite
+      return true;
+    };
+    el._play = async (v) => {
+      if (v === on) return;
+      on = v; const my = ++gen;
+      el.classList.toggle('play', false);
+      if (!on) { a.width = a.height = b.width = b.height = 0; return; }
+      const ok = await paint(a, 0, my);
+      if (!ok) { if (my === gen) el.classList.add('broken'); return; }
+      if (await paint(b, 1, my)) el.classList.toggle('play', on && my === gen);
+    };
+    return el;
+  }
+
   function thumb(ex, opts) {
     if (ex.missing) return h('span', { class: 'ph thumb' });
     let el;
@@ -263,26 +356,8 @@
       if (opts && opts.zoom) { el.classList.add('zoomable'); el.setAttribute('title', T('Agrandir')); el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); }); }
       return el;
     }
-    if (ex.src === 0) {
-      el = h('img', { class: 'thumb sq', alt: '', decoding: 'async', crossorigin: 'anonymous' });
-      let on = false; let alt = false;
-      el.addEventListener('error', () => { if (!on) return; if (!alt) { alt = true; el.src = mediaUrl(ex, 'a', true); } else el.classList.add('broken'); });
-      el._play = (v) => {
-        if (v === on) return;
-        on = v;
-        if (on) { alt = false; el.classList.remove('broken'); el.src = mediaUrl(ex, 'a'); } else el.removeAttribute('src');
-      };
-    } else {
-      el = h('span', { class: 'thumb tflip' });
-      let on = false;
-      el._play = (v) => {
-        if (v === on) return;
-        on = v;
-        el.textContent = '';
-        if (on) el.append(photo(ex, 0), photo(ex, 1, { class: 'b' }));
-        el.classList.toggle('play', on);
-      };
-    }
+    if (ex.src === 0) el = gifThumb(ex);
+    else el = photoThumb(ex);
     watchThumb(el);
     if (opts && opts.zoom) {
       el.classList.add('zoomable');
@@ -3376,7 +3451,8 @@
     const top = S.stack[S.stack.length - 1];
     return { t: Date.now(), v: top ? top.view : '', rows: document.querySelectorAll('.exrow').length, open: document.querySelectorAll('details.group[open]').length,
       img: imgs.filter((i) => i.getAttribute('src')).length, gif: imgs.filter((i) => /\.gif/.test(i.getAttribute('src') || '')).length,
-      cv: document.querySelectorAll('canvas').length, el: document.getElementsByTagName('*').length, y: Math.round(window.scrollY), gap: diagGap };
+      cv: document.querySelectorAll('canvas').length, an: ANIM.size, px: [...document.querySelectorAll('canvas')].reduce((n, c) => n + c.width * c.height, 0),
+      el: document.getElementsByTagName('*').length, y: Math.round(window.scrollY), gap: diagGap };
   }
   function diagTick() {
     const now = Date.now();
@@ -3385,7 +3461,7 @@
     diagLast = now;
     if (late > diagGap) diagGap = late;
     const sn = diagSnap();
-    if (diagBox) diagBox.textContent = T('{0} lignes · {1} images ({2} gifs) · {3} cat. ouvertes · {4} éléments', sn.rows, sn.img, sn.gif, sn.open, sn.el) + (late > 400 ? ' · ' + T('bloqué {0} s', (late / 1000).toFixed(1)) : '');
+    if (diagBox) diagBox.textContent = T('{0} lignes · {1} animées · {2} cat. ouvertes · {3} éléments', sn.rows, sn.an, sn.open, sn.el) + (late > 400 ? ' · ' + T('bloqué {0} s', (late / 1000).toFixed(1)) : '');
     const log = diagRead(); log.push(sn); diagWrite(log);
   }
   function diagStart() {
@@ -3402,7 +3478,7 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') diagClean(); else if (diagTimer) { diagLast = 0; diagTick(); } });
   window.addEventListener('pagehide', diagClean);
   function diagReport(log) {
-    const fmt = (x) => fTime.format(x.t) + ' · ' + x.v + ' · ' + T('{0} lignes · {1} images ({2} gifs) · {3} cat. ouvertes · {4} éléments', x.rows, x.img, x.gif, x.open, x.el) + ' · canvas ' + x.cv + ' · y ' + x.y + (x.gap > 400 ? ' · ' + T('bloqué {0} s', (x.gap / 1000).toFixed(1)) : '');
+    const fmt = (x) => fTime.format(x.t) + ' · ' + x.v + ' · ' + T('{0} lignes · {1} animées · {2} cat. ouvertes · {3} éléments', x.rows, x.an, x.open, x.el) + ' · img ' + x.img + ' · canvas ' + x.cv + ' (' + Math.round((x.px || 0) * 4 / 1048576) + ' Mo) · y ' + x.y + (x.gap > 400 ? ' · ' + T('bloqué {0} s', (x.gap / 1000).toFixed(1)) : '');
     const last = log.filter((x) => !x.clean).slice(-8);
     return [T('WorkLog {0} · rapport de diagnostic', APP_VERSION), navigator.userAgent, ...last.map(fmt)].join('\n');
   }

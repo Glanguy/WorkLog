@@ -2,6 +2,7 @@
 /* WorkLog : textes de l'interface en anglais (clé = texte français dans js/app.js).
    {0}, {1} : valeurs insérées (nombre, nom, date). */
 window.WL_EN = {
+ "{0} lignes · {1} animées · {2} cat. ouvertes · {3} éléments": "{0} rows · {1} animated · {2} open cat. · {3} elements",
  "Répétitions à {0} %": "Reps at {0}%",
  "Aucune série autour de {0} % de ta force estimée (entre {1} et {2} %) sur cette période. Choisis un autre pourcentage ci-dessous.": "No sets around {0}% of your estimated strength (between {1} and {2}%) in this period. Choose another percentage below.",
  "Il faut au moins 2 séries à la même charge le même jour pour calculer l’indice de fatigue.": "The fatigue index needs at least 2 sets at the same weight on the same day.",

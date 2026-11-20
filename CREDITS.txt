@@ -8,3 +8,4 @@ WorkLog - crédits des données et des images
 - Mannequin 3D des exercices maison (mannequin.bin, mannequin-peau.jpg) : modèle « Male base muscular anatomy »
   par Harshit Prajapati (sketchfab.com/harshit77), licence CC BY 4.0 (creativecommons.org/licenses/by/4.0/).
   Modifié : squelette, zones musculaires peintes (psoas, piriforme, TFL, rhomboïdes, deltoïde postérieur), format allégé.
+- Décodeur de gif (js/gifreader.js) : partie « GifReader » de omggif, (c) Dean McNamee 2013, licence MIT (github.com/deanm/omggif).

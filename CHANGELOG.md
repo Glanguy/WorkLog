@@ -1,5 +1,14 @@
 # WorkLog : historique des versions
 
+## 0.7.2
+**Écran blanc dans la bibliothèque (suite)**
+- Ce que le diagnostic de la 0.7.1 a montré : au moment du blocage, l'app tournait toujours (relevés réguliers, aucun blocage) avec seulement 241 lignes, 15 images et 13 gifs dans la page. Ce n'était donc ni le code de l'app ni le nombre de lignes, mais Safari qui arrêtait de dessiner la page.
+- Cause la plus probable : Safari garde dans sa mémoire graphique chaque gif animé et chaque grande photo affichés par une balise image, même une fois retirés de la page. Un gif d'exercice prend environ 1,5 Mo une fois décodé, une photo free-exercise-db (750 × 500) aussi, et il y en a deux par exercice. Après quelques centaines d'exercices parcourus, cette mémoire déborde.
+- Correction : les vignettes des listes (bibliothèque, ajout d'exercices à une séance, calendrier) ne passent plus par des balises image. L'app décode elle-même chaque gif image par image et le dessine dans un petit canvas ; les photos sont réduites à la taille de la vignette (216 × 144) et la grande photo décodée est libérée aussitôt. Dès qu'une vignette sort de l'écran, son canvas est vidé et ses données oubliées. Seules les vignettes à l'écran sont animées.
+- Nouveau fichier `js/gifreader.js` : le décodeur de gif d'omggif (licence MIT), ajouté aux crédits.
+- Diagnostic : le compteur affiche maintenant le nombre de vignettes animées ; le rapport ajoute la mémoire occupée par les canvas.
+- Le grand gif de la page exercice et l'agrandissement restent des images normales (un seul à la fois).
+
 ## 0.7.1
 **Plantage de la bibliothèque**
 - Cause la plus probable : en ouvrant plusieurs catégories sans les refermer (Épaules, Pectoraux, Dos, Biceps…), la page gardait des centaines de lignes d'exercices et lançait un chargement d'image pour chaque vignette croisée en défilant ; la mise en cache des images faisait en plus un tri complet à chaque image. Safari finissait par arrêter de dessiner la page (zones blanches, plus rien de cliquable).
