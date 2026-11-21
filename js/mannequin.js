@@ -191,7 +191,7 @@
     const k = {
       pos: (s.pelvis || [0, 0.94, 0]).slice(),
       pq: qMul(qMul(qMul(qY(r[1] || 0), qX(r[0] || 0)), qZ(-(r[2] || 0))), qY(r[3] || 0)),
-      lq: jq(s.lumbar || half), cq: jq(s.chest || half), nq: jq(s.neck), hq: jq(s.head), limbs: {},
+      lq: jq(s.lumbar || half), cq: jq(s.chest || half), nq: jq(s.neck), hq: jq(s.head), limbs: {}, float: !!s.float,
     };
     for (const id of LIMBS) k.limbs[id] = Object.assign({}, s[id] || {});
     return k;
@@ -356,7 +356,7 @@
       }
       const JJ = joints(W, P);
       out = { hp: P[0], W, P, J: JJ, lim };
-      if (pass === 2) break;
+      if (pass === 2 || K.float) break;   // float : corps suspendu ou porté par une machine, pas posé au sol
       const C = F.C;
       const probes = [
         [JJ.heelL, 0.022], [JJ.heelR, 0.022], [JJ.ballL, 0.016], [JJ.ballR, 0.016], [JJ.toeL, 0.012], [JJ.toeR, 0.012], [JJ.ankleL, 0.04], [JJ.ankleR, 0.04],
@@ -451,6 +451,10 @@
         if (pr.type === 'box') for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const sy of [0, 1]) pts.push([add(pr.pos, [sx * pr.size[0] / 2, sy * pr.size[1], sz * pr.size[2] / 2]), 0]);
         if (pr.type === 'dumbbell') pts.push([add(pr.pos, [0.17, 0.05, 0]), 0.05], [add(pr.pos, [-0.17, 0.05, 0]), 0.05]);
         if (pr.type === 'post') pts.push([pr.a, 0.03], [pr.b, 0.03]);
+        if (pr.type === 'fn' && !pr.nofit) for (const q of primsOf(pr, s)) {
+          if (q.k === 'cyl') pts.push([q.a, q.r], [q.b, q.r]); else if (q.k === 'sph') pts.push([q.c, q.r]);
+          else if (q.k === 'box') { const ax = [q.x || [1, 0, 0], q.y || [0, 1, 0], q.z || [0, 0, 1]]; for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) pts.push([add(q.c, add(mul(ax[0], sx * q.s[0]), add(mul(ax[1], sy * q.s[1]), mul(ax[2], sz * q.s[2])))), 0]); }
+        }
       }
     }
     const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
@@ -481,6 +485,18 @@
 
   /* ---------- accessoires ---------- */
   const M = {};
+  /* Contexte d'un accessoire dynamique : points nommés (J), repère de chaque main (poignet, centre de la paume,
+     doigts, paume, travers de la main) et de chaque os, et petits outils de calcul. */
+  function propCtx(s) {
+    const hand = (sd) => {
+      const q = boneQ('Hand_' + sd, s.W); const fing = norm(qRot(q, [0, -1, 0])); const palm = norm(qRot(q, [0, 0, 1])); const across = norm(cross(fing, palm));
+      const wrist = s.P[X['Hand_' + sd]]; const c = add(wrist, mul(fing, 0.075));
+      return { wrist, c, fing, palm, across, grip: add(c, mul(palm, 0.028)) };
+    };
+    const bone = (n) => ({ o: s.P[X[n]], q: boneQ(n, s.W), at: (v) => add(s.P[X[n]], qRot(boneQ(n, s.W), v)), dir: (v) => qRot(boneQ(n, s.W), v) });
+    return { J: s.J, hand, bone, add, sub, mul, norm, cross, dot, len, lerp, perp, COL };
+  }
+  function primsOf(p, s) { try { return p.f(propCtx(s)) || []; } catch (e) { if (window.console) console.warn('WL3D accessoire', e); return []; } }
   function buildProps() {
     // cube unité centré
     const pos = [], nrm = [], idx = [];
@@ -501,6 +517,11 @@
       for (let j = 0; j < S; j++) { if (y) ci.push(c, c + 1 + j, c + 2 + j); else ci.push(c, c + 2 + j, c + 1 + j); }
     }
     M.cyl = { pos: new Float32Array(cp), nrm: new Float32Array(cn), idx: new Uint16Array(ci) };
+    // sphère unité (ballon, boule de kettlebell, poulies)
+    const sp = [], sn = [], si = []; const SU = 18, SV = 12;
+    for (let i = 0; i <= SV; i++) for (let j = 0; j <= SU; j++) { const th = PI * i / SV, ph = 2 * PI * j / SU; const v = [Math.sin(th) * Math.sin(ph), Math.cos(th), Math.sin(th) * Math.cos(ph)]; sp.push(v[0], v[1], v[2]); sn.push(v[0], v[1], v[2]); }
+    for (let i = 0; i < SV; i++) for (let j = 0; j < SU; j++) { const a = i * (SU + 1) + j, b = a + SU + 1; si.push(a, b, a + 1, a + 1, b, b + 1); }
+    M.sph = { pos: new Float32Array(sp), nrm: new Float32Array(sn), idx: new Uint16Array(si) };
     for (const m of Object.values(M)) fixWinding(m);
   }
   function fixWinding(m) {   // faces vers l'extérieur
@@ -511,7 +532,7 @@
     }
     if (vol < 0) for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
   }
-  function propParts(props, J) {
+  function propParts(props, J, s) {
     const out = [];
     const cyl = (a, b, r, col) => {
       const d = sub(b, a); const l = len(d); if (l < 1e-4) return;
@@ -525,6 +546,13 @@
         const a = pt(p.a), b = pt(p.b); const d = norm(sub(b, a)); const ext = p.ext || [0.15, 0.15];
         cyl(sub(a, mul(d, ext[0])), add(b, mul(d, ext[1])), p.r || 0.014, p.col || COL.woodDark);
       } else if (p.type === 'band') cyl(pt(p.a), pt(p.b), 0.009, COL.band);   // élastique entre un point fixe et la main
+      else if (p.type === 'fn' && s) {   // matériel qui suit le mouvement (barre, haltères, câbles, machines) : décrit par une fonction
+        for (const q of primsOf(p, s)) {
+          if (q.k === 'cyl') cyl(q.a, q.b, q.r, q.col || COL.steel);
+          else if (q.k === 'sph') out.push({ mesh: M.sph, model: mFrame(q.c, [1, 0, 0], [0, 1, 0], [0, 0, 1], [q.r, q.r, q.r]), base: q.col || COL.steel });
+          else if (q.k === 'box') out.push({ mesh: M.box, model: mFrame(q.c, q.x || [1, 0, 0], q.y || [0, 1, 0], q.z || [0, 0, 1], q.s), base: q.col || COL.steel });
+        }
+      }
       else if (p.type === 'post') cyl(p.a, p.b, p.r || 0.03, COL.steel);
       else if (p.type === 'dumbbell') {   // haltère posé, manche le long de X
         const c = p.pos; const r = p.r || 0.07; const hw = 0.11;
@@ -654,7 +682,7 @@
     }
     for (let i = 2; i < 6; i++) gl.disableVertexAttribArray(i);
     // --- accessoires
-    const parts = propParts(ex.props, s.J);
+    const parts = propParts(ex.props, s.J, s);
     if (parts.length) {
       L = g.prop.loc; gl.useProgram(g.prop.p);
       gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
@@ -748,9 +776,9 @@
   }
 
   window.WL3D = {
-    define, view, has: (id) => EX.has(id),
+    define, view, has: (id) => EX.has(id), lib: (id) => !!(EX.get(id) && EX.get(id).lib),
     credit: EN_UI() ? '3D model: “Male base muscular anatomy” by Harshit Prajapati, CC BY 4.0, modified.' : 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
-    list: () => [...EX.values()].map((e) => ({ id: e.id, name: e.name, en: e.en || '', leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
-    _dbg: { snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
+    list: () => [...EX.values()].filter((e) => !e.lib).map((e) => ({ id: e.id, name: e.name, en: e.en || '', leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
+    _dbg: { snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, primsOf, boneQ, propCtx, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();

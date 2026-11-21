@@ -1,5 +1,21 @@
 # WorkLog : historique des versions
 
+## 0.7.4
+**Mannequin 3D pour les 73 exercices favoris**
+- Chaque exercice des favoris (épaules, pectoraux, dos, bras, jambes) a maintenant son animation 3D sur le mannequin, à la place du gif ou des photos : vignette dans les listes, grande animation dans la page exercice et agrandissement.
+- L'exercice reste celui de la bibliothèque : même nom, mêmes muscles, même historique, même saisie poids × répétitions. Seul le visuel change.
+- Les muscles principaux et secondaires de la bibliothèque sont colorés sur le mannequin ; sur les exercices à un bras ou à une jambe, seul le côté qui travaille est coloré.
+- Le matériel est dessiné : barres et disques, haltères, kettlebells, poulies et câbles, corde, élastiques, bancs plats, inclinés et à dossier, machines (presses, leg curl, leg extension, adducteurs, tirage, rowing, développé), swiss ball, banc à lombaires, barres de dips, cadre de traction assistée, landmine.
+- Mouvements repris des images de référence de chaque exercice (positions de départ et d'arrivée, prise, appui, inclinaison du buste).
+- Contrôle automatique de chaque animation, image par image : aucun membre dans un autre, aucun membre dans le matériel, rien sous le sol, pas de bras ou d'avant-bras vrillé, pas de saut.
+
+**Piriforme**
+- Les mains tirent maintenant les jambes vers soi : main gauche derrière la cuisse gauche, main droite derrière la cuisse droite (côté ischio-jambiers), et non plus posées sur le dessus des cuisses comme si elles les repoussaient.
+
+**Moteur 3D**
+- Nouveau fichier `js/exercices-3d-muscu.js` : les animations des exercices de musculation, rattachées aux exercices de la bibliothèque.
+- Matériel qui suit le mouvement (calculé à chaque image depuis les mains et les os du mannequin), corps qui peut rester en l'air (suspendu, assis sur une machine), nouvelle forme « sphère » pour les ballons et kettlebells.
+
 ## 0.7.3
 **Diagnostic**
 - Deux réglages séparés dans Réglages › Diagnostic : « Afficher le compteur » (le compteur en bas de l'écran) et « Rapports de plantage » (le relevé toutes les 2 secondes, gardé sur le téléphone, et la fenêtre « WorkLog s'est arrêté » avec « Copier le rapport » à la réouverture après un blocage).

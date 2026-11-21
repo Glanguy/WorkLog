@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.3';
+  const APP_VERSION = '0.7.4';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -251,6 +251,8 @@
     thumbIO.observe(el);
   }
   /* Exercice maison (src 2) : le mannequin 3D animé. big : grande vue qu'on fait tourner au doigt. */
+  /* Exercice de la bibliothèque qui a aussi son mannequin 3D (exercices-3d-muscu.js) : le mannequin remplace le gif ou les photos. */
+  const has3d = (ex) => !!ex && !ex.missing && (ex.src === 2 || !!(W3 && W3.lib(ex.id)));
   function view3d(ex, big, cls) {
     const c = W3 && W3.view(ex.id, { thumb: !big, cls });
     return c || h('span', { class: 'ph ' + (cls || '') });
@@ -351,7 +353,7 @@
   function thumb(ex, opts) {
     if (ex.missing) return h('span', { class: 'ph thumb' });
     let el;
-    if (ex.src === 2) {
+    if (has3d(ex)) {
       el = view3d(ex, false, 'thumb sq');
       if (opts && opts.zoom) { el.classList.add('zoomable'); el.setAttribute('title', T('Agrandir')); el.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); lightbox(ex); }); }
       return el;
@@ -394,7 +396,7 @@
      (un appui l'agrandit). Pour free-exercise-db : le schéma puis les photos en grand. */
   function visual(ex, opts) {
     const zoom = !(opts && opts.static);
-    if (ex.src === 2) {
+    if (has3d(ex)) {
       return h('div', { class: 'vis vis3d' }, view3d(ex, zoom, 'big'),
         zoom ? h('p', { class: 'turn', text: T('Fais glisser le doigt sur le mannequin pour le tourner dans tous les sens.') }) : null);
     }
@@ -413,7 +415,7 @@
   }
   function lightbox(ex) {
     let close = null;
-    const media = ex.src === 2 ? h('div', { class: 'lb-media sq' }, view3d(ex, true, 'big'))
+    const media = has3d(ex) ? h('div', { class: 'lb-media sq' }, view3d(ex, true, 'big'))
       : ex.src === 0
       ? h('div', { class: 'lb-media sq' }, photo(ex, 'a', { alt: T('Animation : ') + dn(ex) }))
       : h('div', { class: 'lb-media' }, flip(ex, { alt: T('Démonstration : ') + dn(ex) }));
@@ -1449,8 +1451,8 @@
       wrap.append(h('div', { class: 'legend' },
         h('p', {}, h('i', { class: 'p' }), h('span', { text: T('Muscle principal : ') }), h('b', { text: frMuscle(ex.p) })),
         sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: T('Muscles secondaires : ') }), sec.join(', ')) : null));
-      if (ex.src === 0) wrap.append(h('p', { class: 'credit', text: T('Animation © Gym visual') }));
-      if (ex.src === 2 && W3 && W3.credit) wrap.append(h('p', { class: 'credit', text: W3.credit }));
+      if (ex.src === 0 && !has3d(ex)) wrap.append(h('p', { class: 'credit', text: T('Animation © Gym visual') }));
+      if (has3d(ex) && W3 && W3.credit) wrap.append(h('p', { class: 'credit', text: W3.credit }));
     }
 
     const recent = h('div', { class: 'recent' });

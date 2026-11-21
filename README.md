@@ -9,7 +9,7 @@ Application web personnelle (PWA pour iPhone) pour suivre ses exercices et ses c
 | `index.html` | page de l'application |
 | `sw.js` | fonctionnement hors connexion (doit rester à la racine) |
 | `manifest.webmanifest` | icône et nom sur l'écran d'accueil |
-| `js/` | code : `app.js`, `mannequin.js`, `exercices-3d.js`, `i18n.js` (textes en anglais) |
+| `js/` | code : `app.js`, `mannequin.js`, `exercices-3d.js` (étirements), `exercices-3d-muscu.js` (musculation), `i18n.js` (textes en anglais) |
 | `css/` | styles : `style.css` |
 | `data/` | liste des exercices (`data-v3.json`), noms français des exercices (`names-fr.json`) et schéma du corps (`bodymap.json`) |
 | `models/` | mannequin 3D (`mannequin.bin`, `mannequin-peau.jpg`) |

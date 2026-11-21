@@ -57,10 +57,10 @@
       poses: {
         a: { pelvis: [0, 0.1, 0], rot: sup, chest: [14, 0, 0], neck: [10, 0, 0],
           lL: { d: [0, 0.94, 0.34], e: [0, 0.05, 1], foot: 10 }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-1, 0.6, 0.2], foot: 5 },
-          aL: { grab: { bone: 'UpperLeg_L', h: 0.5, ang: 35, f: 1, tilt: 2.5 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: -95, f: 1, tilt: -1 }, p: [-1, 0.4, -0.2] } },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.45, ang: 150, f: -1, tilt: 0 }, p: [1, 0.6, 0.3] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.4, ang: 170, f: 1, tilt: 0 }, p: [-1, 0.4, 0.2] } },
         b: { pelvis: [0, 0.1, 0], rot: [-100, 0, 0], chest: [14, 0, 0], neck: [10, 0, 0],
           lL: { d: [0, 0.82, -0.57], e: [0, 0.12, 1], foot: 10 }, lR: { on: ['kneeL', [0.01, 0.09, 0.14], 'UpperLeg_L'], p: [-1, 0.6, 0.2], foot: 5 },
-          aL: { grab: { bone: 'UpperLeg_L', h: 0.5, ang: 35, f: 1, tilt: 2.5 }, p: [1, 0.5, 0] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.82, ang: -95, f: 1, tilt: -1 }, p: [-1, 0.4, -0.2] } },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.45, ang: 150, f: -1, tilt: 0 }, p: [1, 0.6, 0.3] }, aR: { grab: { bone: 'UpperLeg_R', h: 0.4, ang: 170, f: 1, tilt: 0 }, p: [-1, 0.4, 0.2] } },
       },
       seq: [['a', 0.7, 1.4], ['b', 2.2, 1.4]] },
 
