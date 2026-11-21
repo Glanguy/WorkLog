@@ -22,7 +22,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deploiement.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      # Toujours la dernière version de la branche : relancer une publication qui a échoué
+      # ne refait pas le déballage déjà fait.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref_name }}
 
       - name: Déballer le zip et ranger les fichiers
         run: |
@@ -66,9 +70,9 @@ jobs:
           git commit -q -m "WorkLog ${VER:-mise à jour}" -m "${NOTES:-Mise à jour depuis $ZIP}"
           git push
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: .
       - id: deploiement
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
