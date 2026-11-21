@@ -1,5 +1,14 @@
 # WorkLog : historique des versions
 
+## 0.7.3
+**Diagnostic**
+- Deux réglages séparés dans Réglages › Diagnostic : « Afficher le compteur » (le compteur en bas de l'écran) et « Rapports de plantage » (le relevé toutes les 2 secondes, gardé sur le téléphone, et la fenêtre « WorkLog s'est arrêté » avec « Copier le rapport » à la réouverture après un blocage).
+- On peut activer l'un sans l'autre. Rapports désactivés : rien n'est noté et le relevé déjà gardé est effacé. Tant que les rapports n'ont jamais été réglés, ils suivent le compteur (comme en 0.7.1 et 0.7.2).
+
+**Fenêtres qui s'ouvrent du bas (choix du graphique, menus « … », listes à cocher…)**
+- Glisser la fenêtre vers le bas la ferme : elle suit le doigt, se ferme au-delà d'un petit seuil ou d'un geste rapide, et revient en place sinon. Si sa liste a été défilée, il faut d'abord remonter en haut de la liste.
+- La page derrière ne défile plus tant qu'une fenêtre est ouverte.
+
 ## 0.7.2
 **Écran blanc dans la bibliothèque (suite)**
 - Ce que le diagnostic de la 0.7.1 a montré : au moment du blocage, l'app tournait toujours (relevés réguliers, aucun blocage) avec seulement 241 lignes, 15 images et 13 gifs dans la page. Ce n'était donc ni le code de l'app ni le nombre de lignes, mais Safari qui arrêtait de dessiner la page.

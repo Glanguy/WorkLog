@@ -750,3 +750,9 @@ canvas.thumb.sq { display: block; }
 .thumb.tflip canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .thumb.tflip canvas.b { opacity: 0; }
 .thumb.tflip.play canvas.b { animation: flip 2.4s ease-in-out infinite; }
+
+/* Fenêtres du bas (0.7.3) : la page derrière ne défile pas, on glisse la fenêtre vers le bas pour la fermer. */
+html.sheet-open, html.sheet-open body { overflow: hidden; }
+.sheet-scrim { overscroll-behavior: contain; }
+.bsheet { overscroll-behavior: contain; touch-action: pan-y; transition: transform .2s ease; }
+.sheet-scrim.out .bsheet { transform: translateY(105%); transition: transform .18s ease-in; }

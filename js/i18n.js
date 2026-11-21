@@ -2,6 +2,11 @@
 /* WorkLog : textes de l'interface en anglais (clé = texte français dans js/app.js).
    {0}, {1} : valeurs insérées (nombre, nom, date). */
 window.WL_EN = {
+ "Afficher le compteur": "Show the counter",
+ "Affiche en bas de l’écran le nombre de lignes, de vignettes animées et de catégories ouvertes.": "Shows at the bottom of the screen the number of rows, animated thumbnails and open categories.",
+ "Rapports de plantage": "Crash reports",
+ "L’app note discrètement son état toutes les 2 secondes, sur ce téléphone uniquement. Si elle se fige ou s’arrête sans être fermée normalement, le relevé de juste avant s’affiche à la réouverture, prêt à être copié.": "The app quietly records its state every 2 seconds, on this phone only. If it freezes or stops without being closed normally, the reading from just before is shown when you reopen it, ready to copy.",
+
  "{0} lignes · {1} animées · {2} cat. ouvertes · {3} éléments": "{0} rows · {1} animated · {2} open cat. · {3} elements",
  "Répétitions à {0} %": "Reps at {0}%",
  "Aucune série autour de {0} % de ta force estimée (entre {1} et {2} %) sur cette période. Choisis un autre pourcentage ci-dessous.": "No sets around {0}% of your estimated strength (between {1} and {2}%) in this period. Choose another percentage below.",

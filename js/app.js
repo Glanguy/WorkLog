@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.2';
+  const APP_VERSION = '0.7.3';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -1009,7 +1009,11 @@
       if (closed) return; closed = true;
       document.removeEventListener('keydown', onKey);
       scrim.classList.add('out');
-      setTimeout(() => { scrim.remove(); if (typeof after === 'function') after(); }, 180);
+      setTimeout(() => {
+        scrim.remove();
+        if (!document.querySelector('.sheet-scrim')) document.documentElement.classList.remove('sheet-open');
+        if (typeof after === 'function') after();
+      }, 180);
     };
     const onKey = (e) => { if (e.key === 'Escape') close(onCancel); };
     let onCancel = null;
@@ -1018,6 +1022,37 @@
     scrim.append(box);
     document.body.append(scrim);
     document.addEventListener('keydown', onKey);
+    // La page derrière ne défile pas tant que la fenêtre est ouverte.
+    document.documentElement.classList.add('sheet-open');
+    scrim.addEventListener('touchmove', (e) => { if (e.target === scrim) e.preventDefault(); }, { passive: false });
+    // Glisser la fenêtre vers le bas (depuis le haut de sa liste) la ferme.
+    let y0 = null; let dy = 0; let t0 = 0; let drag = false;
+    box.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) { y0 = null; return; }
+      y0 = e.touches[0].clientY; t0 = Date.now(); dy = 0; drag = false;
+    }, { passive: true });
+    box.addEventListener('touchmove', (e) => {
+      if (y0 == null) return;
+      const d = e.touches[0].clientY - y0;
+      if (!drag && d > 6 && box.scrollTop <= 0) { drag = true; box.style.transition = 'none'; }
+      if (drag) {
+        e.preventDefault();
+        dy = Math.max(0, d);
+        box.style.transform = 'translateY(' + dy + 'px)';
+        scrim.style.backgroundColor = 'rgba(58, 51, 71, ' + (0.38 * Math.max(0, 1 - dy / 400)).toFixed(3) + ')';
+      } else if (box.scrollHeight <= box.clientHeight + 1) e.preventDefault();   // rien à faire défiler dans la fenêtre
+    }, { passive: false });
+    const endDrag = () => {
+      if (y0 == null) return;
+      y0 = null;
+      if (!drag) return;
+      drag = false;
+      const v = dy / Math.max(1, Date.now() - t0);
+      box.style.transition = 'transform .2s ease';
+      if (dy > 90 || (dy > 30 && v > 0.5)) { box.style.transform = 'translateY(105%)'; close(onCancel); } else { box.style.transform = ''; scrim.style.backgroundColor = ''; }
+    };
+    box.addEventListener('touchend', endDrag);
+    box.addEventListener('touchcancel', endDrag);
     const first = box.querySelector('button, input');
     if (first) setTimeout(() => first.focus({ preventScroll: true }), 30);
     return close;
@@ -1148,6 +1183,7 @@
   }
   window.addEventListener('pageshow', clearGhosts);
   function render(entry, anim) {
+    if (!document.querySelector('.sheet-scrim')) document.documentElement.classList.remove('sheet-open');   // sécurité : jamais de page bloquée
     const rootEl = app();
     clearGhosts();
     let ghost = null;
@@ -3440,10 +3476,15 @@
      Un petit compteur en direct en bas de l'écran, et un relevé enregistré toutes les 2 secondes.
      Si l'app se fige ou s'arrête sans être fermée normalement, le dernier relevé s'affiche à la
      réouverture, prêt à être copié et envoyé. */
-  const DIAG_KEY = 'worklog.diag';
+  const DIAG_KEY = 'worklog.diag';     // compteur à l'écran
+  const CRASH_KEY = 'worklog.crash';   // rapports de plantage
   const DIAG_LOG = 'worklog.diag.log';
   let diagBox = null; let diagTimer = null; let diagLast = 0; let diagGap = 0;
-  const diagOn = () => { try { return localStorage.getItem(DIAG_KEY) === '1'; } catch (e) { return false; } };
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignoré */ } };
+  const diagOn = () => lsGet(DIAG_KEY) === '1';
+  // Rapports de plantage : réglage à part ; s'il n'a jamais été choisi, il suit le compteur (comme en 0.7.1 et 0.7.2).
+  const crashOn = () => { const v = lsGet(CRASH_KEY); return v == null ? diagOn() : v === '1'; };
   function diagRead() { try { const a = JSON.parse(localStorage.getItem(DIAG_LOG) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
   function diagWrite(a) { try { localStorage.setItem(DIAG_LOG, JSON.stringify(a.slice(-40))); } catch (e) { /* ignoré */ } }
   function diagSnap() {
@@ -3461,20 +3502,24 @@
     diagLast = now;
     if (late > diagGap) diagGap = late;
     const sn = diagSnap();
+    if (diagBox && !diagOn()) { diagBox.remove(); diagBox = null; }
+    if (!diagBox && diagOn()) { diagBox = h('div', { class: 'diagbox', 'aria-hidden': 'true' }); document.body.append(diagBox); }
     if (diagBox) diagBox.textContent = T('{0} lignes · {1} animées · {2} cat. ouvertes · {3} éléments', sn.rows, sn.an, sn.open, sn.el) + (late > 400 ? ' · ' + T('bloqué {0} s', (late / 1000).toFixed(1)) : '');
-    const log = diagRead(); log.push(sn); diagWrite(log);
+    if (crashOn()) { const log = diagRead(); log.push(sn); diagWrite(log); }
   }
-  function diagStart() {
-    if (diagTimer) return;
-    diagBox = h('div', { class: 'diagbox', 'aria-hidden': 'true' });
-    document.body.append(diagBox);
-    diagLast = 0; diagGap = 0;
-    diagTick();
-    diagTimer = setInterval(diagTick, 2000);
+  /* Lance ou arrête le relevé selon les deux réglages (compteur, rapports de plantage). */
+  function diagApply() {
+    if (diagOn() || crashOn()) {
+      if (!diagTimer) { diagLast = 0; diagGap = 0; diagTimer = setInterval(diagTick, 2000); }
+      diagTick();
+    } else {
+      clearInterval(diagTimer); diagTimer = null;
+      if (diagBox) { diagBox.remove(); diagBox = null; }
+    }
+    if (!crashOn()) diagWrite([]);
   }
-  function diagStop() { clearInterval(diagTimer); diagTimer = null; if (diagBox) { diagBox.remove(); diagBox = null; } }
   // Fermeture normale (changement d'app, fermeture) : le relevé est marqué « propre ».
-  const diagClean = () => { if (!diagTimer) return; const log = diagRead(); log.push({ t: Date.now(), clean: true }); diagWrite(log); };
+  const diagClean = () => { if (!diagTimer || !crashOn()) return; const log = diagRead(); log.push({ t: Date.now(), clean: true }); diagWrite(log); };
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') diagClean(); else if (diagTimer) { diagLast = 0; diagTick(); } });
   window.addEventListener('pagehide', diagClean);
   function diagReport(log) {
@@ -3484,8 +3529,8 @@
   }
   /* À l'ouverture : si la dernière session s'est arrêtée sans fermeture normale, on montre son relevé. */
   function diagBoot() {
-    if (!diagOn()) return;
-    const log = diagRead();
+    if (!diagOn() && !crashOn()) return;
+    const log = crashOn() ? diagRead() : [];
     const last = log[log.length - 1];
     if (last && !last.clean && Date.now() - last.t < 86400000) {
       const text = diagReport(log);
@@ -3498,7 +3543,7 @@
           h('button', { type: 'button', class: 'btn primary', text: T('Copier le rapport'), onclick: async () => { if (await copyText(text)) { toast(T('Rapport copié')); close(); } else ta.select(); } }))));
     }
     diagWrite([]);
-    diagStart();
+    diagApply();
   }
 
   /* ---------- réglages ---------- */
@@ -3591,16 +3636,19 @@
     }
     renderNas();
 
-    // Diagnostic : compteur en direct et relevé en cas de blocage.
+    // Diagnostic : deux réglages indépendants, le compteur à l'écran et les rapports de plantage.
     const dg = h('input', { type: 'checkbox' });
     dg.checked = diagOn();
-    dg.addEventListener('change', () => {
-      try { localStorage.setItem(DIAG_KEY, dg.checked ? '1' : '0'); } catch (e) { /* ignoré */ }
-      if (dg.checked) { diagWrite([]); diagStart(); } else { diagStop(); diagWrite([]); }
-    });
+    dg.addEventListener('change', () => { lsSet(DIAG_KEY, dg.checked ? '1' : '0'); diagApply(); });
+    const cr = h('input', { type: 'checkbox' });
+    cr.checked = crashOn();
+    cr.addEventListener('change', () => { lsSet(CRASH_KEY, cr.checked ? '1' : '0'); diagWrite([]); diagApply(); });
     wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Diagnostic') }),
-      h('div', { class: 'card' }, h('label', { class: 'gs-row' }, dg, h('span', { class: 'gl', text: T('Activer le diagnostic') })),
-        h('p', { class: 'hint', text: T('Affiche en bas de l’écran le nombre de lignes, d’images et de catégories ouvertes. Si l’app se fige, le relevé de juste avant s’affiche à la réouverture, prêt à être copié.') }))));
+      h('div', { class: 'card' },
+        h('label', { class: 'gs-row' }, dg, h('span', { class: 'gl', text: T('Afficher le compteur') })),
+        h('p', { class: 'hint', text: T('Affiche en bas de l’écran le nombre de lignes, de vignettes animées et de catégories ouvertes.') }),
+        h('label', { class: 'gs-row' }, cr, h('span', { class: 'gl', text: T('Rapports de plantage') })),
+        h('p', { class: 'hint', text: T('L’app note discrètement son état toutes les 2 secondes, sur ce téléphone uniquement. Si elle se fige ou s’arrête sans être fermée normalement, le relevé de juste avant s’affiche à la réouverture, prêt à être copié.') }))));
     wrap.append(h('p', { class: 'ver-line', text: T('WorkLog version {0}', APP_VERSION) }));
     return wrap;
   }
