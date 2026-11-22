@@ -135,7 +135,58 @@
       const fing = qRot(r.bw[X['Hand_' + s]].q, [0, 1, 0]); const hy = mul(fing, -1); const hz = norm(perp([0, -1, 0], hy)); r.mb[X['Hand_' + s]] = qBasis(cross(hy, hz), hy, hz);
     }
     surfaces(r);
+    handData(r);
     return r;
+  }
+
+
+  /* ---------- doigts : le modèle n'a pas d'os de doigts ; on plie les doigts et le pouce au repos, avant le skinning.
+     Repère de chaque main au repos : U vers le bout des doigts, V vers le pouce, N vers la paume.
+     Articulations (distance au poignet le long de U) : base des doigts, 2e et 3e phalange. */
+  const HC = { mcp: 0.088, pip: 0.128, dip: 0.160, pn: 0.004, a: [58, 80, 50], tu: 0.022, tv: 0.040, tn: 0.006, ta: 62, tb: 18 };
+  const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  function handData(r) {
+    r.hf = [];
+    for (const sd of ['L', 'R']) {
+      const b = X['Hand_' + sd]; const o = r.bw[b].p; const U = norm(perp(qRot(r.bw[b].q, [0, 1, 0]), [0, 1, 0]));
+      const N = [0, -1, 0]; const V = norm(perp([0, 0, 1], U));
+      r.hf.push({ o, U, V, N, b });
+    }
+    const lo = r.head.lo, hi = r.head.hi; r.hd = new Uint8Array(r.nv * 4);
+    for (let i = 0; i < r.nv; i++) {
+      for (let k = 0; k < 2; k++) {
+        const f = r.hf[k]; let w = 0; for (let j = 0; j < 4; j++) if (r.jnt[i * 4 + j] === f.b) w += r.wgt[i * 4 + j] / 255;
+        if (w < 0.5) continue;
+        const p = [0, 1, 2].map((c) => lo[c] + (r.pos[i * 3 + c] / 65535) * (hi[c] - lo[c])); const d = sub(p, f.o);
+        const u = dot(d, f.U), v = dot(d, f.V);
+        const thr = 0.040 + 0.3 * clamp(u - 0.03, 0, 0.05);
+        const tw = sstep(thr - 0.002, thr + 0.003, v) * (1 - sstep(0.100, 0.108, u)) * sstep(0.004, 0.03, u);
+        r.hd[i * 4] = k + 1; r.hd[i * 4 + 1] = Math.round((1 - tw) * 255); r.hd[i * 4 + 2] = Math.round(tw * 255);
+      }
+    }
+  }
+  /* Même pliage que dans le shader, pour les contrôles (QA) : point et normale au repos -> point et normale pliés. */
+  function curlRest(i, p, curl) {
+    const R = RIG; const k = R.hd[i * 4]; if (!k || !curl) return p; const c = curl[k - 1]; if (!c) return p;
+    const f = R.hf[k - 1]; const d = sub(p, f.o); let u = dot(d, f.U), v = dot(d, f.V), n = dot(d, f.N);
+    const fw = R.hd[i * 4 + 1] / 255, tw = R.hd[i * 4 + 2] / 255;
+    const w3 = sstep(HC.dip - 0.008, HC.dip + 0.006, u) * fw, w2 = sstep(HC.pip - 0.008, HC.pip + 0.006, u) * fw, w1 = sstep(HC.mcp - 0.010, HC.mcp + 0.006, u) * fw;
+    const rot = (pu, pn, a) => { const cs = Math.cos(a), sn = Math.sin(a); const du = u - pu, dn = n - pn; u = pu + du * cs - dn * sn; n = pn + du * sn + dn * cs; };
+    rot(HC.dip, HC.pn, HC.a[2] * D2R * c * w3); rot(HC.pip, HC.pn, HC.a[1] * D2R * c * w2); rot(HC.mcp, HC.pn, HC.a[0] * D2R * c * w1);
+    if (tw > 0) {   // pouce : passe sous la paume (V -> N) puis se rabat vers les doigts (V -> U)
+      let a = HC.ta * D2R * c * tw; let cs = Math.cos(a), sn = Math.sin(a); let dv = v - HC.tv, dn = n - HC.tn; v = HC.tv + dv * cs - dn * sn; n = HC.tn + dv * sn + dn * cs;
+      a = HC.tb * D2R * c * tw; cs = Math.cos(a); sn = Math.sin(a); const du = u - HC.tu; dv = v - HC.tv; u = HC.tu + du * cs + dv * sn; v = HC.tv - du * sn + dv * cs;
+    }
+    return add(f.o, add(add(mul(f.U, u), mul(f.V, v)), mul(f.N, n)));
+  }
+  /* Main ouverte (0) ou fermée (1) : 'flat' = à plat ; tenue (prise) = fermée ; posée sur un membre = à demi ; sinon détendue. */
+  function curlOf(L) {
+    if (L.close != null) return L.close;
+    if (L.hand === 'flat' || L.hdir) return 0;
+    if (L.grip) return 0.8;
+    if (L.grab) return 0.1;   // main posée sur le corps : doigts à peine pliés, sans s'enfoncer
+    if (L.hand) return 0.1;
+    return 0.22;
   }
 
   /* Surface des membres : pour la cuisse, la jambe, le bras et l'avant-bras, rayon de la peau selon la hauteur
@@ -355,7 +406,7 @@
         else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
       const JJ = joints(W, P);
-      out = { hp: P[0], W, P, J: JJ, lim };
+      out = { hp: P[0], W, P, J: JJ, lim, curl: [curlOf(K.limbs.aL), curlOf(K.limbs.aR)] };
       if (pass === 2 || K.float) break;   // float : corps suspendu ou porté par une machine, pas posé au sol
       const C = F.C;
       const probes = [
@@ -413,7 +464,7 @@
         else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
     }
-    return { W, P, J: joints(W, P), grip: { L: (t < 0.5 ? A : Bp).lim.aL.grip, R: (t < 0.5 ? A : Bp).lim.aR.grip } };
+    return { W, P, J: joints(W, P), curl: A === Bp ? A.curl : [A.curl[0] + (Bp.curl[0] - A.curl[0]) * t, A.curl[1] + (Bp.curl[1] - A.curl[1]) * t], grip: { L: (t < 0.5 ? A : Bp).lim.aL.grip, R: (t < 0.5 ? A : Bp).lim.aR.grip } };
   }
 
   /* ---------- exercices ---------- */
@@ -452,6 +503,7 @@
         if (pr.type === 'dumbbell') pts.push([add(pr.pos, [0.17, 0.05, 0]), 0.05], [add(pr.pos, [-0.17, 0.05, 0]), 0.05]);
         if (pr.type === 'post') pts.push([pr.a, 0.03], [pr.b, 0.03]);
         if (pr.type === 'fn' && !pr.nofit) for (const q of primsOf(pr, s)) {
+          if (q.fit) for (const f of q.fit) pts.push([f, 0]);   // points à garder dans le cadre (machines en maillage)
           if (q.k === 'cyl') pts.push([q.a, q.r], [q.b, q.r]); else if (q.k === 'sph') pts.push([q.c, q.r]);
           else if (q.k === 'box') { const ax = [q.x || [1, 0, 0], q.y || [0, 1, 0], q.z || [0, 0, 1]]; for (const sx of [-0.5, 0.5]) for (const sy of [-0.5, 0.5]) for (const sz of [-0.5, 0.5]) pts.push([add(q.c, add(mul(ax[0], sx * q.s[0]), add(mul(ax[1], sy * q.s[1]), mul(ax[2], sz * q.s[2])))), 0]); }
         }
@@ -548,6 +600,8 @@
       } else if (p.type === 'band') cyl(pt(p.a), pt(p.b), 0.009, COL.band);   // élastique entre un point fixe et la main
       else if (p.type === 'fn' && s) {   // matériel qui suit le mouvement (barre, haltères, câbles, machines) : décrit par une fonction
         for (const q of primsOf(p, s)) {
+          if (q.hide) continue;   // pièce invisible : sert seulement aux contrôles (volume d'un coussin, d'un siège…)
+          if (q.k === 'mesh') { const sc = typeof q.s === 'number' ? [q.s, q.s, q.s] : (q.s || [1, 1, 1]); out.push({ mat: q.m, part: q.part || null, tint: q.tint || null, model: mFrame(q.c, q.x || [1, 0, 0], q.y || [0, 1, 0], q.z || [0, 0, 1], sc), flip: sc[0] * sc[1] * sc[2] < 0 }); continue; }
           if (q.k === 'cyl') cyl(q.a, q.b, q.r, q.col || COL.steel);
           else if (q.k === 'sph') out.push({ mesh: M.sph, model: mFrame(q.c, [1, 0, 0], [0, 1, 0], [0, 0, 1], [q.r, q.r, q.r]), base: q.col || COL.steel });
           else if (q.k === 'box') out.push({ mesh: M.box, model: mFrame(q.c, q.x || [1, 0, 0], q.y || [0, 1, 0], q.z || [0, 0, 1], q.s), base: q.col || COL.steel });
@@ -563,12 +617,66 @@
     return out;
   }
 
+
+  /* ---------- matériel en maillage (models/mat/<nom>.bin, voir CREDITS.txt) ----------
+     En-tête JSON { nv, ni, lo, hi, parts:{ pièce:[[v0, nv, i0, ni]…] }, views } puis positions u16x3, normales i8x4, couleurs u8x4, indices u16. */
+  const MAT = {};
+  /* Auteur et licence de chaque modèle de machine, affichés sous l'animation (titre, auteur, licence). */
+  const BY = 'CC BY 4.0';
+  const MAT_SRC = {
+    gym: ['Gym Tools!LİKE!', 'SuperScriptDEV', BY], legext: ['Seated Leg Curl Trainer', 'Gerhald', BY], legpress: ['Leg Press Machine', 'silentsheri', BY],
+    row: ['Seated Row Machine', 'louis_l2y', BY], adjbench: ['Training Bench, Incline Bench', 'XaaH', BY], smith: ['Smith training equipment', 'MrdT', BY],
+    kettlebell: ['CC0 - Kettlebell', 'plaggy', BY], ballon: ['Low Poly Fitness Ball', 'Nazzareno Giannelli', BY],
+    vis_a_vis: ['Gym cable crossover machine', 'CadNav', ''], colonne: ['Gym cable crossover machine', 'CadNav', ''], rowc: ['Seated row (B102)', 'CadNav', ''], lat: ['Lat pulldown (B101)', 'CadNav', ''],
+    hack: ['Hack Machine', 'Movement', ''], legcurl: ['Le Forzz LFI-013A V2', '3D Warehouse', ''], adduct: ['Movement EDGE Abdutor/Adutor', '3D Warehouse', ''],
+    chest: ['ST Chest Press', '3D Warehouse', ''], shoulder: ['Intenza EL04 Shoulder Press', '3D Warehouse', ''], chin: ['Intenza DL12 Assisted Chin/Dip', '3D Warehouse', ''],
+    hyper: ['hiper-extencion', '3D Warehouse', ''],
+  };
+  for (const k of ['haltere', 'disques', 'banc_couche', 'banc_plat', 'cage', 'station']) MAT_SRC[k] = MAT_SRC.gym;
+  function matCredit(ex) {
+    ready(ex); const seen = new Set(), out = []; const s = Object.values(ex.S)[0];
+    for (const pr of ex.props || []) if (pr.type === 'fn') for (const q of primsOf(pr, s)) if (q.k === 'mesh' && MAT_SRC[q.m]) {
+      const [t, a, l] = MAT_SRC[q.m]; const txt = (EN_UI() ? `“${t}” by ${a}` : `« ${t} » par ${a}`) + (l ? ', ' + l : '');
+      if (!seen.has(txt)) { seen.add(txt); out.push(txt); }
+    }
+    return out.length ? (EN_UI() ? 'Equipment: ' : 'Matériel : ') + out.join(' ; ') + '.' : '';
+  }
+  function parseMat(buf) {
+    const dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x544d4c57) throw new Error('fichier matériel inattendu');
+    const hl = dv.getUint32(4, true); const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, hl)));
+    const base = 8 + hl; const v = (k, T, n) => new T(buf, base + head.views[k][0], n);
+    return { head, parts: head.parts, lo: head.lo, sc: sub(head.hi, head.lo), pos: v('pos', Uint16Array, head.nv * 3), nrm: v('nrm', Int8Array, head.nv * 4), col: v('col', Uint8Array, head.nv * 4), idx: v('idx', Uint16Array, head.ni) };
+  }
+  function matGet(name) {
+    let m = MAT[name];
+    if (!m) {
+      m = MAT[name] = { st: 'wait' };
+      fetch('models/mat/' + name + '.bin').then((r) => { if (!r.ok) throw new Error(name + ' ' + r.status); return r.arrayBuffer(); })
+        .then((buf) => { Object.assign(m, parseMat(buf)); m.st = 'ok'; kick(); })
+        .catch((e) => { m.st = 'ko'; if (window.console) console.warn('WL3D matériel', e); });
+    }
+    if (m.st !== 'ok') return null;
+    if (!m.vb && GL) {
+      const gl = GL.gl; const buf = (t, d) => { const b = gl.createBuffer(); gl.bindBuffer(t, b); gl.bufferData(t, d, gl.STATIC_DRAW); return b; };
+      m.vb = { pos: buf(gl.ARRAY_BUFFER, m.pos), nrm: buf(gl.ARRAY_BUFFER, m.nrm), col: buf(gl.ARRAY_BUFFER, m.col), idx: buf(gl.ELEMENT_ARRAY_BUFFER, m.idx) };
+    }
+    return m;
+  }
+
   /* ---------- rendu ---------- */
-  const VS_BODY = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;attribute vec4 aJ;attribute vec4 aW;attribute vec4 aZ;'
+  const VS_BODY = 'attribute vec3 aP;attribute vec3 aN;attribute vec2 aU;attribute vec4 aJ;attribute vec4 aW;attribute vec4 aZ;attribute vec3 aH;'
     + 'uniform mat4 uVP;uniform vec4 uB[52];uniform vec3 uLo;uniform vec3 uSc;uniform vec4 uZc[11];uniform float uOut;uniform mediump vec3 uCam;'
+    + 'uniform vec3 uHO[2];uniform vec3 uHU[2];uniform vec3 uHV[2];uniform vec2 uCurl;uniform vec4 uHC[3];'
+    + 'void rt(inout float a,inout float b,inout float na,inout float nb,float pa,float pb,float t){float c=cos(t),s=sin(t);float da=a-pa,db=b-pb;a=pa+da*c-db*s;b=pb+da*s+db*c;float x=na*c-nb*s;nb=na*s+nb*c;na=x;}'
     + 'varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;varying float vH;'
     + 'float hb(float j,float w){return (abs(j-13.0)<0.5||abs(j-17.0)<0.5)?w:0.0;}'
-    + 'void main(){vec3 p=aP*uSc+uLo;vH=hb(aJ.x,aW.x)+hb(aJ.y,aW.y)+hb(aJ.z,aW.z)+hb(aJ.w,aW.w);'
+    + 'void main(){vec3 p=aP*uSc+uLo;vec3 nr=aN;vH=hb(aJ.x,aW.x)+hb(aJ.y,aW.y)+hb(aJ.z,aW.z)+hb(aJ.w,aW.w);'
+    + 'float sd=aH.x*255.0;if(sd>0.5){bool r=sd>1.5;vec3 o=r?uHO[1]:uHO[0];vec3 U=r?uHU[1]:uHU[0];vec3 V=r?uHV[1]:uHV[0];vec3 N=vec3(0.0,-1.0,0.0);float c=r?uCurl.y:uCurl.x;'
+    + 'if(c>0.001){vec3 d=p-o;float u=dot(d,U),v=dot(d,V),n=dot(d,N),nu=dot(nr,U),nv=dot(nr,V),nn=dot(nr,N);float fw=aH.y,tw=aH.z;vec4 J=uHC[0];vec4 A=uHC[1];vec4 T=uHC[2];'
+    + 'rt(u,n,nu,nn,J.z,J.w,A.z*c*smoothstep(J.z-0.008,J.z+0.006,u)*fw);rt(u,n,nu,nn,J.y,J.w,A.y*c*smoothstep(J.y-0.008,J.y+0.006,u)*fw);rt(u,n,nu,nn,J.x,J.w,A.x*c*smoothstep(J.x-0.010,J.x+0.006,u)*fw);'
+    + 'if(tw>0.0){rt(v,n,nv,nn,T.y,T.z,A.w*c*tw);float a=-T.w*c*tw;rt(u,v,nu,nv,T.x,T.y,a);}'
+    + 'p=o+U*u+V*v+N*n;nr=U*nu+V*nv+N*nn;}}'
     + 'int i0=int(aJ.x+0.5)*2;int i1=int(aJ.y+0.5)*2;int i2=int(aJ.z+0.5)*2;int i3=int(aJ.w+0.5)*2;'
     + 'vec4 r0=uB[i0];vec4 r1=uB[i1];vec4 r2=uB[i2];vec4 r3=uB[i3];'
     + 'float s1=dot(r0,r1)<0.0?-1.0:1.0;float s2=dot(r0,r2)<0.0?-1.0:1.0;float s3=dot(r0,r3)<0.0?-1.0:1.0;'
@@ -576,7 +684,7 @@
     + 'vec4 d=aW.x*uB[i0+1]+aW.y*s1*uB[i1+1]+aW.z*s2*uB[i2+1]+aW.w*s3*uB[i3+1];'
     + 'float l=length(r);r/=l;d/=l;'
     + 'vec3 op=p+2.0*cross(r.xyz,cross(r.xyz,p)+r.w*p)+2.0*(r.w*d.xyz-d.w*r.xyz+cross(r.xyz,d.xyz));'
-    + 'vec3 on=aN+2.0*cross(r.xyz,cross(r.xyz,aN)+r.w*aN);'
+    + 'vec3 on=nr+2.0*cross(r.xyz,cross(r.xyz,nr)+r.w*nr);'
     + 'vec3 n=normalize(on);op+=n*uOut;if(uOut>0.0){op+=normalize(op-uCam)*uOut*4.0;}'
     + 'vN=n;vW=op;vU=aU;vec4 zc=uZc[int(aZ.x*255.0+0.5)];vZ=vec4(zc.rgb,1.0)*(step(0.01,zc.a)*aZ.y);gl_Position=uVP*vec4(op,1.0);}';
   const FS_BODY = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec2 vU;varying vec4 vZ;varying float vH;'
@@ -594,7 +702,12 @@
     + 'void main(){if(uMode>0.5){gl_FragColor=uFlat;return;}vec3 n=normalize(vN);vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;'
     + 'vec3 c=uBase*(0.58+0.40*nl*nl+0.08*(n.y*0.5+0.5));c=mix(c,uBase*0.6,pow(1.0-max(dot(n,v),0.0),2.2)*0.45);gl_FragColor=vec4(c,1.0);}';
 
-  let GL = null;   // { canvas, gl, body, prop }
+  const VS_MESH = 'attribute vec3 aP;attribute vec3 aN;attribute vec3 aC;uniform mat4 uVP;uniform mat4 uM;uniform vec3 uLo;uniform vec3 uSc;uniform float uOut;uniform mediump vec3 uCam;varying vec3 vN;varying vec3 vW;varying vec3 vC;'
+    + 'void main(){vec3 p=aP*uSc+uLo;vec3 n=normalize(mat3(uM)*aN);vec4 w=uM*vec4(p,1.0);w.xyz+=n*uOut;if(uOut>0.0){w.xyz+=normalize(w.xyz-uCam)*uOut*4.0;}vN=n;vW=w.xyz;vC=aC;gl_Position=uVP*w;}';
+  const FS_MESH = 'precision mediump float;varying vec3 vN;varying vec3 vW;varying vec3 vC;uniform vec3 uL;uniform mediump vec3 uCam;uniform float uMode;uniform vec4 uFlat;uniform vec3 uTn;'
+    + 'void main(){if(uMode>0.5){gl_FragColor=uFlat;return;}vec3 C=vC*uTn;vec3 n=normalize(vN);if(!gl_FrontFacing)n=-n;vec3 v=normalize(uCam-vW);float nl=dot(n,uL)*0.5+0.5;'
+    + 'vec3 c=C*(0.55+0.45*nl*nl+0.08*(n.y*0.5+0.5));c=mix(c,C*0.6,pow(1.0-max(dot(n,v),0.0),2.4)*0.35);c+=vec3(pow(max(dot(n,normalize(uL+v)),0.0),30.0)*0.08);gl_FragColor=vec4(c,1.0);}';
+  let GL = null;   // { canvas, gl, body, prop, mesh }
   let ASSET = null;   // promesse du chargement ; 'ok' ou 'ko' une fois réglé
   let state = 'wait';
   function program(gl, vs, fs, attrs, unis) {
@@ -609,17 +722,18 @@
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
     const gl = canvas.getContext('webgl', { alpha: true, antialias: true, depth: true, premultipliedAlpha: true });
     if (!gl) throw new Error('WebGL indisponible');
-    const body = program(gl, VS_BODY, FS_BODY, ['aP', 'aN', 'aU', 'aJ', 'aW', 'aZ'], ['uVP', 'uB', 'uLo', 'uSc', 'uZc', 'uOut', 'uCam', 'uTex', 'uTint', 'uL', 'uMode', 'uFlat']);
+    const body = program(gl, VS_BODY, FS_BODY, ['aP', 'aN', 'aU', 'aJ', 'aW', 'aZ', 'aH'], ['uHO', 'uHU', 'uHV', 'uCurl', 'uHC', 'uVP', 'uB', 'uLo', 'uSc', 'uZc', 'uOut', 'uCam', 'uTex', 'uTint', 'uL', 'uMode', 'uFlat']);
     const prop = program(gl, VS_PROP, FS_PROP, ['aP', 'aN'], ['uVP', 'uM', 'uOut', 'uCam', 'uBase', 'uL', 'uMode', 'uFlat']);
+    const mesh = program(gl, VS_MESH, FS_MESH, ['aP', 'aN', 'aC'], ['uVP', 'uM', 'uLo', 'uSc', 'uOut', 'uCam', 'uL', 'uMode', 'uFlat', 'uTn']);
     const R = RIG; const buf = (target, data) => { const b = gl.createBuffer(); gl.bindBuffer(target, b); gl.bufferData(target, data, gl.STATIC_DRAW); return b; };
-    R.vb = { pos: buf(gl.ARRAY_BUFFER, R.pos), nrm: buf(gl.ARRAY_BUFFER, R.nrm), uv: buf(gl.ARRAY_BUFFER, R.uv), jnt: buf(gl.ARRAY_BUFFER, R.jnt), wgt: buf(gl.ARRAY_BUFFER, R.wgt), zone: buf(gl.ARRAY_BUFFER, R.zone), idx: buf(gl.ELEMENT_ARRAY_BUFFER, R.idx) };
+    R.vb = { pos: buf(gl.ARRAY_BUFFER, R.pos), nrm: buf(gl.ARRAY_BUFFER, R.nrm), uv: buf(gl.ARRAY_BUFFER, R.uv), jnt: buf(gl.ARRAY_BUFFER, R.jnt), wgt: buf(gl.ARRAY_BUFFER, R.wgt), zone: buf(gl.ARRAY_BUFFER, R.zone), hand: buf(gl.ARRAY_BUFFER, R.hd), idx: buf(gl.ELEMENT_ARRAY_BUFFER, R.idx) };
     buildProps();
     for (const m of Object.values(M)) { m.vp = buf(gl.ARRAY_BUFFER, m.pos); m.vn = buf(gl.ARRAY_BUFFER, m.nrm); m.vi = buf(gl.ELEMENT_ARRAY_BUFFER, m.idx); }
     const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
     gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); state = 'ko'; });
-    GL = { canvas, gl, body, prop, tex, bones: new Float32Array(52 * 4) };
+    GL = { canvas, gl, body, prop, mesh, tex, bones: new Float32Array(52 * 4) };
   }
   function load() {
     if (ASSET) return ASSET;
@@ -658,7 +772,7 @@
     const tint = mask ? tintOf(ex, true) : tintOf(ex);
     // --- corps
     let L = g.body.loc; gl.useProgram(g.body.p);
-    for (let i = 0; i < 6; i++) gl.enableVertexAttribArray(i);
+    for (let i = 0; i < 7; i++) gl.enableVertexAttribArray(i);
     const vb = R.vb;
     gl.bindBuffer(gl.ARRAY_BUFFER, vb.pos); gl.vertexAttribPointer(0, 3, gl.UNSIGNED_SHORT, true, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, vb.nrm); gl.vertexAttribPointer(1, 3, gl.BYTE, true, 4, 0);
@@ -666,8 +780,11 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, vb.jnt); gl.vertexAttribPointer(3, 4, gl.UNSIGNED_BYTE, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, vb.wgt); gl.vertexAttribPointer(4, 4, gl.UNSIGNED_BYTE, true, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, vb.zone); gl.vertexAttribPointer(5, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vb.hand); gl.vertexAttribPointer(6, 3, gl.UNSIGNED_BYTE, true, 4, 0);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, vb.idx);
     gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform4fv(L.uB, bm); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
+    gl.uniform3fv(L.uHO, [...R.hf[0].o, ...R.hf[1].o]); gl.uniform3fv(L.uHU, [...R.hf[0].U, ...R.hf[1].U]); gl.uniform3fv(L.uHV, [...R.hf[0].V, ...R.hf[1].V]); gl.uniform2f(L.uCurl, s.curl ? s.curl[0] : 0, s.curl ? s.curl[1] : 0);
+    gl.uniform4fv(L.uHC, [HC.mcp, HC.pip, HC.dip, HC.pn, HC.a[0] * D2R, HC.a[1] * D2R, HC.a[2] * D2R, HC.ta * D2R, HC.tu, HC.tv, HC.tn, HC.tb * D2R]);
     const hd = R.head; gl.uniform3fv(L.uLo, hd.lo); gl.uniform3f(L.uSc, hd.hi[0] - hd.lo[0], hd.hi[1] - hd.lo[1], hd.hi[2] - hd.lo[2]);
     gl.uniform4fv(L.uZc, tint.z); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, g.tex); gl.uniform1i(L.uTex, 0);
     gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, mask ? (mask === true ? 2 : mask) : 0); gl.cullFace(gl.BACK);
@@ -680,9 +797,30 @@
       gl.cullFace(gl.FRONT); gl.uniform1f(L.uMode, 1); gl.uniform4f(L.uFlat, COL.ink[0], COL.ink[1], COL.ink[2], 1); gl.uniform1f(L.uOut, dist * thick);
       gl.drawElements(gl.TRIANGLES, R.ni, gl.UNSIGNED_SHORT, 0);
     }
-    for (let i = 2; i < 6; i++) gl.disableVertexAttribArray(i);
+    for (let i = 2; i < 7; i++) gl.disableVertexAttribArray(i);
     // --- accessoires
-    const parts = propParts(ex.props, s.J, s);
+    const all = propParts(ex.props, s.J, s); const parts = all.filter((p) => !p.mat); const mats = all.filter((p) => p.mat);
+    if (mats.length) {   // matériel en maillage (couleurs par sommet), sans contour : les arêtes vives suffisent
+      L = g.mesh.loc; gl.useProgram(g.mesh.p); gl.enableVertexAttribArray(2);
+      gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light); gl.uniform1f(L.uOut, 0); gl.uniform1f(L.uMode, 0);
+      gl.disable(gl.CULL_FACE);
+      for (const p of mats) {
+        const m = matGet(p.mat); if (!m || !m.vb) continue;
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.pos); gl.vertexAttribPointer(0, 3, gl.UNSIGNED_SHORT, true, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.nrm); gl.vertexAttribPointer(1, 3, gl.BYTE, true, 4, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.col); gl.vertexAttribPointer(2, 3, gl.UNSIGNED_BYTE, true, 4, 0);
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, m.vb.idx);
+        gl.uniform3fv(L.uLo, m.lo); gl.uniform3fv(L.uSc, m.sc); gl.uniformMatrix4fv(L.uM, false, p.model); gl.uniform3fv(L.uTn, p.tint || [1, 1, 1]);
+        const list = p.part ? (m.parts[p.part] || []) : [].concat(...Object.values(m.parts));
+        for (const [v0, , i0, ni] of list) {   // chaque morceau a ses propres sommets (indices < 65536)
+          gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.pos); gl.vertexAttribPointer(0, 3, gl.UNSIGNED_SHORT, true, 0, v0 * 6);
+          gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.nrm); gl.vertexAttribPointer(1, 3, gl.BYTE, true, 4, v0 * 4);
+          gl.bindBuffer(gl.ARRAY_BUFFER, m.vb.col); gl.vertexAttribPointer(2, 3, gl.UNSIGNED_BYTE, true, 4, v0 * 4);
+          gl.drawElements(gl.TRIANGLES, ni, gl.UNSIGNED_SHORT, i0 * 2);
+        }
+      }
+      gl.disableVertexAttribArray(2); gl.enable(gl.CULL_FACE);
+    }
     if (parts.length) {
       L = g.prop.loc; gl.useProgram(g.prop.p);
       gl.uniformMatrix4fv(L.uVP, false, vp); gl.uniform3fv(L.uCam, eye); gl.uniform3fv(L.uL, light);
@@ -778,7 +916,8 @@
   window.WL3D = {
     define, view, has: (id) => EX.has(id), lib: (id) => !!(EX.get(id) && EX.get(id).lib),
     credit: EN_UI() ? '3D model: “Male base muscular anatomy” by Harshit Prajapati, CC BY 4.0, modified.' : 'Modèle 3D : « Male base muscular anatomy » par Harshit Prajapati, CC BY 4.0, modifié.',
+    creditOf: (id) => { const ex = EX.get(id); return ex ? matCredit(ex) : ''; },
     list: () => [...EX.values()].filter((e) => !e.lib).map((e) => ({ id: e.id, name: e.name, en: e.en || '', leaf: e.leaf, p: e.p, s: e.s || [], side: !!e.side, dup: e.dup || [] })),
-    _dbg: { snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, primsOf, boneQ, propCtx, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
+    _dbg: { curlRest, HC, parseMat, snapHands: (id, time, n) => { const ex = EX.get(id); ensureSize(n); const c0 = ex.cam || {}; const cam = { yaw: (c0.yaw ?? 60) * D2R, pitch: (c0.pitch ?? 14) * D2R }; const gl = GL.gl; const px = new Uint8Array(n * n * 4); const cnt = () => { gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0; for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0 && px[i] > 128) c++; return c; }; drawScene(ex, time, cam, n, n, 0, 3); const vis = cnt(); drawScene(ex, time, cam, n, n, 0, 4); return [vis, cnt()]; }, snap: (id, yaw, pitch, time, n) => { const ex = EX.get(id); ensureSize(n); drawScene(ex, time, { yaw: yaw * D2R, pitch: pitch * D2R }, n, n, 0, true); const gl = GL.gl; const px = new Uint8Array(n * n * 4); gl.readPixels(0, 0, n, n, gl.RGBA, gl.UNSIGNED_BYTE, px); let c = 0, b = 0; for (let i = 0; i < px.length; i += 4) { if (px[i + 3] > 0) { b++; if (px[i] > 128) c++; } } return [c, b]; }, load, state: () => state, EX, timeline, fitOf, ready, blend, solvePose, B, X, BN, qRot, primsOf, boneQ, propCtx, loadRig: (buf) => { RIG = parseRig(buf); return RIG; }, rig: () => RIG, state: () => state },
   };
 })();

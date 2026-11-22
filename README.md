@@ -12,7 +12,7 @@ Application web personnelle (PWA pour iPhone) pour suivre ses exercices et ses c
 | `js/` | code : `app.js`, `mannequin.js`, `exercices-3d.js` (étirements), `exercices-3d-muscu.js` (musculation), `i18n.js` (textes en anglais) |
 | `css/` | styles : `style.css` |
 | `data/` | liste des exercices (`data-v3.json`), noms français des exercices (`names-fr.json`) et schéma du corps (`bodymap.json`) |
-| `models/` | mannequin 3D (`mannequin.bin`, `mannequin-peau.jpg`) |
+| `models/` | mannequin 3D (`mannequin.bin`, `mannequin-peau.jpg`) et machines 3D (`mat/*.bin`, une par machine) |
 | `icons/` | icônes de l'application |
 | `docs/` | guide de synchronisation avec un NAS (`synchronisation-nas.html`) et collection PocketBase à importer (`pocketbase-worklog.json`) |
 | `.github/workflows/deploy.yml` | déballage du zip et publication du site |

@@ -31,9 +31,9 @@
   const mus = (...parts) => Object.assign({}, ...parts);
 
   /* Main qui tient quelque chose au point G (monde) : doigts d, paume n (vers l'objet). Renvoie la cible du poignet et l'orientation. */
-  const grip = (G, d, n, o) => { d = norm(d); n = ortho(n, d); return Object.assign({ at: sub(sub(G, mul(d, 0.075)), mul(n, 0.028)), hand: { d, n } }, o); };
+  const grip = (G, d, n, o) => { d = norm(d); n = ortho(n, d); return Object.assign({ at: sub(sub(G, mul(d, 0.075)), mul(n, 0.028)), hand: { d, n }, close: 1 }, o); };
   /* Idem dans le repère du thorax (l'objet suit le buste : barre sur le dos, poignée contre la poitrine…). */
-  const gripB = (G, d, n, o) => { d = norm(d); n = ortho(n, d); return Object.assign({ atb: sub(sub(G, mul(d, 0.075)), mul(n, 0.028)), hand: { db: d, nb: n } }, o); };
+  const gripB = (G, d, n, o) => { d = norm(d); n = ortho(n, d); return Object.assign({ atb: sub(sub(G, mul(d, 0.075)), mul(n, 0.028)), hand: { db: d, nb: n }, close: 1 }, o); };
 
 
   /* Main au bout du bras (écartés, élévations) : doigts dans l'axe épaule → main, paume vers « pv ». sh : épaule approximative. */
@@ -46,6 +46,21 @@
   /* ---------- matériel ---------- */
   const PAD = [0.27, 0.26, 0.30], FRAME = [0.80, 0.80, 0.83], BAR = [0.56, 0.56, 0.62], PLATE = [0.22, 0.22, 0.25], CABLE = [0.14, 0.14, 0.16], BALL = [0.88, 0.88, 0.92], BAND = [0.25, 0.64, 0.56], KB = [0.24, 0.24, 0.27];
   const fn = (f, o) => Object.assign({ type: 'fn', f }, o || {});
+  /* Matériel en maillage (models/mat/<m>.bin, modèles 3D d'auteurs crédités dans CREDITS.txt) : c = origine, x/y/z = axes, s = échelle. */
+  const MESH = (m, c, o) => Object.assign({ k: 'mesh', m, c }, o);
+  const yawAx = (deg) => { const a = deg * Math.PI / 180; return { x: [Math.cos(a), 0, -Math.sin(a)], y: [0, 1, 0], z: [Math.sin(a), 0, Math.cos(a)] }; };
+  const hid = (q) => Object.assign(q, { hide: true });   // volume invisible : sert aux contrôles (contact, collisions)
+  /* Pièce mobile d'une machine (bras de levier, rouleau, plateau) qui tourne d'un angle `ang` (radians) autour d'un axe passant par `piv`
+     (dans le repère du modèle) : axe 'x' (horizontal, la pièce monte vers +y quand ang > 0) ou 'y' (vertical). c : position du modèle. */
+  const HACK0 = 0.715;   // position (le long des rails) du bassin quand le chariot du hack squat est à sa place d'origine
+  const ROTM = (m, part, c, piv, ax, ang, o) => {
+    const cs = Math.cos(ang), sn = Math.sin(ang);
+    const X = ax === 'x' ? [1, 0, 0] : [cs, 0, -sn], Y = ax === 'x' ? [0, cs, -sn] : [0, 1, 0], Z = ax === 'x' ? [0, sn, cs] : [sn, 0, cs];
+    const Rp = add(add(mul(X, piv[0]), mul(Y, piv[1])), mul(Z, piv[2])); const k = (o && o.s) || 1;
+    return MESH(m, add(c, mul(sub(piv, Rp), k)), Object.assign({ part, x: X, y: Y, z: Z }, o, { s: k }));
+  };
+  /* Angle d'un point autour d'un axe x passant par P (dans le plan y-z), mesuré depuis +z vers +y. */
+  const angX = (p, P) => Math.atan2(p[1] - P[1], p[2] - P[2]);
   const cyl = (a, b, r, col, o) => Object.assign({ k: 'cyl', a, b, r, col }, o);
   const box = (c, s, col, o) => Object.assign({ k: 'box', c, s, col }, o);
   const sph = (c, r, col, o) => Object.assign({ k: 'sph', c, r, col }, o);
@@ -56,26 +71,31 @@
     o = o || {}; const gl = C.hand('L').grip, gr = C.hand('R').grip; const m = mul(add(gl, gr), 0.5); const u = norm(sub(gl, gr));
     const half = o.half || 1.0, pr = o.plate == null ? 0.2 : o.plate; const out = [cyl(add(m, mul(u, -half)), add(m, mul(u, half)), o.r || 0.014, BAR, { held: true, name: 'barre' })];
     if (pr) for (const s of [-1, 1]) {
-      const p0 = add(m, mul(u, s * (o.pin || 0.80))); out.push(cyl(p0, add(m, mul(u, s * ((o.pin || 0.80) + (o.pw || 0.07)))), pr, PLATE, { name: 'disque' }));
+      const pin = o.pin || 0.80, pw = o.pw || 0.07; const p0 = add(m, mul(u, s * pin));
+      out.push(hid(cyl(p0, add(m, mul(u, s * (pin + pw))), pr, PLATE, { name: 'disque' })));
+      const ax = mul(u, s); const ay = norm(sub([0, 1, 0], mul(ax, dot([0, 1, 0], ax)))); 
+      out.push(MESH('disques', add(m, mul(u, s * (pin + pw / 2))), { x: ax, y: ay, z: cross(ax, ay), s: [pw / 0.176, pr / 0.132, pr / 0.132], tint: [0.34, 0.34, 0.37] }));
     }
     return out;
   }, o && o.static ? { nofit: false } : null);
   /* Haltère dans une main : manche en travers de la paume. */
   const dbIn = (sd, o) => fn((C) => {
-    o = o || {}; const h = C.hand(sd); const r = o.r || 0.055, hw = o.hw || 0.065;
-    return [cyl(add(h.grip, mul(h.across, -hw - 0.05)), add(h.grip, mul(h.across, hw + 0.05)), 0.016, BAR, { held: true, name: 'haltère' }),
-      cyl(add(h.grip, mul(h.across, hw)), add(h.grip, mul(h.across, hw + 0.05)), r, PLATE, { held: true, name: 'haltère' }),
-      cyl(add(h.grip, mul(h.across, -hw - 0.05)), add(h.grip, mul(h.across, -hw)), r, PLATE, { held: true, name: 'haltère' })];
+    o = o || {}; const h = C.hand(sd); const k = (o.r || 0.065) / 0.097;   // haltère du pack « Gym Tools » : têtes octogonales
+    const hw = 0.088 * k, r = 0.097 * k, end = 0.167 * k;
+    return [hid(cyl(add(h.grip, mul(h.across, -end)), add(h.grip, mul(h.across, end)), 0.016, BAR, { held: true, name: 'haltère' })),
+      hid(cyl(add(h.grip, mul(h.across, 0.059 * k / 0.67)), add(h.grip, mul(h.across, hw)), r, PLATE, { held: true, name: 'haltère' })),
+      hid(cyl(add(h.grip, mul(h.across, -hw)), add(h.grip, mul(h.across, -0.059 * k / 0.67)), r, PLATE, { held: true, name: 'haltère' })),
+      MESH('haltere', h.grip, { x: h.across, y: h.fing, z: cross(h.across, h.fing), s: k })];
   });
   const dbs = (o) => [dbIn('L', o), dbIn('R', o)];
   /* Kettlebell dans une main : la boule pend sous la poignée, ou repose sur le dos de l'avant-bras quand la main est en l'air. */
   const kbIn = (sd) => fn((C) => {
     const h = C.hand(sd); const k = Math.min(1, Math.max(0, (h.fing[1] + 0.2) / 0.6));
     const dir = C.norm(C.add(C.mul([0, -1, 0], 1 - k), C.mul(C.add(C.mul(h.palm, -1), C.mul(h.fing, -0.25)), k)));
-    return [cyl(C.add(h.grip, C.mul(h.across, -0.065)), C.add(h.grip, C.mul(h.across, 0.065)), 0.013, KB, { held: true, name: 'kettlebell' }),
-      cyl(C.add(h.grip, C.mul(h.across, -0.06)), C.add(C.add(h.grip, C.mul(h.across, -0.05)), C.mul(dir, 0.07)), 0.012, KB, { held: true }),
-      cyl(C.add(h.grip, C.mul(h.across, 0.06)), C.add(C.add(h.grip, C.mul(h.across, 0.05)), C.mul(dir, 0.07)), 0.012, KB, { held: true }),
-      sph(C.add(h.grip, C.mul(dir, 0.115)), 0.075, KB, { held: true, name: 'kettlebell' })];
+    const y = mul(dir, -1); const x = norm(sub(h.across, mul(y, dot(h.across, y)))); const z = cross(x, y);   // modèle « Kettlebell » (plaggy) : poignée en haut
+    return [hid(cyl(C.add(h.grip, C.mul(h.across, -0.065)), C.add(h.grip, C.mul(h.across, 0.065)), 0.013, KB, { held: true, name: 'kettlebell' })),
+      hid(sph(C.add(h.grip, C.mul(dir, 0.137)), 0.10, KB, { held: true, name: 'kettlebell' })),
+      MESH('kettlebell', sub(h.grip, add(mul(y, 0.212), mul(z, 0.0075))), { x, y, z, s: [1, 1, 1.5], held: true })];
   });
 
   /* Poignée de câble dans la main + câble jusqu'à la poulie (point fixe). */
@@ -88,20 +108,38 @@
   /* Élastique d'un point fixe à la main. */
   const bandTo = (sd, from) => fn((C) => { const h = C.hand(sd); return [cyl(h.grip, from, 0.009, BAND, { soft: true })]; });
   /* Colonne de poulie (cadre + pile de poids), posée au sol. */
-  const tower = (x, z, h, o) => fn(() => { o = o || {}; const w = o.w || 0.5; return [
-    cyl([x - w / 2, 0, z], [x - w / 2, h, z], 0.03, FRAME, { name: 'poulie' }), cyl([x + w / 2, 0, z], [x + w / 2, h, z], 0.03, FRAME, { name: 'poulie' }),
-    cyl([x - w / 2, h, z], [x + w / 2, h, z], 0.03, FRAME, { name: 'poulie' }), box([x, 0.45, z], [w * 0.6, 0.7, 0.12], PLATE, { name: 'poulie' })]; });
+  const tower = (x, z, h) => fn(() => {
+    const d = Math.abs(x) >= Math.abs(z) ? [-Math.sign(x), 0, 0] : [0, 0, -Math.sign(z) || -1];   // de la colonne vers le pratiquant
+    const ax = cross([0, 1, 0], d); const c = [x, 0, z]; const sy = (h || 2.2) / 2.2;
+    return [MESH('colonne', c, { x: ax, y: [0, 1, 0], z: d, s: [1, sy, 1] }),
+      hid(box(add(c, add(mul(d, -0.17), [0, 1.1 * sy, 0])), [0.70, 2.2 * sy, 0.34], FRAME, { name: 'poulie', x: ax, y: [0, 1, 0], z: d }))];
+  });
+  /* Vis-à-vis (double poulie) : faces intérieures des colonnes en x = ±xi, à la profondeur z. */
+  const crossover = (xi, z) => fn(() => [MESH('vis_a_vis', [0, 0, z], { s: [xi / 1.05, 1, 1] }),
+    hid(box([xi + 0.17, 1.1, z], [0.34, 2.2, 0.70], FRAME, { name: 'poulie' })), hid(box([-xi - 0.17, 1.1, z], [0.34, 2.2, 0.70], FRAME, { name: 'poulie' }))]);
   /* Banc plat : plateau (haut à la hauteur h), de z0 à z1, et ses pieds. */
   const bench = (z0, z1, h, o) => { o = o || {}; const x = o.x || 0, w = o.w || 0.27, t = 0.07; return [
-    box([x, h - t / 2, (z0 + z1) / 2], [w, t, z1 - z0], PAD, { name: 'banc' }),
-    box([x, (h - t) / 2, z0 + 0.08], [w * 0.8, h - t, 0.05], FRAME, { name: 'banc' }), box([x, (h - t) / 2, z1 - 0.08], [w * 0.8, h - t, 0.05], FRAME, { name: 'banc' })]; };
+    hid(box([x, h - t / 2, (z0 + z1) / 2], [w, t, z1 - z0], PAD, { name: 'banc' })),
+    hid(box([x, (h - t) / 2, z0 + 0.08], [w * 0.8, h - t, 0.05], FRAME, { name: 'banc' })), hid(box([x, (h - t) / 2, z1 - 0.08], [w * 0.8, h - t, 0.05], FRAME, { name: 'banc' })),
+    MESH('banc_plat', [x, 0, (z0 + z1) / 2], { s: [(w + 0.02) / 0.415, (h - 0.008) / 0.438, (z1 - z0) / 1.402] })]; };   // mousse un peu enfoncée sous le corps
 
+  /* Banc réglable (modèle « Training Bench, Incline Bench », XaaH, CC BY 4.0) : dossier tourné autour de sa charnière
+     jusqu'à `ang` degrés au-dessus de l'horizontale (39° dans le modèle). o.c : position du banc, o.yaw : orientation, o.sy : hauteur. */
+  const ADJ = (ang, o) => {
+    o = o || {}; const c = o.c || [0, 0, 0]; const A = yawAx(o.yaw || 0); const sy = o.sy || 1; const H = [0, 0.44, 0.06];
+    const th = (ang - 39) * Math.PI / 180, ct = Math.cos(th), st = Math.sin(th);
+    const M = (v) => add(add(mul(A.x, v[0]), mul(A.y, v[1] * sy)), mul(A.z, v[2]));   // repère du banc -> monde (échelle en hauteur)
+    const RH = [0, H[1] * ct - H[2] * st, H[1] * st + H[2] * ct];
+    const part = (n) => MESH('adjbench', c, { part: n, x: A.x, y: A.y, z: A.z, s: [1, sy, 1] });
+    return [part('frame'), ...(ang < 50 ? [part('support')] : []), ...(o.noSeat ? [] : [part('siege')]), ...(o.noSeat || o.noRoll ? [] : [part('rouleaux')]),
+      MESH('adjbench', add(c, M(sub(H, RH))), { part: 'dossier', x: M([1, 0, 0]), y: M([0, ct, st]), z: M([0, -st, ct]), s: 1 })];
+  };
   /* Banc droit à dossier (assis) et banc incliné (dossier à 50°). */
-  const UPB = () => [box([0, 0.42, 0.0], [0.34, 0.07, 0.40], PAD, { name: 'banc' }), tbox([0, 0.88, -0.27], [0.32, 0.72, 0.07], -10, PAD, { name: 'dossier' }), box([0, 0.19, 0.0], [0.10, 0.38, 0.10], FRAME)];
-  const INB = () => [box([0, 0.42, 0.08], [0.32, 0.07, 0.34], PAD, { name: 'siège' }), tbox([0, 0.748, -0.411], [0.30, 0.80, 0.07], -50, PAD, { name: 'dossier' }), box([0, 0.20, -0.1], [0.10, 0.40, 0.10], FRAME)];
+  const UPB = () => [...ADJ(80, { c: [0, 0, -0.27], sy: 1.075 }), ...[box([0, 0.42, -0.03], [0.34, 0.07, 0.34], PAD, { name: 'banc' }), tbox([0, 0.88, -0.27], [0.32, 0.72, 0.07], -10, PAD, { name: 'dossier' }), box([0, 0.19, 0.0], [0.10, 0.38, 0.10], FRAME)].map(hid)];
+  const INB = () => [...ADJ(40, { c: [0, 0.015, -0.155], sy: 1.083, noRoll: true }), ...[box([0, 0.42, 0.08], [0.32, 0.07, 0.34], PAD, { name: 'siège' }), tbox([0, 0.748, -0.411], [0.30, 0.80, 0.07], -50, PAD, { name: 'dossier' }), box([0, 0.20, -0.1], [0.10, 0.40, 0.10], FRAME)].map(hid)];
   /* Station de dips : deux barres parallèles à 1,25 m. */
-  const DIPS = () => fn(() => { const out = []; for (const s of [1, -1]) { out.push(cyl([s * 0.27, 1.25, -0.30], [s * 0.27, 1.25, 0.40], 0.02, BAR, { held: true, name: 'barre' }),
-    cyl([s * 0.27, 1.25, 0.40], [s * 0.34, 0, 0.45], 0.03, FRAME, { name: 'cadre' }), cyl([s * 0.27, 1.25, -0.30], [s * 0.34, 0, -0.35], 0.03, FRAME, { name: 'cadre' })); } return out; });
+  /* Station traction / dips (pack « Gym Tools ») tournée : accoudoirs vers l'avant, dossier derrière le pratiquant. */
+  const DIPS = () => fn(() => { const out = [MESH('station', [0, 0, -0.31], Object.assign({ held: true }, yawAx(180)))]; for (const s of [1, -1]) out.push(hid(cyl([s * 0.27, 1.25, -0.30], [s * 0.27, 1.25, 0.40], 0.02, BAR, { held: true, name: 'barre' }))); return out; });
 
   WL3D.define([
     /* ======================= JAMBES ======================= */
@@ -129,7 +167,7 @@
       props: dbs(),
       poses: {
         a: { pelvis: [0, 0.92, 0], rot: [4, 0, 0], lL: flatF(0.12, 0.02), lR: flatF(-0.12, 0.02),
-          aL: grip([0.17, 0.70, 0.16], [0, -1, 0], [0, 0, -1], { p: [0.3, 0, -1] }), aR: grip([-0.17, 0.70, 0.16], [0, -1, 0], [0, 0, -1], { p: [-0.3, 0, -1] }) },
+          aL: grip([0.17, 0.70, 0.21], [0, -1, 0], [0, 0, -1], { p: [0.3, 0, -1] }), aR: grip([-0.17, 0.70, 0.21], [0, -1, 0], [0, 0, -1], { p: [-0.3, 0, -1] }) },
         b: { pelvis: [0, 0.86, -0.25], rot: [72, 0, 0], neck: [-28, 0, 0], lL: flatF(0.12, 0.02, { p: [0, 0, 1] }), lR: flatF(-0.12, 0.02, { p: [0, 0, 1] }),
           aL: grip([0.17, 0.38, 0.22], [0, -1, 0], [0, 0, -1], { p: [0.3, 0, -1] }), aR: grip([-0.17, 0.38, 0.22], [0, -1, 0], [0, 0, -1], { p: [-0.3, 0, -1] }) },
       },
@@ -137,7 +175,7 @@
 
     /* ======================= DOS ======================= */
     { id: 'e0652', lib: true, name: 'Traction', en: 'Pull-up', mus: mus(m2('lat', 1), m2('rhomb', 2), m2('biceps', 2)), cam: { yaw: 200, pitch: 6 },
-      props: [fn(() => [cyl([-0.75, 2.25, 0], [0.75, 2.25, 0], 0.016, BAR, { held: true, name: 'barre' }), cyl([0.75, 2.25, 0], [0.75, 2.25, -0.25], 0.03, FRAME), cyl([-0.75, 2.25, 0], [-0.75, 2.25, -0.25], 0.03, FRAME)])],
+      props: [fn(() => [hid(cyl([-0.75, 2.25, 0], [0.75, 2.25, 0], 0.016, BAR, { held: true, name: 'barre' })), MESH('station', [0, 0, 0.45], { s: [0.89, 1.023, 1], held: true })])],
       poses: {
         a: { float: true, pelvis: [0, 1.11, -0.02], rot: [-4, 0, 0], neck: [-6, 0, 0],
           lL: { db: [0.06, -1, 0.18], eb: [0.02, -0.6, -0.8], foot: 30 }, lR: { db: [-0.06, -1, 0.18], eb: [-0.02, -0.6, -0.8], foot: 30 },
@@ -160,90 +198,77 @@
       seq: [['a', 0.5, 1.3], ['b', 0.3, 1.3]] },
 
     { id: 'e0743', lib: true, name: 'Hack squat à la machine', en: 'Sled hack squat', mus: mus(m2('quad', 1), m2('calf', 2)), cam: { yaw: 70, pitch: 10 },
-      props: [fn((C) => { const t = C.bone('Spine3'); return [
-        box(t.at([0, 0.02, -0.165]), [0.36, 0.62, 0.06], PAD, { x: t.dir([1, 0, 0]), y: t.dir([0, 1, 0]), z: t.dir([0, 0, 1]), name: 'dossier' }),
-        cyl(t.at([0.15, 0.43, -0.13]), t.at([0.15, 0.43, 0.07]), 0.04, PAD, { name: 'épaulière' }), cyl(t.at([-0.15, 0.43, -0.13]), t.at([-0.15, 0.43, 0.07]), 0.04, PAD, { name: 'épaulière' }),
-        cyl(t.at([0.30, 0.38, -0.10]), t.at([0.30, 0.38, 0.10]), 0.016, BAR, { held: true }), cyl(t.at([-0.30, 0.38, -0.10]), t.at([-0.30, 0.38, 0.10]), 0.016, BAR, { held: true }),
-        cyl(t.at([0.30, 0.38, -0.10]), t.at([0.15, 0.43, -0.13]), 0.016, FRAME), cyl(t.at([-0.30, 0.38, -0.10]), t.at([-0.15, 0.43, -0.13]), 0.016, FRAME)]; }),
-        fn(() => [box([0, 0.08, 0.40], [0.62, 0.06, 0.42], PLATE, { name: 'plateau' }),
-          cyl([0.30, 0.10, 0.15], [0.30, 1.55, -1.13], 0.03, FRAME, { name: 'rail' }), cyl([-0.30, 0.10, 0.15], [-0.30, 1.55, -1.13], 0.03, FRAME, { name: 'rail' })])],
+      props: [fn(() => [MESH('hack', [0, 0, 0], { part: 'frame' })]),
+        /* Modèle « Movement Hack Machine » : le chariot (dossier, épaulières, poignées) glisse sur les rails à 45° et suit le bassin. */
+        fn((C) => { const t = (C.J.pelvis[1] - C.J.pelvis[2]) * Math.SQRT1_2 - HACK0; return [MESH('hack', [0, t * Math.SQRT1_2, -t * Math.SQRT1_2], { part: 'chariot', held: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.83, -0.12], rot: [-36, 0, 0], neck: [10, 0, 0], lL: flatF(0.15, 0.36, { at: [0.15, 0.21, 0.36], toe: [0.15, 0, 1] }), lR: flatF(-0.15, 0.36, { at: [-0.15, 0.21, 0.36], toe: [-0.15, 0, 1] }),
-          aL: gripB([0.30, 0.38, 0.02], [0, -0.1, 1], [-1, 0, 0], { pb: [1, -0.8, 0] }), aR: gripB([-0.30, 0.38, 0.02], [0, -0.1, 1], [1, 0, 0], { pb: [-1, -0.8, 0] }) },
-        b: { float: true, pelvis: [0, 0.50, 0.16], rot: [-36, 0, 0], neck: [12, 0, 0], lL: flatF(0.15, 0.36, { at: [0.15, 0.21, 0.36], toe: [0.15, 0, 1], p: [0.35, 0.3, 1] }), lR: flatF(-0.15, 0.36, { at: [-0.15, 0.21, 0.36], toe: [-0.15, 0, 1], p: [-0.35, 0.3, 1] }),
-          aL: gripB([0.30, 0.38, 0.02], [0, -0.1, 1], [-1, 0, 0], { pb: [1, -0.8, 0] }), aR: gripB([-0.30, 0.38, 0.02], [0, -0.1, 1], [1, 0, 0], { pb: [-1, -0.8, 0] }) },
+        a: { float: true, pelvis: [0, 0.951, -0.011], rot: [-45, 0, 0], neck: [10, 0, 0], lL: { at: [0.16, 0.429, 0.675], p: [0.25, 0.7, 0.7], foot: { toe: [0.25, 0.69, 0.69], up: [0, 0.707, -0.707] } }, lR: { at: [-0.16, 0.429, 0.675], p: [-0.25, 0.7, 0.7], foot: { toe: [-0.25, 0.69, 0.69], up: [0, 0.707, -0.707] } }, aL: grip([0.28, 1.503, -0.343], [0, 0.707, -0.707], [-1, 0, 0], { p: [1, -0.5, 0.3] }), aR: grip([-0.28, 1.503, -0.343], [0, 0.707, -0.707], [1, 0, 0], { p: [-1, -0.5, 0.3] }) },
+        b: { float: true, pelvis: [0, 0.633, 0.308], rot: [-45, 0, 0], neck: [10, 0, 0], lL: { at: [0.16, 0.429, 0.675], p: [0.4, 0.7, 0.7], foot: { toe: [0.25, 0.69, 0.69], up: [0, 0.707, -0.707] } }, lR: { at: [-0.16, 0.429, 0.675], p: [-0.4, 0.7, 0.7], foot: { toe: [-0.25, 0.69, 0.69], up: [0, 0.707, -0.707] } }, aL: grip([0.28, 1.184, -0.025], [0, 0.707, -0.707], [-1, 0, 0], { p: [1, -0.5, 0.3] }), aR: grip([-0.28, 1.184, -0.025], [0, 0.707, -0.707], [1, 0, 0], { p: [-1, -0.5, 0.3] }) },
       },
       seq: [['a', 0.5, 1.4], ['b', 0.3, 1.3]] },
 
     { id: 'e0585', lib: true, name: 'Leg extension à la machine', en: 'Lever leg extension', mus: mus(m2('quad', 1)), cam: { yaw: 50, pitch: 10 },
-      props: [fn(() => [box([0, 0.445, -0.07], [0.42, 0.08, 0.44], PAD, { name: 'siège' }), tbox([0, 0.82, -0.36], [0.40, 0.60, 0.08], -12, PAD, { name: 'dossier' }),
-        box([0, 0.22, -0.07], [0.10, 0.44, 0.10], FRAME), cyl([0.30, 0.52, -0.05], [0.30, 0.52, -0.30], 0.02, FRAME, { name: 'poignée' }), cyl([-0.30, 0.52, -0.05], [-0.30, 0.52, -0.30], 0.02, FRAME, { name: 'poignée' })]),
-        fn((C) => { const l = C.bone('LowerLeg_L'), r = C.bone('LowerLeg_R'); const a = l.at([0, -0.33, 0.085]), b = r.at([0, -0.33, 0.085]); const u = C.norm(C.sub(a, b));
-          const piv = C.mul(C.add(C.J.kneeL, C.J.kneeR), 0.5); const pa = C.add(piv, [0.27, 0, 0]); const ea = C.add(a, C.mul(u, 0.16));
-          return [cyl(C.add(a, C.mul(u, 0.16)), C.sub(b, C.mul(u, 0.16)), 0.045, PAD, { name: 'boudin' }), cyl(pa, ea, 0.022, FRAME, { name: 'bras' })]; })],
+      props: [fn(() => [MESH('legext', [-0.225, 0, -0.03], { part: 'frame', held: true }), MESH('legext', [-0.225, 0.10, -0.03], { part: 'cuisses' })]),
+        /* Machine assise (« Seated Leg Curl Trainer », Gerhald, CC BY 4.0) utilisée en leg extension : le levier et son rouleau tournent
+           autour de l'axe des genoux (y 0,598, z 0,45 dans le modèle) et restent devant les tibias. */
+        fn((C) => { const A = C.mul(C.add(C.bone('LowerLeg_L').at([0, -0.33, 0.085]), C.bone('LowerLeg_R').at([0, -0.33, 0.085])), 0.5);
+          const a = Math.atan2(A[1] - 0.598, A[2] - 0.42) - Math.atan2(-0.118, 0.17);
+          return [ROTM('legext', 'levier', [-0.225, 0, -0.03], [0, 0.598, 0.45], 'x', a, { nocheck: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.615, -0.08], rot: [-10, 0, 0], neck: [6, 0, 0], lL: { d: [0.03, -0.04, 1], e: [0, -1, 0.12], foot: 0 }, lR: { d: [-0.03, -0.04, 1], e: [0, -1, 0.12], foot: 0 },
-          aL: grip([0.30, 0.52, -0.17], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.30, 0.52, -0.17], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
-        b: { float: true, pelvis: [0, 0.615, -0.08], rot: [-10, 0, 0], neck: [6, 0, 0], lL: { d: [0.03, -0.04, 1], e: [0, 0.10, 1], foot: -5 }, lR: { d: [-0.03, -0.04, 1], e: [0, 0.10, 1], foot: -5 },
-          aL: grip([0.30, 0.52, -0.17], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.30, 0.52, -0.17], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
+        a: { float: true, pelvis: [0, 0.69, -0.08], rot: [-10, 0, 0], neck: [6, 0, 0], lL: { d: [0.03, -0.04, 1], e: [0, -1, 0.12], foot: 0 }, lR: { d: [-0.03, -0.04, 1], e: [0, -1, 0.12], foot: 0 },
+          aL: grip([0.30, 0.595, -0.17], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.30, 0.595, -0.17], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
+        b: { float: true, pelvis: [0, 0.69, -0.08], rot: [-10, 0, 0], neck: [6, 0, 0], lL: { d: [0.03, -0.04, 1], e: [0, 0.10, 1], foot: -5 }, lR: { d: [-0.03, -0.04, 1], e: [0, 0.10, 1], foot: -5 },
+          aL: grip([0.30, 0.595, -0.17], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.30, 0.595, -0.17], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
       },
       seq: [['a', 0.4, 1.1], ['b', 0.4, 1.2]] },
 
-    { id: 'e0598', lib: true, name: 'Adduction de hanche assis à la machine', en: 'Lever seated hip adduction', mus: mus(m2('add', 1)), cam: { yaw: 20, pitch: 14 },
-      props: [fn(() => [box([0, 0.445, -0.05], [0.44, 0.08, 0.42], PAD, { name: 'siège' }), tbox([0, 0.84, -0.33], [0.42, 0.62, 0.08], -8, PAD, { name: 'dossier' }), box([0, 0.22, -0.05], [0.10, 0.44, 0.10], FRAME),
-        cyl([0.29, 0.55, -0.1], [0.29, 0.55, -0.32], 0.02, FRAME, { name: 'poignée' }), cyl([-0.29, 0.55, -0.1], [-0.29, 0.55, -0.32], 0.02, FRAME, { name: 'poignée' })]),
-        fn((C) => { const out = []; for (const [sd, s] of [['L', 1], ['R', -1]]) { const t = C.bone('UpperLeg_' + sd); out.push(box(t.at([s * -0.115, -0.33, 0.0]), [0.05, 0.20, 0.15], PAD, { x: t.dir([1, 0, 0]), y: t.dir([0, 1, 0]), z: t.dir([0, 0, 1]), name: 'coussin', soft: true }),
-          box(t.at([s * -0.03, -0.44, -0.12]), [0.10, 0.03, 0.12], FRAME, { x: t.dir([1, 0, 0]), y: t.dir([0, 1, 0]), z: t.dir([0, 0, 1]), name: 'repose-pied', soft: true })); } return out; })],
+    { id: 'e0598', lib: true, name: 'Adduction de hanche assis à la machine', en: 'Lever seated hip adduction', mus: mus(m2('add', 1)), cam: { yaw: 55, pitch: 22 },
+      props: [fn(() => [MESH('adduct', [0, 0, 0], { part: 'frame', held: true })]),
+        /* Modèle « Movement EDGE Abdutor/Adutor » : chaque bras (coussin + repose-pieds) tourne autour d'un axe vertical sous la hanche. */
+        fn((C) => { const out = []; for (const [sd, s] of [['L', 1], ['R', -1]]) { const K = C.J['ankle' + sd]; const P = [s * 0.126, 0, -0.397];   // les pieds sont posés sur les barres du bras
+          const a = Math.atan2(K[0] - P[0], K[2] - P[2]) - Math.atan2(s * 0.014, 0.517); out.push(ROTM('adduct', 'pad' + sd, [0, 0, 0], P, 'y', a)); } return out; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.615, -0.03], rot: [-4, 0, 0], lL: { d: [0.62, -0.08, 0.78], e: [0.05, -1, 0.05], foot: 'flat' }, lR: { d: [-0.62, -0.08, 0.78], e: [-0.05, -1, 0.05], foot: 'flat' },
-          aL: grip([0.29, 0.55, -0.20], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.29, 0.55, -0.20], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
-        b: { float: true, pelvis: [0, 0.615, -0.03], rot: [-4, 0, 0], lL: { d: [0.16, -0.08, 1], e: [0.02, -1, 0.05], foot: 'flat' }, lR: { d: [-0.16, -0.08, 1], e: [-0.02, -1, 0.05], foot: 'flat' },
-          aL: grip([0.29, 0.55, -0.20], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.29, 0.55, -0.20], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
+        a: { float: true, pelvis: [0, 0.66, -0.40], rot: [-22, 0, 0], neck: [14, 0, 0], lL: { at: [0.412, 0.310, 0.034], p: [0.795, 0.500, 0.329], foot: { toe: [0.519, -0.200, 0.831], up: [0, 1, 0.2] } }, lR: { at: [-0.412, 0.310, 0.034], p: [-0.795, 0.500, 0.329], foot: { toe: [-0.519, -0.200, 0.831], up: [0, 1, 0.2] } },
+          aL: grip([0.255, 0.45, -0.46], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.255, 0.45, -0.46], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
+        b: { float: true, pelvis: [0, 0.66, -0.40], rot: [-22, 0, 0], neck: [14, 0, 0], lL: { at: [0.158, 0.310, 0.119], p: [0.524, 0.500, 0.682], foot: { toe: [0.034, -0.200, 0.979], up: [0, 1, 0.2] } }, lR: { at: [-0.158, 0.310, 0.119], p: [-0.524, 0.500, 0.682], foot: { toe: [-0.034, -0.200, 0.979], up: [0, 1, 0.2] } },
+          aL: grip([0.255, 0.45, -0.46], [0, 0, 1], [-1, 0, 0], { p: [1, 0.2, -0.6] }), aR: grip([-0.255, 0.45, -0.46], [0, 0, 1], [1, 0, 0], { p: [-1, 0.2, -0.6] }) },
       },
       seq: [['a', 0.4, 1.2], ['b', 0.4, 1.2]] },
-    { id: 'e0586', lib: true, name: 'Leg curl allongé à la machine', en: 'Lever lying leg curl', mus: mus(m2('ham', 1), m2('calf', 2)), cam: { yaw: -75, pitch: 14 },
-      props: [fn(() => [box([0, 0.515, 0.31], [0.36, 0.07, 0.62], PAD, { name: 'banc' }), box([0, 0.49, -0.24], [0.36, 0.07, 0.48], PAD, { name: 'banc' }),
-        box([0, 0.26, 0.05], [0.10, 0.48, 0.10], FRAME), cyl([0.20, 0.40, 0.60], [0.20, 0.52, 0.66], 0.016, BAR, { held: true }), cyl([-0.20, 0.40, 0.60], [-0.20, 0.52, 0.66], 0.016, BAR, { held: true })]),
-        fn((C) => { const l = C.bone('LowerLeg_L'), r = C.bone('LowerLeg_R'); const a = l.at([0, -0.355, -0.095]), b = r.at([0, -0.355, -0.095]); const u = C.norm(C.sub(a, b));
-          const piv = C.mul(C.add(C.J.kneeL, C.J.kneeR), 0.5); const pa = C.add(piv, [0.27, 0, 0]);
-          return [cyl(C.add(a, C.mul(u, 0.15)), C.sub(b, C.mul(u, 0.15)), 0.045, PAD, { name: 'boudin' }), cyl(pa, C.add(a, C.mul(u, 0.15)), 0.022, FRAME, { name: 'bras' })]; })],
+    { id: 'e0586', lib: true, name: 'Leg curl allongé à la machine', en: 'Lever lying leg curl', mus: mus(m2('ham', 1), m2('calf', 2)), cam: { yaw: 75, pitch: 14 },
+      props: [fn(() => [MESH('legcurl', [-0.175, 0, -0.12], { part: 'frame', held: true })]),
+        /* Modèle « Le Forzz LFI-013A Mesa Flexora » : le levier et son boudin tournent autour du moyeu (y 0,588, z -0,41 dans le modèle). */
+        fn((C) => { const A = C.mul(C.add(C.bone('LowerLeg_L').at([0, -0.355, -0.095]), C.bone('LowerLeg_R').at([0, -0.355, -0.095])), 0.5); const a = Math.atan2(A[1] - 0.588, A[2] + 0.53) - Math.atan2(-0.168, -0.36);
+          return [ROTM('legcurl', 'levier', [-0.175, 0, -0.12], [0, 0.588, -0.41], 'x', a, { nocheck: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.66, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
-          aL: grip([0.20, 0.46, 0.63], [0, 1, 0.45], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.20, 0.46, 0.63], [0, 1, 0.45], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
-        b: { float: true, pelvis: [0, 0.66, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 },
-          aL: grip([0.20, 0.46, 0.63], [0, 1, 0.45], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.20, 0.46, 0.63], [0, 1, 0.45], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
+        a: { float: true, pelvis: [0, 0.81, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
+          aL: grip([0.24, 0.38, 0.50], [0, 1, 0.2], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.24, 0.38, 0.50], [0, 1, 0.2], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
+        b: { float: true, pelvis: [0, 0.81, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 },
+          aL: grip([0.24, 0.38, 0.50], [0, 1, 0.2], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.24, 0.38, 0.50], [0, 1, 0.2], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
       },
       seq: [['a', 0.4, 1.1], ['b', 0.4, 1.3]] },
 
-    { id: 'e3195', lib: true, name: 'Leg curl allongé deux jambes, une jambe à la machine', en: 'Lever lying two-one leg curl', mus: mus(m2('ham', 1), m2('calf', 2)), cam: { yaw: -75, pitch: 14 },
-      props: [fn(() => [box([0, 0.515, 0.31], [0.36, 0.07, 0.62], PAD, { name: 'banc' }), box([0, 0.49, -0.24], [0.36, 0.07, 0.48], PAD, { name: 'banc' }),
-        box([0, 0.26, 0.05], [0.10, 0.48, 0.10], FRAME), cyl([0.20, 0.40, 0.60], [0.20, 0.52, 0.66], 0.016, BAR, { held: true }), cyl([-0.20, 0.40, 0.60], [-0.20, 0.52, 0.66], 0.016, BAR, { held: true })]),
-        fn((C) => { const l = C.bone('LowerLeg_L'); const a = l.at([0, -0.355, -0.095]); const u = [1, 0, 0];
-          const pa = C.add(C.J.kneeL, [0.18, 0, 0]);
-          return [cyl(C.add(a, C.mul(u, 0.15)), C.sub(a, C.mul(u, 0.30)), 0.045, PAD, { name: 'boudin', soft: true }), cyl(pa, C.add(a, C.mul(u, 0.15)), 0.022, FRAME, { name: 'bras' })]; })],
+    { id: 'e3195', lib: true, name: 'Leg curl allongé deux jambes, une jambe à la machine', en: 'Lever lying two-one leg curl', mus: mus(m2('ham', 1), m2('calf', 2)), cam: { yaw: 75, pitch: 14 },
+      props: [fn(() => [MESH('legcurl', [-0.175, 0, -0.12], { part: 'frame', held: true })]),
+        /* Modèle « Le Forzz LFI-013A Mesa Flexora » : le levier et son boudin tournent autour du moyeu (y 0,588, z -0,41 dans le modèle). */
+        fn((C) => { const A = C.bone('LowerLeg_L').at([0, -0.355, -0.095]); const a = Math.atan2(A[1] - 0.588, A[2] + 0.53) - Math.atan2(-0.168, -0.36);
+          return [ROTM('legcurl', 'levier', [-0.175, 0, -0.12], [0, 0.588, -0.41], 'x', a, { nocheck: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.66, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
-          aL: grip([0.20, 0.46, 0.63], [0, 1, 0.45], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.20, 0.46, 0.63], [0, 1, 0.45], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
-        b: { float: true, pelvis: [0, 0.66, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 },
-          aL: grip([0.20, 0.46, 0.63], [0, 1, 0.45], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.20, 0.46, 0.63], [0, 1, 0.45], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
-        c: { float: true, pelvis: [0, 0.66, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
-          aL: grip([0.20, 0.46, 0.63], [0, 1, 0.45], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.20, 0.46, 0.63], [0, 1, 0.45], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
+        a: { float: true, pelvis: [0, 0.81, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
+          aL: grip([0.24, 0.38, 0.50], [0, 1, 0.2], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.24, 0.38, 0.50], [0, 1, 0.2], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
+        b: { float: true, pelvis: [0, 0.81, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 },
+          aL: grip([0.24, 0.38, 0.50], [0, 1, 0.2], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.24, 0.38, 0.50], [0, 1, 0.2], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
+        c: { float: true, pelvis: [0, 0.81, -0.06], rot: [86, 0, 0], neck: [-18, 0, 0], lL: { d: [0.05, -0.12, -1], e: [0, 0.95, 0.30], foot: 10 }, lR: { d: [-0.05, -0.12, -1], e: [0, -0.05, -1], foot: 10 },
+          aL: grip([0.24, 0.38, 0.50], [0, 1, 0.2], [-1, 0, 0], { p: [1, 0.3, -0.2] }), aR: grip([-0.24, 0.38, 0.50], [0, 1, 0.2], [1, 0, 0], { p: [-1, 0.3, -0.2] }) },
       },
       seq: [['a', 0.3, 1.0], ['b', 0.3, 0.6], ['c', 0.2, 1.8]] },
 
     { id: 'e1463', lib: true, name: 'Presse à cuisses 45°', en: 'Sled 45° leg press', mus: mus(m2('quad', 1)), cam: { yaw: 95, pitch: 8 },
-      props: [fn(() => [box([0, 0.358, 0.05], [0.46, 0.08, 0.40], PAD, { name: 'siège' }), tbox([0, 0.670, -0.40], [0.46, 0.68, 0.08], -45, PAD, { name: 'dossier' }),
-        box([0, 0.18, -0.05], [0.12, 0.36, 0.12], FRAME), cyl([0.36, 0.30, 0.25], [0.36, 1.55, 1.50], 0.03, FRAME, { name: 'rail' }), cyl([-0.36, 0.30, 0.25], [-0.36, 1.55, 1.50], 0.03, FRAME, { name: 'rail' }),
-        cyl([0.30, 0.45, 0.05], [0.30, 0.45, 0.22], 0.016, BAR, { held: true }), cyl([-0.30, 0.45, 0.05], [-0.30, 0.45, 0.22], 0.016, BAR, { held: true })]),
-        fn((C) => { const r = C.norm([0, 0.71, 0.71]); const toe = C.norm([0, 0.71, -0.71]); const m = C.mul(C.add(C.J.ballL, C.J.ballR), 0.5); const c = C.add(C.add(m, C.mul(r, 0.035)), C.mul(toe, -0.06));
-          return [box(c, [0.74, 0.60, 0.05], PLATE, { x: [1, 0, 0], y: toe, z: r, name: 'plateau' }), box(C.add(c, C.mul(r, 0.10)), [0.70, 0.10, 0.14], FRAME, { x: [1, 0, 0], y: toe, z: r })]; })],
+      props: [fn(() => [MESH('legpress', [0, 0, 0], { part: 'frame', fit: [[0, 0.05, -0.95], [0, 1.45, 0.80], [0, 0.05, 0.80]] })]),
+        /* Modèle « Leg Press Machine » (silentsheri, CC BY 4.0) : le chariot (plateau + disques) glisse sur les rails à 45° et suit les pieds. */
+        fn((C) => { const t = ((C.J.ankleL[1] + C.J.ankleR[1]) + (C.J.ankleL[2] + C.J.ankleR[2])) * 0.5 * Math.SQRT1_2 + 0.075 - 0.785; return [MESH('legpress', [0, t * Math.SQRT1_2, t * Math.SQRT1_2], { part: 'chariot', held: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.545, 0.0], rot: [-45, 0, 0], neck: [24, 0, 0],
-          lL: { at: [0.15, 1.10, 0.55], p: [0.2, 0.6, 0.3], foot: { toe: [0, 0.71, -0.71], up: [0, -0.71, -0.71] } }, lR: { at: [-0.15, 1.10, 0.55], p: [-0.2, 0.6, 0.3], foot: { toe: [0, 0.71, -0.71], up: [0, -0.71, -0.71] } },
-          aL: grip([0.30, 0.45, 0.13], [0, 0, 1], [-1, 0, 0], { p: [1, 0.3, -0.6] }), aR: grip([-0.30, 0.45, 0.13], [0, 0, 1], [1, 0, 0], { p: [-1, 0.3, -0.6] }) },
-        b: { float: true, pelvis: [0, 0.545, 0.0], rot: [-45, 0, 0], neck: [24, 0, 0],
-          lL: { at: [0.15, 0.90, 0.35], p: [0.25, 0.8, 0.2], foot: { toe: [0, 0.71, -0.71], up: [0, -0.71, -0.71] } }, lR: { at: [-0.15, 0.90, 0.35], p: [-0.25, 0.8, 0.2], foot: { toe: [0, 0.71, -0.71], up: [0, -0.71, -0.71] } },
-          aL: grip([0.30, 0.45, 0.13], [0, 0, 1], [-1, 0, 0], { p: [1, 0.3, -0.6] }), aR: grip([-0.30, 0.45, 0.13], [0, 0, 1], [1, 0, 0], { p: [-1, 0.3, -0.6] }) },
+        a: { float: true, pelvis: [0, 0.358, -0.219], rot: [-45, 0, 0], neck: [46, 0, 0], lL: { at: [0.15, 0.863, 0.354], p: [0.3, 0.7, -0.4], foot: { toe: [0.15, 0.7, -0.7], up: [0, -0.71, -0.71] } }, lR: { at: [-0.15, 0.863, 0.354], p: [-0.3, 0.7, -0.4], foot: { toe: [-0.15, 0.7, -0.7], up: [0, -0.71, -0.71] } }, aL: grip([0.484, 0.41, 0.01], [0, -1, 0], [-1, 0, 0], { p: [1, 0.35, -0.6] }), aR: grip([-0.484, 0.41, 0.01], [0, -1, 0], [1, 0, 0], { p: [-1, 0.35, -0.6] }) },
+        b: { float: true, pelvis: [0, 0.358, -0.219], rot: [-45, 0, 0], neck: [46, 0, 0], lL: { at: [0.16, 0.764, 0.17], p: [0.3, 0.7, -0.25], foot: { toe: [0.15, 0.7, -0.7], up: [0, -0.71, -0.71] } }, lR: { at: [-0.16, 0.764, 0.17], p: [-0.3, 0.7, -0.25], foot: { toe: [-0.15, 0.7, -0.7], up: [0, -0.71, -0.71] } }, aL: grip([0.484, 0.41, 0.01], [0, -1, 0], [-1, 0, 0], { p: [1, 0.35, -0.6] }), aR: grip([-0.484, 0.41, 0.01], [0, -1, 0], [1, 0, 0], { p: [-1, 0.35, -0.6] }) },
       },
       seq: [['a', 0.4, 1.3], ['b', 0.3, 1.3]] },
 
@@ -280,7 +305,7 @@
       seq: [['a', 0.5, 1.5], ['b', 0.3, 1.4]] },
     /* ======================= PECTORAUX ======================= */
     { id: 'e0025', lib: true, name: 'Développé couché à la barre', en: 'Barbell bench press', mus: mus(m2('pec', 1), m2('triceps', 2), m2('delt', 2)), cam: { yaw: 55, pitch: 22 },
-      props: [barbell(), fn(() => [...bench(-0.75, 0.25, 0.44), cyl([0.55, 0, -0.62], [0.55, 1.25, -0.62], 0.03, FRAME), cyl([-0.55, 0, -0.62], [-0.55, 1.25, -0.62], 0.03, FRAME)])],
+      props: [barbell(), fn(() => [...bench(-0.75, 0.25, 0.44), hid(cyl([0.55, 0, -0.62], [0.55, 1.25, -0.62], 0.03, FRAME)), hid(cyl([-0.55, 0, -0.62], [-0.55, 1.25, -0.62], 0.03, FRAME)), MESH('banc_couche', [0, 0, -0.13], { part: 'montants', s: [1.72, 1.74, 1] })])],
       poses: {
         a: { float: true, pelvis: [0, 0.595, 0.05], rot: [-90, 0, 0], neck: [8, 0, 0], lL: flatF(0.25, 0.50, { p: [0.5, 1, 0.2] }), lR: flatF(-0.25, 0.50, { p: [-0.5, 1, 0.2] }),
           aL: grip([0.40, 1.235, -0.42], [0, 1, -0.12], [0, 0.12, 1], { p: [1, -0.3, 0.2] }), aR: grip([-0.40, 1.235, -0.42], [0, 1, -0.12], [0, 0.12, 1], { p: [-1, -0.3, 0.2] }) },
@@ -300,19 +325,22 @@
       seq: [['a', 0.4, 1.3], ['b', 0.2, 1.1]] },
 
     { id: 'e0047', lib: true, name: 'Développé incliné à la barre', en: 'Barbell incline bench press', mus: mus(m2('pec', 1), m2('triceps', 2)), cam: { yaw: 60, pitch: 18 },
-      props: [barbell(), fn(() => [box([0, 0.42, 0.08], [0.32, 0.07, 0.34], PAD, { name: 'siège' }), tbox([0, 0.748, -0.411], [0.30, 0.80, 0.07], -50, PAD, { name: 'dossier' }), box([0, 0.20, -0.1], [0.10, 0.40, 0.10], FRAME),
-        cyl([0.55, 0, -0.30], [0.55, 1.65, -0.30], 0.03, FRAME), cyl([-0.55, 0, -0.30], [-0.55, 1.65, -0.30], 0.03, FRAME)])],
+      props: [barbell(), fn(() => [...INB(), hid(cyl([0.55, 0, -0.30], [0.55, 1.65, -0.30], 0.03, FRAME)), hid(cyl([-0.55, 0, -0.30], [-0.55, 1.65, -0.30], 0.03, FRAME)),
+        MESH('banc_couche', [0, 0, 0.19], { part: 'montants', s: [1.72, 2.3, 1] })])],
       poses: {
-        a: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }),
+        a: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.56, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.56, { p: [-0.4, 1, 0.3] }),
           aL: grip([0.40, 1.690, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [1, -0.3, 0.3] }), aR: grip([-0.40, 1.690, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [-1, -0.3, 0.3] }) },
-        b: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }),
+        b: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.56, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.56, { p: [-0.4, 1, 0.3] }),
           aL: grip([0.40, 1.280, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [1, -0.4, 0.3] }), aR: grip([-0.40, 1.280, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [-1, -0.4, 0.3] }) },
       },
       seq: [['a', 0.4, 1.3], ['b', 0.2, 1.1]] },
 
     { id: 'e0757', lib: true, name: 'Développé incliné à la Smith machine', en: 'Smith incline bench press', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 60, pitch: 18 },
-      props: [barbell({ half: 0.75, pin: 0.62 }), fn(() => [box([0, 0.42, 0.08], [0.32, 0.07, 0.34], PAD, { name: 'siège' }), tbox([0, 0.748, -0.411], [0.30, 0.80, 0.07], -50, PAD, { name: 'dossier' }), box([0, 0.20, -0.1], [0.10, 0.40, 0.10], FRAME),
-        cyl([0.70, 0, -0.10], [0.70, 2.10, -0.10], 0.025, FRAME, { name: 'rail' }), cyl([-0.70, 0, -0.10], [-0.70, 2.10, -0.10], 0.025, FRAME, { name: 'rail' }), cyl([-0.70, 2.10, -0.10], [0.70, 2.10, -0.10], 0.025, FRAME)])],
+      props: [fn(() => [...INB(), hid(cyl([-0.75, 1.5, -0.10], [0.75, 1.5, -0.10], 0.016, BAR, { held: true }))]),
+        /* Smith machine (« Smith training equipment », MrdT, CC BY 4.0) : la barre et ses crochets coulissent sur les montants. */
+        fn((C) => { const g = mul(add(C.hand('L').grip, C.hand('R').grip), 0.5);
+          return [MESH('smith', [0, 0, -0.165], { part: 'frame' }), MESH('smith', [0, g[1] - 1.505, -0.165], { part: 'barre', held: true }),
+            hid(cyl(add(g, [-0.75, 0, 0]), add(g, [0.75, 0, 0]), 0.016, BAR, { held: true, name: 'barre' }))]; })],
       poses: {
         a: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }),
           aL: grip([0.38, 1.670, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [1, -0.3, 0.3] }), aR: grip([-0.38, 1.670, -0.10], [0, 0.9, -0.45], [0, 0.45, 0.9], { p: [-1, -0.3, 0.3] }) },
@@ -321,7 +349,7 @@
       },
       seq: [['a', 0.4, 1.3], ['b', 0.2, 1.1]] },
     { id: 'Cable_Crossover', lib: true, name: 'Vis-à-vis à la poulie', en: 'Cable crossover', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 25, pitch: 10 },
-      props: [tower(1.10, -0.15, 2.15, { w: 0.3 }), tower(-1.10, -0.15, 2.15, { w: 0.3 }), cableTo('L', [1.05, 2.0, -0.15]), cableTo('R', [-1.05, 2.0, -0.15])],
+      props: [crossover(1.10, -0.15), cableTo('L', [1.05, 2.0, -0.15]), cableTo('R', [-1.05, 2.0, -0.15])],
       poses: {
         a: { pelvis: [0, 0.915, -0.02], rot: [12, 0, 0], neck: [-8, 0, 0], lL: flatF(0.13, 0.20), lR: flatF(-0.13, -0.16, { foot: { toe: [0, -0.5, 0.87], up: [0, 0.87, 0.5] }, at: [-0.13, 0.13, -0.18] }),
           aL: reach(SH(1, 1.42, 0.07), [0.80, 1.52, 0.10], [0, -0.3, 1], { p: [0.2, -0.5, -1] }), aR: reach(SH(-1, 1.42, 0.07), [-0.80, 1.52, 0.10], [0, -0.3, 1], { p: [-0.2, -0.5, -1] }) },
@@ -331,7 +359,7 @@
       seq: [['a', 0.4, 1.2], ['b', 0.4, 1.3]] },
 
     { id: 'e1269', lib: true, name: 'Écarté croisé debout, buste droit, à la poulie', en: 'Cable standing up straight crossovers', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 20, pitch: 8 },
-      props: [tower(1.10, -0.10, 2.15, { w: 0.3 }), tower(-1.10, -0.10, 2.15, { w: 0.3 }), cableTo('L', [1.05, 1.95, -0.10]), cableTo('R', [-1.05, 1.95, -0.10])],
+      props: [crossover(1.10, -0.10), cableTo('L', [1.05, 1.95, -0.10]), cableTo('R', [-1.05, 1.95, -0.10])],
       poses: {
         a: { pelvis: [0, 0.92, 0], rot: [2, 0, 0], lL: flatF(0.12, 0.02), lR: flatF(-0.12, 0.02),
           aL: reach(SH(1), [0.86, 1.42, 0.02], [0, -0.2, 1], { p: [0.2, -0.5, -1] }), aR: reach(SH(-1), [-0.86, 1.42, 0.02], [0, -0.2, 1], { p: [-0.2, -0.5, -1] }) },
@@ -341,7 +369,7 @@
       seq: [['a', 0.4, 1.2], ['b', 0.4, 1.3]] },
 
     { id: 'e0179', lib: true, name: 'Écarté bas à la poulie', en: 'Cable low fly', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 25, pitch: 6 },
-      props: [tower(1.05, -0.10, 2.15, { w: 0.3 }), tower(-1.05, -0.10, 2.15, { w: 0.3 }), cableTo('L', [1.00, 0.15, -0.10]), cableTo('R', [-1.00, 0.15, -0.10])],
+      props: [crossover(1.05, -0.10), cableTo('L', [1.00, 0.15, -0.10]), cableTo('R', [-1.00, 0.15, -0.10])],
       poses: {
         a: { pelvis: [0, 0.915, 0], rot: [6, 0, 0], lL: flatF(0.14, 0.18), lR: flatF(-0.14, -0.18, { foot: { toe: [0, -0.5, 0.87], up: [0, 0.87, 0.5] }, at: [-0.14, 0.13, -0.20] }),
           aL: reach(SH(1, 1.43, 0.03), [0.56, 0.86, 0.14], [0, 0.3, 1], { p: [0.4, -0.2, -1] }), aR: reach(SH(-1, 1.43, 0.03), [-0.56, 0.86, 0.14], [0, 0.3, 1], { p: [-0.4, -0.2, -1] }) },
@@ -351,7 +379,7 @@
       seq: [['a', 0.4, 1.2], ['b', 0.4, 1.3]] },
 
     { id: 'e0188', lib: true, name: 'Écarté à mi-hauteur à la poulie', en: 'Cable middle fly', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 25, pitch: 10 },
-      props: [tower(1.10, -0.15, 2.15, { w: 0.3 }), tower(-1.10, -0.15, 2.15, { w: 0.3 }), cableTo('L', [1.05, 1.36, -0.15]), cableTo('R', [-1.05, 1.36, -0.15])],
+      props: [crossover(1.10, -0.15), cableTo('L', [1.05, 1.36, -0.15]), cableTo('R', [-1.05, 1.36, -0.15])],
       poses: {
         a: { pelvis: [0, 0.915, 0], rot: [6, 0, 0], lL: flatF(0.14, 0.18), lR: flatF(-0.14, -0.18, { foot: { toe: [0, -0.5, 0.87], up: [0, 0.87, 0.5] }, at: [-0.14, 0.13, -0.20] }),
           aL: reach(SH(1, 1.43, 0.03), [0.82, 1.36, 0.04], [0, 0, 1], { p: [0.2, -1, -0.4] }), aR: reach(SH(-1, 1.43, 0.03), [-0.82, 1.36, 0.04], [0, 0, 1], { p: [-0.2, -1, -0.4] }) },
@@ -372,27 +400,24 @@
       seq: [['a', 0.4, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e2144', lib: true, name: 'Développé poitrine assis à la poulie', en: 'Cable seated chest press', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 35, pitch: 10 },
-      props: [tower(0.85, -0.55, 2.2, { w: 0.35 }), tower(-0.85, -0.55, 2.2, { w: 0.35 }), cableTo('L', [0.80, 1.240, -0.50]), cableTo('R', [-0.80, 1.240, -0.50]),
-        fn(() => [box([0, 0.42, 0.02], [0.36, 0.07, 0.40], PAD, { name: 'banc' }), tbox([0, 0.82, -0.27], [0.34, 0.62, 0.07], -8, PAD, { name: 'dossier' }), box([0, 0.19, 0.02], [0.10, 0.38, 0.10], FRAME)])],
+      props: [cableTo('L', [0.74, 1.32, -0.54]), cableTo('R', [-0.74, 1.32, -0.54]),
+        fn(() => [MESH('chest', [0, 0, -0.275]), hid(tbox([0, 0.894, -0.27], [0.34, 0.62, 0.07], -8, PAD, { name: 'dossier' }))])],
       poses: {
-        a: { float: true, pelvis: [0, 0.615, 0.0], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.45), lR: flatF(-0.22, 0.45),
-          aL: grip([0.42, 1.220, 0.02], [0, 0, 1], [0, -1, 0], { p: [1, 0, -0.5] }), aR: grip([-0.42, 1.220, 0.02], [0, 0, 1], [0, -1, 0], { p: [-1, 0, -0.5] }) },
-        b: { float: true, pelvis: [0, 0.615, 0.0], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.45), lR: flatF(-0.22, 0.45),
-          aL: grip([0.14, 1.220, 0.60], [0, 0, 1], [0, -1, 0], { p: [1, -0.5, -0.4] }), aR: grip([-0.14, 1.220, 0.60], [0, 0, 1], [0, -1, 0], { p: [-1, -0.5, -0.4] }) },
+        a: { float: true, pelvis: [0, 0.689, 0.0], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.45), lR: flatF(-0.22, 0.45),
+          aL: grip([0.42, 1.294, 0.02], [0, 0, 1], [0, -1, 0], { p: [1, 0, -0.5] }), aR: grip([-0.42, 1.294, 0.02], [0, 0, 1], [0, -1, 0], { p: [-1, 0, -0.5] }) },
+        b: { float: true, pelvis: [0, 0.689, 0.0], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.45), lR: flatF(-0.22, 0.45),
+          aL: grip([0.14, 1.294, 0.60], [0, 0, 1], [0, -1, 0], { p: [1, -0.5, -0.4] }), aR: grip([-0.14, 1.294, 0.60], [0, 0, 1], [0, -1, 0], { p: [-1, -0.5, -0.4] }) },
       },
       seq: [['a', 0.4, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e0576', lib: true, name: 'Développé poitrine à la machine', en: 'Lever chest press', mus: mus(m2('pec', 1), m2('delt', 2)), cam: { yaw: 30, pitch: 10 },
-      props: [fn(() => [box([0, 0.44, 0.0], [0.40, 0.07, 0.40], PAD, { name: 'siège' }), box([0, 0.97, -0.27], [0.38, 0.72, 0.07], PAD, { name: 'dossier' }), box([0, 0.20, -0.05], [0.10, 0.40, 0.10], FRAME),
-          cyl([0.45, 0, -0.40], [0.45, 2.0, -0.40], 0.03, FRAME), cyl([-0.45, 0, -0.40], [-0.45, 2.0, -0.40], 0.03, FRAME), cyl([-0.45, 2.0, -0.40], [0.45, 2.0, -0.40], 0.03, FRAME)]),
-        fn((C) => { const out = []; for (const sd of ['L', 'R']) { const h = C.hand(sd); const s = sd === 'L' ? 1 : -1; const piv = [s * 0.64, 1.95, -0.25];
-          const top = C.add(h.grip, C.mul(h.across, 0.07)), bot = C.add(h.grip, C.mul(h.across, -0.07));
-          out.push(cyl(bot, top, 0.017, BAR, { held: true }), cyl(piv, top, 0.025, FRAME, { name: 'bras', held: true }), cyl(C.lerp(piv, top, 0.35), C.add(C.lerp(piv, top, 0.35), [s * 0.08, 0, 0]), 0.20, PLATE, { name: 'disque' })); } return out; })],
+      props: [cableTo('L', [0.74, 1.32, -0.54]), cableTo('R', [-0.74, 1.32, -0.54]),
+        fn(() => [MESH('chest', [0, 0, -0.27]), hid(tbox([0, 0.894, -0.27], [0.34, 0.62, 0.07], -8, PAD, { name: 'dossier' }))])],
       poses: {
-        a: { float: true, pelvis: [0, 0.643, -0.02], rot: [-4, 0, 0], neck: [4, 0, 0], lL: flatF(0.20, 0.42), lR: flatF(-0.20, 0.42),
-          aL: grip([0.29, 1.268, 0.10], [0, 0, 1], [-1, 0, 0], { p: [1, -0.5, -0.3] }), aR: grip([-0.29, 1.268, 0.10], [0, 0, 1], [1, 0, 0], { p: [-1, -0.5, -0.3] }) },
-        b: { float: true, pelvis: [0, 0.643, -0.02], rot: [-4, 0, 0], neck: [4, 0, 0], lL: flatF(0.20, 0.42), lR: flatF(-0.20, 0.42),
-          aL: grip([0.20, 1.268, 0.60], [0, 0, 1], [-1, 0, 0], { p: [1, -0.8, 0] }), aR: grip([-0.20, 1.268, 0.60], [0, 0, 1], [1, 0, 0], { p: [-1, -0.8, 0] }) },
+        a: { float: true, pelvis: [0, 0.689, 0.0], rot: [-4, 0, 0], neck: [4, 0, 0], lL: flatF(0.20, 0.48), lR: flatF(-0.20, 0.48),
+          aL: grip([0.29, 1.294, 0.10], [0, 0, 1], [-1, 0, 0], { p: [1, -0.5, -0.3] }), aR: grip([-0.29, 1.294, 0.10], [0, 0, 1], [1, 0, 0], { p: [-1, -0.5, -0.3] }) },
+        b: { float: true, pelvis: [0, 0.689, 0.0], rot: [-4, 0, 0], neck: [4, 0, 0], lL: flatF(0.20, 0.48), lR: flatF(-0.20, 0.48),
+          aL: grip([0.20, 1.294, 0.60], [0, 0, 1], [-1, 0, 0], { p: [1, -0.8, 0] }), aR: grip([-0.20, 1.294, 0.60], [0, 0, 1], [1, 0, 0], { p: [-1, -0.8, 0] }) },
       },
       seq: [['a', 0.4, 1.1], ['b', 0.3, 1.2]] },
 
@@ -446,25 +471,25 @@
       seq: [['a', 0.3, 1.2], ['b', 0.3, 1.2]] },
 
     { id: 'e0405', lib: true, name: 'Développé épaules assis aux haltères', en: 'Dumbbell seated shoulder press', mus: mus(m2('delt', 1), m2('pec', 2), m2('triceps', 2)), cam: { yaw: 35, pitch: 8 },
-      props: [...dbs(), fn(() => [box([0, 0.42, 0.0], [0.34, 0.07, 0.40], PAD, { name: 'banc' }), tbox([0, 0.88, -0.27], [0.32, 0.72, 0.07], -10, PAD, { name: 'dossier' }), box([0, 0.19, 0.0], [0.10, 0.38, 0.10], FRAME)])],
+      props: [...dbs(), fn(() => UPB())],
       poses: {
-        a: { float: true, pelvis: [0, 0.607, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42),
+        a: { float: true, pelvis: [0, 0.607, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50),
           aL: grip([0.36, 1.157, 0.02], [0, 1, 0.05], [0, -0.05, 1], { p: [1, -0.6, 0] }), aR: grip([-0.36, 1.157, 0.02], [0, 1, 0.05], [0, -0.05, 1], { p: [-1, -0.6, 0] }) },
-        b: { float: true, pelvis: [0, 0.607, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42),
+        b: { float: true, pelvis: [0, 0.607, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50),
           aL: grip([0.17, 1.757, -0.06], [0, 1, 0.05], [0, -0.05, 1], { p: [1, -0.2, 0] }), aR: grip([-0.17, 1.757, -0.06], [0, 1, 0.05], [0, -0.05, 1], { p: [-1, -0.2, 0] }) },
       },
       seq: [['a', 0.3, 1.2], ['b', 0.3, 1.2]] },
 
     { id: 'e2318', lib: true, name: 'Développé épaules à la machine', en: 'Lever shoulder press v. 3', mus: mus(m2('delt', 1), m2('pec', 2), m2('serr', 2)), cam: { yaw: 35, pitch: 8 },
-      props: [fn(() => [box([0, 0.42, 0.0], [0.38, 0.07, 0.40], PAD, { name: 'siège' }), tbox([0, 0.92, -0.27], [0.36, 0.76, 0.07], -10, PAD, { name: 'dossier' }), box([0, 0.19, 0.0], [0.10, 0.38, 0.10], FRAME)]),
-        fn((C) => { const out = []; for (const sd of ['L', 'R']) { const h = C.hand(sd); const s = sd === 'L' ? 1 : -1; const piv = [s * 0.50, 0.95, -0.55];
-          const a = C.add(h.grip, C.mul(h.across, 0.07)), b = C.add(h.grip, C.mul(h.across, -0.07)); const outer = s * (a[0] - b[0]) > 0 ? a : b;
-          out.push(cyl(a, b, 0.017, BAR, { held: true }), cyl(piv, outer, 0.025, FRAME, { name: 'bras', held: true }), cyl(C.lerp(piv, outer, 0.3), C.add(C.lerp(piv, outer, 0.3), [s * 0.08, 0, 0]), 0.19, PLATE, { name: 'disque' })); } return out; })],
+      /* Modèle « Intenza EL04 Shoulder Press » : les deux bras tournent autour de l'axe arrière (y 1,31, z -0,61 dans le modèle). */
+      props: [fn(() => [MESH('shoulder', [-0.137, 0, -0.60], { part: 'frame' }), hid(tbox([0, 1.005, -0.27], [0.36, 0.76, 0.07], -10, PAD, { name: 'dossier' }))]),
+        fn((C) => { const g = mul(add(C.hand('L').grip, C.hand('R').grip), 0.5); const P = [0, 1.31, -1.21];
+          return [ROTM('shoulder', 'bras', [-0.137, 0, -0.60], [0.137, 1.31, -0.61], 'x', angX(g, P) - Math.atan2(-0.395, 1.12), { held: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
-          aL: grip([0.33, 1.166, 0.03], [0, 1, 0.05], [-1, 0, 0], { p: [1, -0.6, 0] }), aR: grip([-0.33, 1.166, 0.03], [0, 1, 0.05], [1, 0, 0], { p: [-1, -0.6, 0] }) },
-        b: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
-          aL: grip([0.20, 1.746, -0.04], [0, 1, 0.05], [-1, 0, 0], { p: [1, -0.2, 0] }), aR: grip([-0.20, 1.746, -0.04], [0, 1, 0.05], [1, 0, 0], { p: [-1, -0.2, 0] }) },
+        a: { float: true, pelvis: [0, 0.691, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
+          aL: grip([0.41, 1.25, -0.034], [0, 1, 0.05], [0, -0.05, 1], { p: [1, -0.6, 0] }), aR: grip([-0.41, 1.25, -0.034], [0, 1, 0.05], [0, -0.05, 1], { p: [-1, -0.6, 0] }) },
+        b: { float: true, pelvis: [0, 0.691, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
+          aL: grip([0.41, 1.83, -0.153], [0, 1, -0.2], [0, 0.2, 1], { p: [1, -0.2, 0] }), aR: grip([-0.41, 1.83, -0.153], [0, 1, -0.2], [0, 0.2, 1], { p: [-1, -0.2, 0] }) },
       },
       seq: [['a', 0.3, 1.2], ['b', 0.3, 1.2]] },
 
@@ -493,7 +518,7 @@
       seq: [['a', 0.3, 0.5], ['m', 0, 0.5], ['b', 0.5, 0.5], ['m', 0, 0.5]] },
 
     { id: 'e0162', lib: true, name: 'Élévation frontale à la poulie', en: 'Cable front raise', side: true, mus: { deltR: 1, pecR: 2 }, cam: { yaw: -45, pitch: 8 },
-      props: [cableTo('R', [-0.06, 0.12, -0.55]), fn(() => [box([-0.06, 0.06, -0.62], [0.20, 0.12, 0.12], FRAME, { name: 'poulie' })])],
+      props: [cableTo('R', [-0.06, 0.12, -0.55]), tower(-0.06, -0.60, 2.2)],
       poses: {
         a: { pelvis: [0, 0.92, 0], lL: flatF(0.13, 0.02), lR: flatF(-0.13, 0.02),
           aL: reach(SH(1), [0.25, 0.74, 0.03], [-1, 0, 0], { p: [0.2, 0, -1] }), aR: reach(SH(-1), [-0.16, 0.76, 0.16], [0, 0, -1], { p: [-0.3, 0, -1] }) },
@@ -503,7 +528,7 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e0164', lib: true, name: 'Élévation frontale des épaules à la poulie', en: 'Cable front shoulder raise', mus: mus(m2('delt', 1)), cam: { yaw: 20, pitch: 8 },
-      props: [tower(1.05, -0.10, 2.15, { w: 0.3 }), tower(-1.05, -0.10, 2.15, { w: 0.3 }), cableTo('L', [-1.00, 0.15, -0.10]), cableTo('R', [1.00, 0.15, -0.10])],
+      props: [crossover(1.05, -0.10), cableTo('L', [-1.00, 0.15, -0.10]), cableTo('R', [1.00, 0.15, -0.10])],
       poses: {
         a: { pelvis: [0, 0.92, 0], lL: flatF(0.15, 0.02), lR: flatF(-0.15, 0.02),
           aL: reach(SH(1), [0.20, 0.78, 0.15], [-0.4, 0, -1], { p: [0.4, 0, -1] }), aR: reach(SH(-1), [-0.20, 0.78, 0.15], [0.4, 0, -1], { p: [-0.4, 0, -1] }) },
@@ -531,10 +556,10 @@
       seq: [['a', 0.3, 1.0], ['b', 0.3, 1.0]] },
 
     { id: 'e0356', lib: true, name: 'Élévation latérale unilatérale avec appui à l’haltère', en: 'Dumbbell one arm lateral raise with support', side: true, mus: { deltR: 1, pecR: 2 }, cam: { yaw: 20, pitch: 8 },
-      props: [dbIn('R'), fn(() => [tbox([0.62, 0.62, 0.02], [0.30, 0.95, 0.07], -38, PAD, { name: 'banc' }), box([0.62, 0.15, 0.10], [0.12, 0.30, 0.50], FRAME)])],
+      props: [dbIn('R'), fn(() => [hid(tbox([0.62, 0.62, 0.02], [0.30, 0.95, 0.07], -38, PAD, { name: 'banc' })), hid(box([0.62, 0.15, 0.10], [0.12, 0.30, 0.50], FRAME)), ...ADJ(52, { c: [0.62, 0, 0.037], sy: 1.184 })])],
       poses: {
         a: { pelvis: [0, 0.92, 0], rot: [0, 0, -4], lL: flatF(0.14, 0.02), lR: flatF(-0.14, 0.02),
-          aL: grip([0.56, 1.06, -0.20], [0.3, 0.2, 0.93], [0, -1, 0.2], { p: [0.3, -0.5, -1] }), aR: reach(SH(-1), [-0.20, 0.74, 0.08], [1, 0, 0], { p: [-0.3, 0, -1] }) },
+          aL: grip([0.56, 1.06, -0.20], [0.3, 0.2, 0.93], [0, -1, 0.2], { p: [0.3, -0.5, -1] }), aR: reach(SH(-1), [-0.26, 0.74, 0.08], [1, 0, 0], { p: [-0.3, 0, -1] }) },
         b: { pelvis: [0, 0.92, 0], rot: [0, 0, -4], lL: flatF(0.14, 0.02), lR: flatF(-0.14, 0.02),
           aL: grip([0.56, 1.06, -0.20], [0.3, 0.2, 0.93], [0, -1, 0.2], { p: [0.3, -0.5, -1] }), aR: reach(SH(-1), [-0.82, 1.42, 0.06], [0, -1, 0], { p: [-0.2, 0.2, -1] }) },
       },
@@ -552,7 +577,7 @@
       seq: [['a', 0.3, 1.2], ['b', 0.3, 1.3]] },
 
     { id: 'e0154', lib: true, name: 'Oiseau croisé à la poulie (vis-à-vis)', en: 'Cable cross-over revers fly', mus: mus(m2('deltP', 1), m2('rhomb', 2)), cam: { yaw: 150, pitch: 22 },
-      props: [tower(1.05, 0.25, 2.15, { w: 0.3 }), tower(-1.05, 0.25, 2.15, { w: 0.3 }), cableTo('L', [-1.00, 0.12, 0.25]), cableTo('R', [1.00, 0.12, 0.25])],
+      props: [crossover(1.05, 0.25), cableTo('L', [-1.00, 0.12, 0.25]), cableTo('R', [1.00, 0.12, 0.25])],
       poses: {
         a: { pelvis: [0, 0.88, -0.14], rot: [76, 0, 0], neck: [-30, 0, 0], lL: flatF(0.15, 0.02, { p: [0.2, 0, 1] }), lR: flatF(-0.15, 0.02, { p: [-0.2, 0, 1] }),
           aL: grip([-0.05, 0.50, 0.38], [0, -1, 0], [-1, 0, 0], { p: [1, 0.3, 0] }), aR: grip([0.05, 0.52, 0.40], [0, -1, 0], [1, 0, 0], { p: [-1, 0.3, 0] }) },
@@ -572,7 +597,7 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e0379', lib: true, name: 'Élévation latérale arrière aux haltères (tête en appui)', en: 'Dumbbell rear lateral raise (support head)', mus: mus(m2('deltP', 1), m2('rhomb', 2), m2('trap', 2)), cam: { yaw: 140, pitch: 22 },
-      props: [...dbs(), fn(() => [tbox([0, 0.655, 0.835], [0.30, 0.80, 0.07], -40, PAD, { name: 'banc' }), box([0, 0.17, 0.98], [0.12, 0.34, 0.46], FRAME)])],
+      props: [...dbs(), fn(() => [hid(tbox([0, 0.655, 0.835], [0.30, 0.80, 0.07], -40, PAD, { name: 'banc' })), hid(box([0, 0.17, 0.98], [0.12, 0.34, 0.46], FRAME)), ...ADJ(50, { c: [0, 0, 0.93], sy: 1.10 })])],
       poses: {
         a: { pelvis: [0, 0.88, -0.20], rot: [78, 0, 0], neck: [-10, 0, 0], lL: flatF(0.13, 0.02, { p: [0.15, 0, 1] }), lR: flatF(-0.13, 0.02, { p: [-0.15, 0, 1] }),
           aL: grip([0.14, 0.42, 0.32], [0, -1, 0], [-1, 0, 0], { p: [1, 0.3, 0] }), aR: grip([-0.14, 0.42, 0.32], [0, -1, 0], [1, 0, 0], { p: [-1, 0.3, 0] }) },
@@ -582,7 +607,7 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'Bent_Over_Dumbbell_Rear_Delt_Raise_With_Head_On_Bench', lib: true, name: 'Oiseau penché aux haltères tête sur banc', en: 'Bent over dumbbell rear delt raise with head on bench', mus: mus(m2('deltP', 1)), cam: { yaw: 140, pitch: 22 },
-      props: [...dbs(), fn(() => [tbox([0, 0.655, 0.835], [0.30, 0.80, 0.07], -40, PAD, { name: 'banc' }), box([0, 0.17, 0.98], [0.12, 0.34, 0.46], FRAME)])],
+      props: [...dbs(), fn(() => [hid(tbox([0, 0.655, 0.835], [0.30, 0.80, 0.07], -40, PAD, { name: 'banc' })), hid(box([0, 0.17, 0.98], [0.12, 0.34, 0.46], FRAME)), ...ADJ(50, { c: [0, 0, 0.93], sy: 1.10 })])],
       poses: {
         a: { pelvis: [0, 0.88, -0.20], rot: [78, 0, 0], neck: [-10, 0, 0], lL: flatF(0.13, 0.02, { p: [0.15, 0, 1] }), lR: flatF(-0.13, 0.02, { p: [-0.15, 0, 1] }),
           aL: grip([0.13, 0.42, 0.32], [0, -1, 0], [0, 0, -1], { p: [1, 0.3, 0] }), aR: grip([-0.13, 0.42, 0.32], [0, -1, 0], [0, 0, -1], { p: [-1, 0.3, 0] }) },
@@ -592,17 +617,17 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e0326', lib: true, name: 'Élévation latérale arrière sur banc incliné aux haltères', en: 'Dumbbell incline rear lateral raise', mus: mus(m2('deltP', 1), m2('trap', 2)), cam: { yaw: 140, pitch: 25 },
-      props: [...dbs(), fn(() => [tbox([0, 0.70, 0.18], [0.30, 0.82, 0.07], 50, PAD, { name: 'banc' }), box([0, 0.18, 0.05], [0.12, 0.36, 0.60], FRAME)])],
+      props: [...dbs(), fn(() => [hid(box([0, 0.18, 0.05], [0.12, 0.36, 0.60], FRAME)), ...ADJ(40, { yaw: 180, c: [0, 0, -0.16], sy: 1.04, noSeat: true })])],
       poses: {
-        a: { float: true, pelvis: [0, 0.78, -0.22], rot: [50, 0, 0], neck: [-24, 0, 0], lL: { at: [0.14, 0.17, -0.88], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } }, lR: { at: [-0.14, 0.17, -0.88], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } },
-          aL: grip([0.20, 0.55, 0.42], [0, -1, 0], [-1, 0, 0], { p: [1, 0.3, 0] }), aR: grip([-0.20, 0.55, 0.42], [0, -1, 0], [1, 0, 0], { p: [-1, 0.3, 0] }) },
-        b: { float: true, pelvis: [0, 0.78, -0.22], rot: [50, 0, 0], neck: [-24, 0, 0], lL: { at: [0.14, 0.17, -0.88], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } }, lR: { at: [-0.14, 0.17, -0.88], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } },
-          aL: grip([0.80, 1.06, 0.34], [1, 0, 0], [0, -1, 0], { p: [0, 1, -0.4] }), aR: grip([-0.80, 1.06, 0.34], [-1, 0, 0], [0, -1, 0], { p: [0, 1, -0.4] }) },
+        a: { float: true, pelvis: [0, 0.650, -0.22], rot: [50, 0, 0], neck: [-24, 0, 0], lL: { at: [0.20, 0.24, -0.86], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } }, lR: { at: [-0.20, 0.24, -0.86], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } },
+          aL: grip([0.20, 0.420, 0.42], [0, -1, 0], [-1, 0, 0], { p: [1, 0.3, 0] }), aR: grip([-0.20, 0.420, 0.42], [0, -1, 0], [1, 0, 0], { p: [-1, 0.3, 0] }) },
+        b: { float: true, pelvis: [0, 0.650, -0.22], rot: [50, 0, 0], neck: [-24, 0, 0], lL: { at: [0.20, 0.24, -0.86], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } }, lR: { at: [-0.20, 0.24, -0.86], foot: { toe: [0, -0.6, 0.8], up: [0, 0.8, 0.6] } },
+          aL: grip([0.80, 0.930, 0.34], [1, 0, 0], [0, -1, 0], { p: [0, 1, -0.4] }), aR: grip([-0.80, 0.930, 0.34], [-1, 0, 0], [0, -1, 0], { p: [0, 1, -0.4] }) },
       },
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
 
     { id: 'e0240', lib: true, name: 'Oiseau allongé sur le dos à la poulie', en: 'Cable supine reverse fly', mus: mus(m2('deltP', 1)), cam: { yaw: 50, pitch: 25 },
-      props: [fn(() => bench(-0.75, 0.25, 0.44)), tower(0.95, -0.30, 2.2, { w: 0.3 }), tower(-0.95, -0.30, 2.2, { w: 0.3 }), cableTo('L', [0.90, 2.05, -0.30]), cableTo('R', [-0.90, 2.05, -0.30])],
+      props: [fn(() => bench(-0.75, 0.25, 0.44)), crossover(0.95, -0.30), cableTo('L', [0.90, 2.05, -0.30]), cableTo('R', [-0.90, 2.05, -0.30])],
       poses: {
         a: { float: true, pelvis: [0, 0.595, 0.05], rot: [-90, 0, 0], neck: [8, 0, 0], lL: flatF(0.25, 0.50, { p: [0.5, 1, 0.2] }), lR: flatF(-0.25, 0.50, { p: [-0.5, 1, 0.2] }),
           aL: grip([0.12, 1.22, -0.44], [0, 1, 0], [-1, 0, 0], { p: [1, -0.2, 0] }), aR: grip([-0.12, 1.22, -0.44], [0, 1, 0], [1, 0, 0], { p: [-1, -0.2, 0] }) },
@@ -612,7 +637,7 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.2]] },
     /* ======================= DOS ======================= */
     { id: 'e1314', lib: true, name: 'Extension du dos sur swiss ball', en: 'Back extension on exercise ball', mus: mus(m2('low', 1)), cam: { yaw: 120, pitch: 30 },
-      props: [fn(() => [sph([0, 0.30, 0.04], 0.30, BALL, { name: 'ballon' })])],
+      props: [fn(() => [hid(sph([0, 0.30, 0.04], 0.30, BALL, { name: 'ballon' })), MESH('ballon', [0, 0, 0.04], { s: 0.857 })])],
       poses: {
         a: { float: true, pelvis: [0, 0.74, -0.06], rot: [96, 0, 0], spine: [12, 0, 0], neck: [10, 0, 0],
           lL: { at: [0.13, 0.17, -0.95], foot: { toe: [0, -0.72, 0.69], up: [0, 0.69, 0.72] }, toes: 30 }, lR: { at: [-0.13, 0.17, -0.95], foot: { toe: [0, -0.72, 0.69], up: [0, 0.69, 0.72] }, toes: 30 },
@@ -624,7 +649,7 @@
       seq: [['a', 0.3, 1.2], ['b', 0.5, 1.2]] },
 
     { id: 'e1335', lib: true, name: 'Extension du dos sur swiss ball, genoux décollés du sol', en: 'Exercise ball back extension with knees off ground', mus: mus(m2('low', 1), m2('glute', 2)), cam: { yaw: 120, pitch: 30 },
-      props: [fn(() => [sph([0, 0.30, 0.04], 0.30, BALL, { name: 'ballon' })])],
+      props: [fn(() => [hid(sph([0, 0.30, 0.04], 0.30, BALL, { name: 'ballon' })), MESH('ballon', [0, 0, 0.04], { s: 0.857 })])],
       poses: {
         a: { float: true, pelvis: [0, 0.74, -0.10], rot: [96, 0, 0], spine: [12, 0, 0], neck: [10, 0, 0],
           lL: { at: [0.14, 0.17, -1.00], foot: { toe: [0, -0.72, 0.69], up: [0, 0.69, 0.72] }, toes: 30 }, lR: { at: [-0.14, 0.17, -1.00], foot: { toe: [0, -0.72, 0.69], up: [0, 0.69, 0.72] }, toes: 30 },
@@ -636,15 +661,13 @@
       seq: [['a', 0.3, 1.2], ['b', 0.5, 1.2]] },
 
     { id: 'e0489', lib: true, name: 'Hyperextension (extension lombaire)', en: 'Hyperextension', mus: mus(m2('low', 1), m2('glute', 2), m2('ham', 2)), cam: { yaw: 80, pitch: 10 },
-      props: [fn(() => [tbox([0, 0.593, -0.003], [0.40, 0.26, 0.08], 45, PAD, { name: 'banc' }), cyl([-0.22, 0.36, -0.655], [0.22, 0.36, -0.655], 0.05, PAD, { name: 'rouleau' }),
-        tbox([0, 0.19, -0.62], [0.40, 0.26, 0.04], -45, PLATE, { name: 'repose-pieds' }), cyl([0, 0.04, -0.75], [0, 0.04, 0.55], 0.035, FRAME), cyl([0, 0.04, 0.45], [0, 0.58, 0.15], 0.035, FRAME),
-        cyl([0, 0.04, -0.62], [0, 0.10, -0.62], 0.03, FRAME), cyl([-0.35, 0.03, 0.45], [0.35, 0.03, 0.45], 0.03, FRAME), cyl([-0.35, 0.03, -0.75], [0.35, 0.03, -0.75], 0.03, FRAME)])],
+      props: [fn(() => [MESH('hyper', [0, 0, -0.25], { s: 0.9 })])],
       poses: {
-        a: { float: true, pelvis: [0, 0.90, 0.05], rot: [128, 0, 0], spine: [10, 0, 0], neck: [8, 0, 0],
-          lL: { at: [0.12, 0.25, -0.55], foot: { toe: [0, -0.707, 0.707], up: [0, 0.707, 0.707] } }, lR: { at: [-0.12, 0.25, -0.55], foot: { toe: [0, -0.707, 0.707], up: [0, 0.707, 0.707] } },
+        a: { float: true, pelvis: [0, 1.026, -0.056], rot: [128, 0, 0], spine: [10, 0, 0], neck: [8, 0, 0],
+          lL: { at: [0.12, 0.296, -0.523], foot: { toe: [0, -0.555, 0.832], up: [0, 0.832, 0.555] } }, lR: { at: [-0.12, 0.296, -0.523], foot: { toe: [0, -0.555, 0.832], up: [0, 0.832, 0.555] } },
           aL: HBH(1), aR: HBH(-1) },
-        b: { float: true, pelvis: [0, 0.90, 0.05], rot: [45, 0, 0], spine: [-4, 0, 0], neck: [-6, 0, 0],
-          lL: { at: [0.12, 0.25, -0.55], foot: { toe: [0, -0.707, 0.707], up: [0, 0.707, 0.707] } }, lR: { at: [-0.12, 0.25, -0.55], foot: { toe: [0, -0.707, 0.707], up: [0, 0.707, 0.707] } },
+        b: { float: true, pelvis: [0, 1.026, -0.056], rot: [56, 0, 0], spine: [-4, 0, 0], neck: [-6, 0, 0],
+          lL: { at: [0.12, 0.296, -0.523], foot: { toe: [0, -0.555, 0.832], up: [0, 0.832, 0.555] } }, lR: { at: [-0.12, 0.296, -0.523], foot: { toe: [0, -0.555, 0.832], up: [0, 0.832, 0.555] } },
           aL: HBH(1), aR: HBH(-1) },
       },
       seq: [['a', 0.3, 1.3], ['b', 0.5, 1.3]] },
@@ -665,9 +688,9 @@
         return [cyl(piv, C.add(e, C.mul(d, 0.10)), 0.016, BAR, { held: true, name: 'barre' }), cyl(C.add(e, C.mul(d, 0.0)), C.add(e, C.mul(d, 0.04)), 0.20, PLATE, { name: 'disque' }), cyl(C.add(e, C.mul(d, -0.02)), e, 0.03, BAR, { name: 'barre' })]; })],
       poses: {
         a: { pelvis: [0, 0.86, -0.12], rot: [58, 0, 0], neck: [-22, 0, 0], lL: flatF(0.15, 0.02, { p: [0.2, 0, 1] }), lR: flatF(-0.15, 0.02, { p: [-0.2, 0, 1] }),
-          aL: { grab: { bone: 'UpperLeg_L', h: 0.80, ang: 5, f: 1, tilt: 0 }, p: [0.6, 0, -1] }, aR: grip([-0.20, 0.40, 0.36], [0, -1, 0], [1, 0, 0], { p: [-0.3, 0, -1] }) },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.80, ang: 5, f: 1, tilt: 0 }, p: [0.6, 0, -1] }, aR: grip([-0.21, 0.40, 0.36], [0, -1, 0], [1, 0, 0], { p: [-0.3, 0, -1] }) },
         b: { pelvis: [0, 0.86, -0.12], rot: [58, 0, 0], neck: [-22, 0, 0], lL: flatF(0.15, 0.02, { p: [0.2, 0, 1] }), lR: flatF(-0.15, 0.02, { p: [-0.2, 0, 1] }),
-          aL: { grab: { bone: 'UpperLeg_L', h: 0.80, ang: 5, f: 1, tilt: 0 }, p: [0.6, 0, -1] }, aR: grip([-0.23, 0.78, 0.08], [0, -1, 0], [1, 0, 0], { p: [-0.2, 1, -0.6] }) },
+          aL: { grab: { bone: 'UpperLeg_L', h: 0.80, ang: 5, f: 1, tilt: 0 }, p: [0.6, 0, -1] }, aR: grip([-0.25, 0.78, 0.09], [0, -1, 0], [1, 0, 0], { p: [-0.2, 1, -0.6] }) },
       },
       seq: [['a', 0.3, 1.1], ['b', 0.4, 1.1]] },
 
@@ -693,13 +716,13 @@
       seq: [['a', 0.3, 1.1], ['b', 0.4, 1.1]] },
 
     { id: 'e0150', lib: true, name: 'Tirage vertical à la barre, poulie haute', en: 'Cable bar lateral pulldown', mus: mus(m2('lat', 1), m2('rhomb', 2), m2('biceps', 2)), cam: { yaw: 200, pitch: 10 },
-      props: [fn(() => bench(-0.90, 0.28, 0.45)), tower(0, 0.62, 2.4, { w: 0.6 }), fn((C) => { const a = C.hand('L').grip, b = C.hand('R').grip; const m = C.mul(C.add(a, b), 0.5); const u = C.norm(C.sub(a, b));
-        return [cyl(C.add(m, C.mul(u, -0.60)), C.add(m, C.mul(u, 0.60)), 0.014, BAR, { held: true, name: 'barre' }), cyl(m, [0, 2.30, 0.50], 0.006, CABLE, { soft: true }), sph([0, 2.30, 0.50], 0.04, FRAME, { name: 'poulie' })]; })],
+      props: [fn(() => [MESH('lat', [0, 0, 0.40], { part: 'frame' }), MESH('lat', [0, 0.11, 0.40], { part: 'genoux' }), hid(box([0, 0.44, -0.01], [0.26, 0.07, 0.47], PAD, { name: 'siège' }))]), fn((C) => { const a = C.hand('L').grip, b = C.hand('R').grip; const m = C.mul(C.add(a, b), 0.5); const u = C.norm(C.sub(a, b));
+        return [cyl(C.add(m, C.mul(u, -0.60)), C.add(m, C.mul(u, 0.60)), 0.014, BAR, { held: true, name: 'barre' }), cyl(m, [0, 2.13, 0.103], 0.006, CABLE, { soft: true }), sph([0, 2.13, 0.103], 0.04, FRAME, { name: 'poulie' })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.606, 0.0], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
-          aL: grip([0.45, 1.88, 0.16], [0, 1, 0.1], [0, -0.1, 1], { p: [1, 0, -0.3] }), aR: grip([-0.45, 1.88, 0.16], [0, 1, 0.1], [0, -0.1, 1], { p: [-1, 0, -0.3] }) },
-        b: { float: true, pelvis: [0, 0.606, 0.0], rot: [-10, 0, 0], neck: [10, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
-          aL: grip([0.42, 1.30, 0.20], [0, 1, 0.1], [0, -0.1, 1], { p: [1, -0.8, -0.3] }), aR: grip([-0.42, 1.30, 0.20], [0, 1, 0.1], [0, -0.1, 1], { p: [-1, -0.8, -0.3] }) },
+        a: { float: true, pelvis: [0, 0.632, 0.000], rot: [-6, 0, 0], neck: [6, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
+          aL: grip([0.45, 1.906, 0.16], [0, 1, 0.1], [0, -0.1, 1], { p: [1, 0, -0.3] }), aR: grip([-0.45, 1.906, 0.16], [0, 1, 0.1], [0, -0.1, 1], { p: [-1, 0, -0.3] }) },
+        b: { float: true, pelvis: [0, 0.632, 0.000], rot: [-10, 0, 0], neck: [10, 0, 0], lL: flatF(0.22, 0.42), lR: flatF(-0.22, 0.42),
+          aL: grip([0.42, 1.326, 0.20], [0, 1, 0.1], [0, -0.1, 1], { p: [1, -0.8, -0.3] }), aR: grip([-0.42, 1.326, 0.20], [0, 1, 0.1], [0, -0.1, 1], { p: [-1, -0.8, -0.3] }) },
       },
       seq: [['a', 0.3, 1.1], ['b', 0.4, 1.1]] },
 
@@ -714,38 +737,32 @@
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.1]] },
 
     { id: 'e0861', lib: true, name: 'Tirage horizontal assis à la poulie', en: 'Cable seated row', mus: mus(m2('rhomb', 1), m2('trap', 2), m2('lat', 2), m2('deltP', 2)), cam: { yaw: 230, pitch: 10 },
-      props: [fn(() => [...bench(-0.80, 0.30, 0.42), box([0, 0.30, 0.90], [0.40, 0.30, 0.04], PLATE, { name: 'repose-pieds' }), box([0, 0.08, 0.60], [0.10, 0.16, 0.70], FRAME)]), tower(0, 1.30, 2.1, { w: 0.6 }),
-        fn((C) => { const a = C.hand('L').grip, b = C.hand('R').grip; const m = C.mul(C.add(a, b), 0.5); const fw = C.norm(C.sub([0, 0.40, 1.20], m)); const tip = C.add(m, C.mul(fw, 0.12));
+      props: [fn(() => [MESH('rowc', [0, 0, 0.66]), hid(box([0, 0.475, -0.14], [0.26, 0.07, 0.77], PAD, { name: 'banc' }))]),
+        fn((C) => { const a = C.hand('L').grip, b = C.hand('R').grip; const m = C.mul(C.add(a, b), 0.5); const fw = C.norm(C.sub([0, 0.585, 1.205], m)); const tip = C.add(m, C.mul(fw, 0.12));
           return [cyl(C.add(a, C.mul(C.hand('L').across, 0.06)), C.add(a, C.mul(C.hand('L').across, -0.06)), 0.015, PLATE, { held: true, name: 'poignée' }), cyl(C.add(b, C.mul(C.hand('R').across, 0.06)), C.add(b, C.mul(C.hand('R').across, -0.06)), 0.015, PLATE, { held: true, name: 'poignée' }),
-            cyl(a, tip, 0.012, BAR, { held: true }), cyl(b, tip, 0.012, BAR, { held: true }), cyl(tip, [0, 0.40, 1.20], 0.006, CABLE, { soft: true }), sph([0, 0.40, 1.20], 0.04, FRAME, { name: 'poulie' })]; })],
+            cyl(a, tip, 0.012, BAR, { held: true }), cyl(b, tip, 0.012, BAR, { held: true }), cyl(tip, [0, 0.585, 1.205], 0.006, CABLE, { soft: true }), sph([0, 0.585, 1.205], 0.04, FRAME, { name: 'poulie' })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 0.576, -0.05], rot: [30, 0, 0], neck: [-14, 0, 0],
-          lL: { at: [0.13, 0.40, 0.78], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [0.2, 1, 0] }, lR: { at: [-0.13, 0.40, 0.78], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [-0.2, 1, 0] },
-          aL: grip([0.06, 0.82, 0.80], [0, -1, 0], [-1, 0, 0], { p: [1, -0.2, 0] }), aR: grip([-0.06, 0.82, 0.80], [0, -1, 0], [1, 0, 0], { p: [-1, -0.2, 0] }) },
-        b: { float: true, pelvis: [0, 0.576, -0.05], rot: [-4, 0, 0], neck: [4, 0, 0],
-          lL: { at: [0.13, 0.40, 0.78], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [0.2, 1, 0] }, lR: { at: [-0.13, 0.40, 0.78], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [-0.2, 1, 0] },
-          aL: grip([0.07, 0.86, 0.26], [0, -1, 0], [-1, 0, 0], { p: [0.4, 0.2, -1] }), aR: grip([-0.07, 0.86, 0.26], [0, -1, 0], [1, 0, 0], { p: [-0.4, 0.2, -1] }) },
+        a: { float: true, pelvis: [0, 0.666, -0.050], rot: [30, 0, 0], neck: [-14, 0, 0],
+          lL: { at: [0.13, 0.42, 0.74], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [0.2, 1, 0] }, lR: { at: [-0.13, 0.42, 0.74], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [-0.2, 1, 0] },
+          aL: grip([0.06, 0.910, 0.80], [0, -1, 0], [-1, 0, 0], { p: [1, -0.2, 0] }), aR: grip([-0.06, 0.910, 0.80], [0, -1, 0], [1, 0, 0], { p: [-1, -0.2, 0] }) },
+        b: { float: true, pelvis: [0, 0.666, -0.050], rot: [-4, 0, 0], neck: [4, 0, 0],
+          lL: { at: [0.13, 0.42, 0.74], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [0.2, 1, 0] }, lR: { at: [-0.13, 0.42, 0.74], foot: { toe: [0, 0.95, 0.3], up: [0, 0.3, -0.95] }, p: [-0.2, 1, 0] },
+          aL: grip([0.07, 0.950, 0.26], [0, -1, 0], [-1, 0, 0], { p: [0.4, 0.2, -1] }), aR: grip([-0.07, 0.950, 0.26], [0, -1, 0], [1, 0, 0], { p: [-0.4, 0.2, -1] }) },
       },
       seq: [['a', 0.3, 1.2], ['b', 0.4, 1.2]] },
 
     { id: 'e0571', lib: true, name: 'Tirage horizontal assis prise serrée alterné à la machine', en: 'Lever alternating narrow grip seated row', mus: mus(m2('rhomb', 1), m2('lat', 2), m2('trap', 2), m2('deltP', 2)), cam: { yaw: 230, pitch: 12 },
-      props: [fn(() => [box([0, 0.43, -0.02], [0.38, 0.07, 0.36], PAD, { name: 'siège' }), box([0, 0.20, -0.02], [0.10, 0.40, 0.10], FRAME), tbox([0, 1.02, 0.30], [0.28, 0.34, 0.07], 0, PAD, { name: 'pupitre' }), box([0, 0.55, 0.40], [0.08, 0.90, 0.08], FRAME)]),
-        fn((C) => { const out = []; for (const sd of ['L', 'R']) { const h = C.hand(sd); const s = sd === 'L' ? 1 : -1; const piv = [s * 0.30, 0.30, 1.10];
-          const top = C.add(h.grip, C.mul(h.across, 0.07)), bot = C.add(h.grip, C.mul(h.across, -0.07)); const lo = top[1] < bot[1] ? top : bot;
-          out.push(cyl(top, bot, 0.016, PLATE, { held: true, name: 'poignée' }), cyl(lo, [s * 0.30, lo[1] - 0.05, lo[2] + 0.05], 0.02, FRAME, { held: true }), cyl([s * 0.30, lo[1] - 0.05, lo[2] + 0.05], piv, 0.025, FRAME, { name: 'bras' }),
-            cyl([s * 0.30, 0.55, 1.05], [s * 0.42, 0.55, 1.05], 0.20, PLATE, { name: 'disque' })); } return out; })],
+      props: [fn(() => [MESH('row', [0, 0, 0], { part: 'frame' })]),
+        /* Modèle « Seated Row Machine » (louis_l2y, CC BY 4.0) : chaque bras tourne autour de son axe bas (y 0,354, z 0,331) et suit la main qui tire. */
+        fn((C) => ['L', 'R'].map((sd) => ROTM('row', 'levier' + sd, [0, 0, 0], [0, 0.354, 0.331], 'x', angX(C.hand(sd).grip, [0, 0.354, 0.331]) - 1.4029, { held: true })))],
       poses: {
-        a: { float: true, pelvis: [0, 0.616, -0.02], rot: [10, 0, 0], neck: [-4, 0, 0], lL: flatF(0.22, 0.35), lR: flatF(-0.22, 0.35),
-          aL: grip([0.09, 1.06, 0.86], [0, 0, 1], [-1, 0, 0], { p: [1, -0.2, -0.4] }), aR: grip([-0.09, 1.06, 0.48], [0, 0, 1], [1, 0, 0], { p: [-1, -0.2, -0.4] }) },
-        b: { float: true, pelvis: [0, 0.616, -0.02], rot: [10, 0, 0], neck: [-4, 0, 0], lL: flatF(0.22, 0.35), lR: flatF(-0.22, 0.35),
-          aL: grip([0.09, 1.06, 0.48], [0, 0, 1], [-1, 0, 0], { p: [1, -0.2, -0.4] }), aR: grip([-0.09, 1.06, 0.86], [0, 0, 1], [1, 0, 0], { p: [-1, -0.2, -0.4] }) },
+        a: { float: true, pelvis: [0, 1.036, -0.576], rot: [17, 0, 0], neck: [-12, 0, 0], lL: { at: [0.075, 0.405, -0.24], p: [0.6, 0.3, 1], foot: { toe: [0.1, -0.25, 1], up: [0, 1, 0.25] } }, lR: { at: [-0.075, 0.405, -0.24], p: [-0.6, 0.3, 1], foot: { toe: [-0.1, -0.25, 1], up: [0, 1, 0.25] } }, aL: grip([0.091, 1.474, 0.174], [0.165, -0.41, 0.734], [-1, 0, 0], { p: [1, -0.6, -0.3] }), aR: grip([-0.091, 1.403, -0.093], [-0.099, -0.276, 0.905], [1, 0, 0], { p: [-1, -0.6, -0.3] }) },
+        b: { float: true, pelvis: [0, 1.036, -0.576], rot: [17, 0, 0], neck: [-12, 0, 0], lL: { at: [0.075, 0.405, -0.24], p: [0.6, 0.3, 1], foot: { toe: [0.1, -0.25, 1], up: [0, 1, 0.25] } }, lR: { at: [-0.075, 0.405, -0.24], p: [-0.6, 0.3, 1], foot: { toe: [-0.1, -0.25, 1], up: [0, 1, 0.25] } }, aL: grip([0.091, 1.403, -0.093], [0.099, -0.276, 0.905], [-1, 0, 0], { p: [1, -0.6, -0.3] }), aR: grip([-0.091, 1.474, 0.174], [-0.165, -0.41, 0.734], [1, 0, 0], { p: [-1, -0.6, -0.3] }) },
       },
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.1]] },
 
     { id: 'e0499', lib: true, name: 'Rowing inversé (traction australienne)', en: 'Inverted row', mus: mus(m2('rhomb', 1), m2('lat', 2), m2('biceps', 2)), cam: { yaw: 70, pitch: 10 },
-      props: [fn(() => [cyl([-0.75, 1.08, -0.33], [0.75, 1.08, -0.33], 0.016, BAR, { held: true, name: 'barre' }),
-        cyl([0.68, 0, -0.45], [0.68, 2.1, -0.45], 0.035, FRAME, { name: 'cadre' }), cyl([-0.68, 0, -0.45], [-0.68, 2.1, -0.45], 0.035, FRAME, { name: 'cadre' }), cyl([0.68, 2.1, -0.45], [-0.68, 2.1, -0.45], 0.035, FRAME, { name: 'cadre' }),
-        cyl([0.68, 1.08, -0.45], [0.68, 1.08, -0.33], 0.03, FRAME), cyl([-0.68, 1.08, -0.45], [-0.68, 1.08, -0.33], 0.03, FRAME)])],
+      props: [fn(() => [cyl([-0.75, 1.08, -0.33], [0.75, 1.08, -0.33], 0.016, BAR, { held: true, name: 'barre' }), MESH('cage', [0, 0, -0.122], { s: [1.94, 1.74, 0.5] })])],
       poses: {
         a: { float: true, pelvis: [0, 0.33, 0.12], rot: [-75, 0, 0], neck: [10, 0, 0],
           lL: { at: [0.11, 0.10, 0.95], foot: { toe: [0, 0.7, 0.7], up: [0, 0.7, -0.7] } }, lR: { at: [-0.11, 0.10, 0.95], foot: { toe: [0, 0.7, 0.7], up: [0, 0.7, -0.7] } },
@@ -757,19 +774,18 @@
       seq: [['a', 0.3, 1.2], ['b', 0.4, 1.2]] },
 
     { id: 'e0017', lib: true, name: 'Traction assistée', en: 'Assisted pull-up', mus: mus(m2('lat', 1), m2('rhomb', 2), m2('trap', 2), m2('deltP', 2)), cam: { yaw: 200, pitch: 8 },
-      props: [fn(() => [cyl([0.40, 0, 0.30], [0.40, 2.30, 0.30], 0.035, FRAME, { name: 'cadre' }), cyl([-0.40, 0, 0.30], [-0.40, 2.30, 0.30], 0.035, FRAME, { name: 'cadre' }), cyl([0.40, 2.30, 0.30], [-0.40, 2.30, 0.30], 0.035, FRAME, { name: 'cadre' }),
-        cyl([0.40, 2.18, 0.30], [0.30, 2.18, 0.05], 0.03, FRAME, { held: true }), cyl([-0.40, 2.18, 0.30], [-0.30, 2.18, 0.05], 0.03, FRAME, { held: true }), box([0, 0.25, 0.35], [0.50, 0.50, 0.12], PLATE, { name: 'poids' })]),
-        fn((C) => { const kL = C.bone('LowerLeg_L'), kR = C.bone('LowerLeg_R'); const k = C.mul(C.add(kL.o, kR.o), 0.5); const y = Math.min(kL.o[1], kR.o[1]) - 0.095;
-          return [box([0, y - 0.035, k[2] - 0.17], [0.46, 0.07, 0.42], PAD, { name: 'plateau' }), cyl([0, y - 0.07, k[2] - 0.05], [0, y - 0.07, 0.30], 0.03, FRAME, { name: 'bras' })]; }),
-        fn((C) => [cyl(C.add(C.hand('L').grip, C.mul(C.hand('L').across, 0.07)), C.add(C.hand('L').grip, C.mul(C.hand('L').across, -0.07)), 0.017, PLATE, { held: true, name: 'poignée' }),
-          cyl(C.add(C.hand('R').grip, C.mul(C.hand('R').across, 0.07)), C.add(C.hand('R').grip, C.mul(C.hand('R').across, -0.07)), 0.017, PLATE, { held: true, name: 'poignée' })])],
+      props: [fn(() => [MESH('chin', [0, 0, 0.30], { part: 'frame', s: 0.94, held: true })]),
+        /* Modèle « Intenza DL12 Assisted Chin/Dip » : le plateau des genoux tourne autour de son axe (y 0,975, z -0,124 dans le modèle). */
+        fn((C) => { const K = C.mul(C.add(C.bone('LowerLeg_L').at([0, -0.08, 0.06]), C.bone('LowerLeg_R').at([0, -0.08, 0.06])), 0.5); const P = [0, 0.975 * 0.94, 0.30 - 0.124 * 0.94];
+          const r = 0.391 * 0.94; const a = Math.PI - Math.asin(Math.max(-1, Math.min(1, (K[1] - P[1]) / r))) - Math.atan2(0.085, -0.382);   // le plateau suit la hauteur des genoux
+          return [ROTM('chin', 'plateau', [0, 0, 0.30], [0, 0.975, -0.124], 'x', a, { s: 0.94, nocheck: true })]; })],
       poses: {
-        a: { float: true, pelvis: [0, 1.06, -0.02], rot: [-4, 0, 0], neck: [-6, 0, 0],
+        a: { float: true, pelvis: [0, 1.14, -0.02], rot: [-4, 0, 0], neck: [-6, 0, 0],
           lL: { db: [0.08, -1, 0.05], eb: [0.02, 0, -1], foot: 30 }, lR: { db: [-0.08, -1, 0.05], eb: [-0.02, 0, -1], foot: 30 },
-          aL: grip([0.30, 2.18, 0.05], [0, 1, 0], [-1, 0, 0], { p: [1, 0, -0.3] }), aR: grip([-0.30, 2.18, 0.05], [0, 1, 0], [1, 0, 0], { p: [-1, 0, -0.3] }) },
+          aL: grip([0.42, 2.16, 0.02], [0, 1, 0], [-1, 0, 0], { p: [1, 0, -0.3] }), aR: grip([-0.42, 2.16, 0.02], [0, 1, 0], [1, 0, 0], { p: [-1, 0, -0.3] }) },
         b: { float: true, pelvis: [0, 1.55, -0.06], rot: [-8, 0, 0], neck: [-14, 0, 0],
           lL: { db: [0.08, -1, 0.05], eb: [0.02, 0, -1], foot: 30 }, lR: { db: [-0.08, -1, 0.05], eb: [-0.02, 0, -1], foot: 30 },
-          aL: grip([0.30, 2.18, 0.05], [0, 1, 0], [-1, 0, 0], { p: [1, -0.6, -0.5] }), aR: grip([-0.30, 2.18, 0.05], [0, 1, 0], [1, 0, 0], { p: [-1, -0.6, -0.5] }) },
+          aL: grip([0.42, 2.16, 0.02], [0, 1, 0], [-1, 0, 0], { p: [1, -0.6, -0.5] }), aR: grip([-0.42, 2.16, 0.02], [0, 1, 0], [1, 0, 0], { p: [-1, -0.6, -0.5] }) },
       },
       seq: [['a', 0.4, 1.3], ['b', 0.4, 1.3]] },
     /* ======================= BRAS ======================= */
@@ -796,9 +812,9 @@
     { id: 'e1677', lib: true, name: 'Curl biceps assis aux haltères', en: 'Dumbbell seated bicep curl', mus: mus(m2('biceps', 1), m2('forearm', 2)), cam: { yaw: 30, pitch: 8 },
       props: [...dbs(), fn(() => UPB())],
       poses: {
-        a: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42),
+        a: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50),
           aL: grip([0.30, 0.68, -0.04], [0, -1, 0], [-1, 0, 0], { p: [0.2, 0, -1] }), aR: grip([-0.30, 0.68, -0.04], [0, -1, 0], [1, 0, 0], { p: [-0.2, 0, -1] }) },
-        b: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42),
+        b: { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50),
           aL: grip([0.25, 1.07, 0.14], [0, 0.85, -0.5], [0, 0.5, 0.85], { p: [0.2, -1, -0.2] }), aR: grip([-0.25, 1.07, 0.14], [0, 0.85, -0.5], [0, 0.5, 0.85], { p: [-0.2, -1, -0.2] }) },
       },
       seq: [['a', 0.3, 1.1], ['b', 0.3, 1.1]] },
@@ -806,13 +822,13 @@
     { id: 'e1648', lib: true, name: 'Curl marteau alterné assis aux haltères', en: 'Dumbbell alternate seated hammer curl', mus: mus(m2('biceps', 1), m2('forearm', 2)), cam: { yaw: 30, pitch: 8 },
       props: [...dbs(), fn(() => UPB())],
       poses: (() => { const lo = (s) => grip([s * 0.30, 0.68, -0.04], [0, -1, 0], [-s, 0, 0], { p: [s * 0.2, 0, -1] }); const hi = (s) => grip([s * 0.25, 1.08, 0.12], [0, 0.9, -0.4], [-s, 0, 0], { p: [s * 0.2, -1, -0.2] });
-        const base = { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42) };
+        const base = { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50) };
         return { a: Object.assign({}, base, { aL: lo(1), aR: lo(-1) }), b: Object.assign({}, base, { aL: hi(1), aR: lo(-1) }), c: Object.assign({}, base, { aL: lo(1), aR: hi(-1) }) }; })(),
       seq: [['a', 0.2, 1.0], ['b', 0.3, 1.0], ['a', 0.2, 1.0], ['c', 0.3, 1.0]] },
 
     { id: 'e3547', lib: true, name: 'Curl biceps puis développé épaules assis aux haltères', en: 'Dumbbell seated biceps curl to shoulder press', mus: mus(m2('biceps', 1), m2('delt', 2), m2('forearm', 2)), cam: { yaw: 30, pitch: 8 },
       props: [...dbs(), fn(() => UPB())],
-      poses: (() => { const base = { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.42), lR: flatF(-0.24, 0.42) };
+      poses: (() => { const base = { float: true, pelvis: [0, 0.606, -0.02], rot: [-8, 0, 0], neck: [4, 0, 0], lL: flatF(0.24, 0.50), lR: flatF(-0.24, 0.50) };
         return {
           a: Object.assign({}, base, { aL: grip([0.30, 0.68, -0.04], [0, -1, 0], [-1, 0, 0], { p: [0.2, 0, -1] }), aR: grip([-0.30, 0.68, -0.04], [0, -1, 0], [1, 0, 0], { p: [-0.2, 0, -1] }) }),
           m: Object.assign({}, base, { aL: grip([0.25, 1.07, 0.14], [0, 0.85, -0.5], [0, 0.5, 0.85], { p: [0.2, -1, -0.2] }), aR: grip([-0.25, 1.07, 0.14], [0, 0.85, -0.5], [0, 0.5, 0.85], { p: [-0.2, -1, -0.2] }) }),
@@ -823,9 +839,9 @@
     { id: 'e0315', lib: true, name: 'Curl biceps sur banc incliné aux haltères', en: 'Dumbbell incline biceps curl', mus: mus(m2('biceps', 1), m2('forearm', 2)), cam: { yaw: 60, pitch: 12 },
       props: [...dbs(), fn(() => INB())],
       poses: {
-        a: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }),
+        a: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.56, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.56, { p: [-0.4, 1, 0.3] }),
           aL: grip([0.26, 0.27, -0.30], [0, -1, 0], [0, 0, 1], { p: [0.2, 0, -1] }), aR: grip([-0.26, 0.27, -0.30], [0, -1, 0], [0, 0, 1], { p: [-0.2, 0, -1] }) },
-        b: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }),
+        b: { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.56, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.56, { p: [-0.4, 1, 0.3] }),
           aL: grip([0.29, 0.84, -0.03], [0, 0.74, 0.67], [0, 0.67, -0.74], { p: [0.1, -1, -0.3] }), aR: grip([-0.29, 0.84, -0.03], [0, 0.74, 0.67], [0, 0.67, -0.74], { p: [-0.1, -1, -0.3] }) },
       },
       seq: [['a', 0.3, 1.2], ['b', 0.3, 1.2]] },
@@ -833,7 +849,7 @@
     { id: 'e0318', lib: true, name: 'Curl incliné aux haltères', en: 'Dumbbell incline curl', mus: mus(m2('biceps', 1)), cam: { yaw: 60, pitch: 12 },
       props: [...dbs(), fn(() => INB())],
       poses: (() => { const lo = (s) => grip([s * 0.26, 0.27, -0.30], [0, -1, 0], [0, 0, 1], { p: [s * 0.2, 0, -1] }); const hi = (s) => grip([s * 0.29, 0.84, -0.03], [0, 0.74, 0.67], [0, 0.67, -0.74], { p: [s * 0.1, -1, -0.3] });
-        const base = { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.50, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.50, { p: [-0.4, 1, 0.3] }) };
+        const base = { float: true, pelvis: [0, 0.605, 0.05], rot: [-50, 0, 0], neck: [10, 0, 0], lL: flatF(0.24, 0.56, { p: [0.4, 1, 0.3] }), lR: flatF(-0.24, 0.56, { p: [-0.4, 1, 0.3] }) };
         return { a: Object.assign({}, base, { aL: lo(1), aR: lo(-1) }), b: Object.assign({}, base, { aL: lo(1), aR: hi(-1) }), c: Object.assign({}, base, { aL: hi(1), aR: lo(-1) }) }; })(),
       seq: [['a', 0.2, 1.1], ['b', 0.3, 1.1], ['a', 0.2, 1.1], ['c', 0.3, 1.1]] },
 
@@ -928,4 +944,5 @@
       },
       seq: [['a', 0.3, 1.0], ['b', 0.3, 1.0]] },
   ]);
+  if (WL3D._dbg) WL3D._dbg.__ADJ = ADJ;   // réglages (outils de contrôle)
 })();

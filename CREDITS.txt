@@ -9,3 +9,21 @@ WorkLog - crédits des données et des images
   par Harshit Prajapati (sketchfab.com/harshit77), licence CC BY 4.0 (creativecommons.org/licenses/by/4.0/).
   Modifié : squelette, zones musculaires peintes (psoas, piriforme, TFL, rhomboïdes, deltoïde postérieur), format allégé.
 - Décodeur de gif (js/gifreader.js) : partie « GifReader » de omggif, (c) Dean McNamee 2013, licence MIT (github.com/deanm/omggif).
+- Matériel 3D des exercices de musculation (models/mat/*.bin) : modèles convertis et allégés (géométrie simplifiée,
+  une couleur par pièce, pièces mobiles séparées). Auteurs et licences :
+  Sous licence CC BY 4.0 (creativecommons.org/licenses/by/4.0/), modifiés :
+  · « Gym Tools!LİKE! » par SuperScriptDEV (sketchfab.com/3d-models/gym-toolslike-74012a02a80945298c9ec7b130a53738)
+    → haltères, disques, banc plat, banc de développé couché, cage, barres de dips.
+  · « Seated Leg Curl Trainer » par Gerhald (sketchfab.com/3d-models/seated-leg-curl-trainer-47fbe914b0044042ad4b2ddcdaa93ce2) → leg extension.
+  · « Leg Press Machine » par silentsheri (sketchfab.com/3d-models/leg-press-machine-99b9c28dd70d4131918d23f0b58cb14a) → presse à cuisses.
+  · « Seated Row Machine » par louis_l2y (sketchfab.com/3d-models/seated-row-machine-8c1d79d01dff4786a0ce2da6419b3e19) → rowing appui poitrine.
+  · « Training Bench, Incline Bench » par XaaH (sketchfab.com/3d-models/training-bench-incline-bench-139b642ce45c4567a43fd75616f92ab1) → banc réglable.
+  · « Smith training equipment » par MrdT (sketchfab.com/3d-models/smith-training-equipment-730b250ecf9d48faa292ade80f032f7b) → Smith machine.
+  · « CC0 - Kettlebell » par plaggy (sketchfab.com/3d-models/cc0-kettlebell-801a68fa3ed449258bac6ee023446c15) → kettlebell.
+  · « Low Poly Fitness Ball » par Nazzareno Giannelli (sketchfab.com/3d-models/low-poly-fitness-ball-7779eade266147c7a1468cce204de827) → swiss ball.
+  Autres sources (usage personnel ; pas de licence de redistribution explicite) :
+  · CadNav : vis-à-vis double poulie (B103, aussi utilisé pour la colonne de poulie simple), rowing assis à la poulie (B102), tirage vertical (B101).
+  · Movement (movement.com.br) : Hack Machine (fichier fourni par le fabricant).
+  · 3D Warehouse (General Model License) : Le Forzz LFI-013A V2 Mesa Flexora (leg curl allongé), Movement EDGE Abdutor/Adutor (adducteurs),
+    « ST Chest Press » (presse pectoraux), Intenza EL04 Shoulder Press (presse épaules), Intenza DL12 Assisted Chin/Dip (traction assistée),
+    « hiper-extencion » (banc à lombaires 45°).

@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.4';
+  const APP_VERSION = '0.7.5';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -1453,6 +1453,7 @@
         sec.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: T('Muscles secondaires : ') }), sec.join(', ')) : null));
       if (ex.src === 0 && !has3d(ex)) wrap.append(h('p', { class: 'credit', text: T('Animation © Gym visual') }));
       if (has3d(ex) && W3 && W3.credit) wrap.append(h('p', { class: 'credit', text: W3.credit }));
+      if (has3d(ex) && W3 && W3.creditOf) { const c = W3.creditOf(ex.id); if (c) wrap.append(h('p', { class: 'credit', text: c })); }
     }
 
     const recent = h('div', { class: 'recent' });

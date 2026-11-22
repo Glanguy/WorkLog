@@ -1,5 +1,23 @@
 # WorkLog : historique des versions
 
+## 0.7.5
+**Mains**
+- Le mannequin ferme maintenant les mains sur ce qu'il tient : poignées de poulie, haltères, barres, kettlebells, poignées des machines. Les doigts et le pouce se plient autour de l'objet.
+- Mains à plat (appui au sol, sur un banc) et mains posées restent ouvertes ; entre deux positions, la fermeture se fait progressivement.
+
+**Machines et matériel en vrais modèles 3D**
+- Le matériel dessiné en formes simples est remplacé par des modèles 3D de machines réelles, allégés pour rester rapides sur iPhone : haltères, disques, kettlebell, swiss ball, bancs (plat, développé couché, réglable), Smith machine, vis-à-vis et colonne de poulie, tirage vertical, rowing assis à la poulie, rowing appui poitrine, presse pectoraux, presse épaules, leg extension, leg curl allongé, adducteurs, hack squat, presse à cuisses 45°, traction assistée, banc à lombaires 45°, barres de dips, cage.
+- Les pièces mobiles suivent le mouvement : bras des presses et des rowings, levier du leg curl et du leg extension, chariot du hack squat et de la presse à cuisses (sur leurs rails), plateau des genoux de la traction assistée, bras des adducteurs avec les repose-pieds, dossier du banc réglable à l'inclinaison de l'exercice, barre de la Smith machine.
+- Les positions du corps ont été recalées sur chaque machine (hauteur du siège, dossier, appuis des pieds, poignées).
+- Le nom des auteurs et la licence des modèles utilisés s'affichent sous l'animation dans la page exercice ; la liste complète est dans `CREDITS.txt`.
+- Pas encore de modèle pour la presse déclinée (e1300) : elle garde son matériel dessiné.
+
+**Contrôle des animations**
+- Le contrôle automatique vérifie maintenant aussi la surface des machines (pas seulement leur forme simplifiée) : aucune partie du corps ne traverse une machine.
+
+**Moteur 3D**
+- Nouveau dossier `models/mat/` : un fichier compact par machine, chargé seulement quand une animation qui l'utilise s'affiche, puis gardé hors ligne.
+
 ## 0.7.4
 **Mannequin 3D pour les 73 exercices favoris**
 - Chaque exercice des favoris (épaules, pectoraux, dos, bras, jambes) a maintenant son animation 3D sur le mannequin, à la place du gif ou des photos : vignette dans les listes, grande animation dans la page exercice et agrandissement.
