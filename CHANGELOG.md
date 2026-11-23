@@ -1,5 +1,40 @@
 # WorkLog : historique des versions
 
+## 0.8.0
+**Nouveau design « Néon »**
+- Fond noir, violet électrique (#5B3BFF) et jaune citron (#E6FF2B). Le citron sert seulement à ce qu'il faut voir en premier : la séance du jour, les gros chiffres, les records et le bouton pour valider une série.
+- Police Hubot Sans (licence OFL), fournie avec l'app : elle marche hors ligne. Les chiffres viennent de sa police sœur Mona Sans, avec un zéro sans barre, plus lisible pour les charges.
+- Nouveau logo : une barre de musculation pliée en W, disques rangés comme sur une vraie barre (gros contre le centre). Nouvelles icônes pour l'écran d'accueil de l'iPhone.
+- Les groupes musculaires n'ont plus chacun leur couleur : tout est en violet et citron.
+- Thème noir uniquement (l'ancien thème clair est retiré).
+
+**Navigation**
+- Barre flottante en bas : Accueil, Exercices, le gros bouton « + », Séances, Calendrier. Le menu de l'accueil disparaît ; les Réglages sont sur la roue crantée de l'accueil, l'Historique dans le calendrier.
+- Le « + » ouvre l'exercice à faire de la séance du jour (le premier sans série, ou avec des séries prévues restantes), sinon la bibliothèque.
+
+**Accueil**
+- Carte « Séance du jour » avec un anneau de progression et « Reprendre » (glisser vers la gauche la retire toujours de l'accueil). Sans séance prévue : « Mes séances » ou « Un exercice ».
+- « À faire maintenant » : poids et répétitions avec − / +, puis « Valider », sans quitter l'accueil (ou « Reprendre » sur le dernier exercice fait).
+- « Cette semaine » : une barre par jour (nombre de séries), aujourd'hui en citron.
+
+**Fiche exercice**
+- Vignette, nom et muscles en haut ; la grande animation et le schéma des muscles sont dans « Animation et muscles ».
+- Carte « Série n » avec deux roues (poids, répétitions) qu'on fait défiler. Toucher le chiffre du milieu permet de le taper, avec la barre de calcul au-dessus du clavier (20+2,5+2,5 → 25, le résultat s'affiche pendant la saisie).
+- Sous les roues : « Poids du corps » (la roue devient le lest, négatif = assistance), « Cran » de la roue réglable pour chaque exercice (0,5 à 10 kg, deviné au départ : haltères 2 kg, machines et poulies 5 kg, sinon 2,5 kg), et l'heure de la série (maintenant, ou choisie).
+- Valeurs de départ : la série prévue dans la séance, sinon la dernière faite. « Recopier » reprend la dernière série ; le bouton à côté de chaque série de « Dernière séance » la recopie aussi dans les roues.
+- « Noter plusieurs séries » ouvre l'ancienne saisie à plusieurs lignes (date de chaque série, dupliquer, retirer) dans une fenêtre du bas.
+- Quitter avec une série réglée mais pas validée : WorkLog demande s'il faut la valider.
+- Cardio et exercices tenus : saisie inchangée.
+
+**Séance du jour**
+- Page à part, en parcours : une ligne relie les exercices, ceux faits ont une coche citron, celui à faire est mis en avant en violet avec ses séries faites/prévues et « Continuer ». Nom, note, réordonner, glisser pour supprimer, ajouter un exercice, séances types : tout est conservé.
+
+**Bibliothèque**
+- « Choisis un muscle » : grandes tuiles (Favoris, chaque groupe, Étirements) avec le nombre d'exercices ; dans un groupe, ses sous-groupes en pastilles puis la liste. La recherche reste en haut.
+
+**Calendrier**
+- Nombre de semaines d'affilée avec au moins une séance, grille du mois (séance en violet, record de charge en citron, séance prévue entourée, aujourd'hui entouré de citron), chiffres du mois (séances, records, séries) et résumé du jour choisi avec « Ouvrir la séance ».
+
 ## 0.7.7
 **Exercices corrigés**
 - Développé décliné à la machine : nouvelle machine à leviers convergents (modèle 3D fourni), les leviers suivent les mains ; dossier incliné, poussée vers l'avant et le bas jusqu'aux bras tendus.

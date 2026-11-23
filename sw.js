@@ -3,11 +3,11 @@
    - Liste des exercices : cache d'abord, mise à jour en arrière-plan.
    - Images et animations d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
    Les séries, favoris et séances sont dans IndexedDB, pas ici. */
-const CACHE = 'worklog-0.7.7';
+const CACHE = 'worklog-0.8.0';
 const IMG_CACHE = 'worklog-img-v1';
 const IMG_MAX = 1500;   // environ 130 Mo d'images au plus
 let puts = 0;
-const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/i18n.js', 'js/gifreader.js', 'js/mannequin.js', 'js/exercices-3d.js', 'js/exercices-3d-muscu.js', 'models/mannequin.bin', 'models/mannequin-peau.jpg', 'manifest.webmanifest', 'data/data-v3.json', 'data/names-fr.json', 'data/bodymap.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
+const SHELL = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/i18n.js', 'js/gifreader.js', 'js/mannequin.js', 'js/exercices-3d.js', 'js/exercices-3d-muscu.js', 'models/mannequin.bin', 'models/mannequin-peau.jpg', 'manifest.webmanifest', 'data/data-v3.json', 'data/names-fr.json', 'data/bodymap.json', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/icon-maskable-512.png', 'icons/logo.svg', 'fonts/hubot-sans-latin.woff2', 'fonts/hubot-sans-latin-ext.woff2', 'fonts/wl-digits.woff2'];
 const DATA = /\/(data-v3|names-fr|bodymap)\.json$|\/mannequin(\.bin|-peau\.jpg)$/;   // cache d'abord (le mannequin change seulement avec la version)
 const IMG_HOSTS = ['cdn.jsdelivr.net', 'raw.githubusercontent.com'];
 

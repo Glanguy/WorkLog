@@ -28,3 +28,8 @@ WorkLog - crédits des données et des images
     « ST Chest Press » (presse pectoraux), Intenza EL04 Shoulder Press (presse épaules), Intenza DL12 Assisted Chin/Dip (traction assistée),
     « hiper-extencion » (banc à lombaires 45°).
   · Modèle SketchUp de presse à leviers convergents (source d'origine non indiquée dans le fichier) : développé décliné.
+- Police Hubot Sans (fonts/hubot-sans-*.woff2) : Copyright 2021 The Hubot Sans Project Authors (github.com/github/hubot-sans),
+  licence SIL Open Font License 1.1 (fonts/OFL.txt). Fichiers fournis par Fontsource, non modifiés.
+- Chiffres (fonts/wl-digits.woff2) : sous-ensemble (chiffres 0 à 9) de Mona Sans, Copyright 2022 The Mona Sans Project Authors
+  (github.com/github/mona-sans), licence SIL Open Font License 1.1 (fonts/OFL-Mona-Sans.txt). Modifié : seulement les chiffres,
+  renommé « WL Digits » (le nom « Mona » est réservé par la licence).
