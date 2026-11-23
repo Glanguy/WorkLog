@@ -27,3 +27,4 @@ WorkLog - crédits des données et des images
   · 3D Warehouse (General Model License) : Le Forzz LFI-013A V2 Mesa Flexora (leg curl allongé), Movement EDGE Abdutor/Adutor (adducteurs),
     « ST Chest Press » (presse pectoraux), Intenza EL04 Shoulder Press (presse épaules), Intenza DL12 Assisted Chin/Dip (traction assistée),
     « hiper-extencion » (banc à lombaires 45°).
+  · Modèle SketchUp de presse à leviers convergents (source d'origine non indiquée dans le fichier) : développé décliné.

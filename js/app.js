@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.7.6';
+  const APP_VERSION = '0.7.7';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';

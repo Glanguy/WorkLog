@@ -644,7 +644,7 @@
     kettlebell: ['CC0 - Kettlebell', 'plaggy', BY], ballon: ['Low Poly Fitness Ball', 'Nazzareno Giannelli', BY],
     vis_a_vis: ['Gym cable crossover machine', 'CadNav', ''], colonne: ['Gym cable crossover machine', 'CadNav', ''], rowc: ['Seated row (B102)', 'CadNav', ''], lat: ['Lat pulldown (B101)', 'CadNav', ''],
     hack: ['Hack Machine', 'Movement', ''], legcurl: ['Le Forzz LFI-013A V2', '3D Warehouse', ''], adduct: ['Movement EDGE Abdutor/Adutor', '3D Warehouse', ''],
-    chest: ['ST Chest Press', '3D Warehouse', ''], shoulder: ['Intenza EL04 Shoulder Press', '3D Warehouse', ''], chin: ['Intenza DL12 Assisted Chin/Dip', '3D Warehouse', ''],
+    chest: ['ST Chest Press', '3D Warehouse', ''], decl: ['Presse déclinée', 'modèle 3D fourni', ''], shoulder: ['Intenza EL04 Shoulder Press', '3D Warehouse', ''], chin: ['Intenza DL12 Assisted Chin/Dip', '3D Warehouse', ''],
     hyper: ['hiper-extencion', '3D Warehouse', ''],
   };
   for (const k of ['haltere', 'disques', 'banc_couche', 'banc_plat', 'cage', 'station']) MAT_SRC[k] = MAT_SRC.gym;

@@ -1,5 +1,19 @@
 # WorkLog : historique des versions
 
+## 0.7.7
+**Exercices corrigés**
+- Développé décliné à la machine : nouvelle machine à leviers convergents (modèle 3D fourni), les leviers suivent les mains ; dossier incliné, poussée vers l'avant et le bas jusqu'aux bras tendus.
+- Développé poitrine à la machine, développé poitrine assis à la poulie, développé pectoraux à la poulie : départ mains à hauteur de poitrine, coudes en arrière ; arrivée bras tendus devant la poitrine ; câbles qui ne touchent plus les avant-bras.
+- Développés couchés aux haltères (prise normale et serrée) : bras tendus en haut du mouvement.
+- Rowing assis unilatéral, tirage horizontal prise serrée alterné, curl incliné, curl marteau alterné : un bras après l'autre, chaque bras revient au repos avant que l'autre parte, rythme plus calme.
+- Élévation deltoïdes alternée : bras tendus du début à la fin.
+- Élévation frontale à la poulie : pieds plus écartés et poulie plus basse, le câble passe entre les jambes sans les traverser.
+- Car drivers : disque de taille fixe tenu par le bord, les mains ne rentrent plus dedans.
+- Élévation latérale à la landmine : la main tient le bout de la barre, le disque est du côté du pivot.
+- Dips (normaux et lestés) : barre sous le talon de la main, coudes un peu plus ouverts, les avant-bras ne touchent plus les poignées.
+- Écarté croisé debout : mains croisées sans que le câble touche l'avant-bras.
+- Soulevé de terre jambes tendues à l'élastique : l'élastique part de l'avant du pied et passe devant les jambes.
+
 ## 0.7.6
 **Exercices plus naturels**
 - Curls biceps refaits (haltères debout et assis, barre EZ, marteau, concentration, pupitre, inclinés, curl puis développé) : le coude reste près du corps, seul l'avant-bras monte, la paume garde son orientation du début à la fin.
