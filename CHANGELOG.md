@@ -1,5 +1,21 @@
 # WorkLog : historique des versions
 
+## 0.7.6
+**Exercices plus naturels**
+- Curls biceps refaits (haltères debout et assis, barre EZ, marteau, concentration, pupitre, inclinés, curl puis développé) : le coude reste près du corps, seul l'avant-bras monte, la paume garde son orientation du début à la fin.
+- Écartés à la poulie, vis-à-vis, élévations latérales, frontales et oiseau : bras tendus (coude juste déverrouillé) du début à la fin, la main tourne autour de l'épaule.
+- Élévations à la poulie basse (une main, deux mains, câbles croisés) et élévation deltoïdes alternée refaites d'après leur image de référence et leur consigne.
+- Mains et poignets : plus de main qui se retourne en cours de mouvement, poignets alignés avec l'avant-bras sur les presses, les tirages, les dips et les appuis.
+- Câbles : plus aucun câble ne passe dans le corps (développé à la poulie, tirages, ceinture des dips lestés).
+- Machines : plus de cuisse, de dos ou de tête qui rentre dans un siège, un dossier ou une barre (presses, rowings, banc incliné, tractions australiennes, oiseau tête en appui).
+- Tirage horizontal assis : prise neutre, buste penché vers l'avant puis redressé, coudes le long du corps.
+- Soulevé de terre roumain : genoux un peu plus fléchis en bas, haltères devant les tibias.
+- Banc droit sans boudins pour les jambes ; banc à 55° pour les curls inclinés.
+
+**Contrôle de forme**
+- Chaque animation est comparée automatiquement à ses images de référence (posture du corps image par image) et à des règles par famille d'exercice : bras tendus sur les écartés et élévations, coude fixe et amplitude sur les curls, mains qui ne tournent pas, symétrie, poignets, câbles hors du corps, pieds à plat, cou.
+- Ce contrôle tourne avant chaque version, en plus du contrôle des collisions.
+
 ## 0.7.5
 **Mains**
 - Le mannequin ferme maintenant les mains sur ce qu'il tient : poignées de poulie, haltères, barres, kettlebells, poignées des machines. Les doigts et le pouce se plient autour de l'objet.

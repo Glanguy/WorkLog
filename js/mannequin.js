@@ -296,7 +296,10 @@
     const arm = id[0] === 'a'; const side = id[1] === 'L' ? 1 : -1;
     const base = arm ? F.C : F.P;
     const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
-    const tgt = targetOf(id, L, F, J, W, P);
+    let tgt = targetOf(id, L, F, J, W, P);
+    if (arm && tgt && typeof L.tendu === 'number') {   // bras tendu à « tendu » degrés près : la main reste dans la même direction, à la bonne distance de l'épaule
+      const c = Math.cos(L.tendu * D2R); tgt = add(root, mul(norm(sub(tgt, root)), Math.sqrt(l1 * l1 + l2 * l2 + 2 * l1 * l2 * c)));
+    }
     let pole = L.p ? L.p : L.pb ? dirW(base, L.pb) : null;
     if (!pole && !arm) {   // genou dans la direction qu'il prend quand la cuisse pivote depuis la position debout, sans tourner
       const u = LB[id][0]; const guess = tgt ? sub(tgt, root) : (L.d || (L.db ? dirW(base, L.db) : [0, -1, 0]));
@@ -401,7 +404,7 @@
           if (Math.abs(f) > 1e-4) W[l] = qNorm(qMul(qAxis(norm(sub(P[e], P[l])), f), W[l]));
         }
         if (toes != null) { W[toes] = qMul(qMul(qMul(W[e], qConj(R.bw[e].q)), R.bw[toes].q), qX(L.toes || 0)); put(toes, e); }
-        lim[id] = { ik: r.ik, grab: L.grab || null, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : L.grab ? 'grab' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik };
+        lim[id] = { ik: r.ik, grab: L.grab || null, kind: L.at ? 'at' : L.atb ? 'atb' : L.on ? 'on' : L.grab ? 'grab' : null, tgt: r.tgt || null, atb: L.atb || null, on: L.on || null, pole: r.pole, grip: !!L.grip, free: !arm && !r.ik, interp: L.interp || null };
         if (arm) { J['wrist' + sfx] = P[e]; J['elbow' + sfx] = P[l]; J['sh' + sfx] = P[u]; J['hand' + sfx] = add(P[e], mul(en.a, 0.085)); }
         else { J['hip' + sfx] = P[u]; J['knee' + sfx] = P[l]; J['ankle' + sfx] = P[e]; }
       }
@@ -437,7 +440,8 @@
       for (const id of LIMBS) {
         const arm = id[0] === 'a'; const sfx = id[1]; const [u, l, e, toes] = LB[id];
         const a = A.lim[id], b = Bp.lim[id];
-        if (a.ik && b.ik) {
+        const mode = a.interp && a.interp === b.interp ? a.interp : null;
+        if (a.ik && b.ik && mode !== 'fk') {   // 'fk' : passage d'une pose à l'autre par les angles des articulations (curl : le bras reste, l'avant-bras tourne)
           if (!F) F = frames(W, P);
           let tgt;
           let gp = null;
@@ -445,6 +449,12 @@
             gp = grabPoint({ bone: a.grab.bone, h: a.grab.h + (b.grab.h - a.grab.h) * t, ang: a.grab.ang + (b.grab.ang - a.grab.ang) * t, f: a.grab.f, tilt: (a.grab.tilt || 0) + ((b.grab.tilt || 0) - (a.grab.tilt || 0)) * t }, W, P);
             tgt = gp.wrist;
           } else if (a.kind === 'on' && b.kind === 'on' && a.on[0] === b.on[0] && a.on[2] === b.on[2] && J[a.on[0]]) tgt = onTarget(a.on, lerp(a.on[1] || [0, 0, 0], b.on[1] || [0, 0, 0], t), J, W);
+          else if (mode === 'arc') {   // 'arc' : la main tourne autour de l'épaule à distance constante (écartés, élévations : le coude ne plie pas en route)
+            const dA = sub(a.tgt, A.P[u]), dB = sub(b.tgt, Bp.P[u]); const la = len(dA), lb = len(dB);
+            const na = norm(dA), nb = norm(dB); const c = Math.max(-1, Math.min(1, dot(na, nb))); const om = Math.acos(c);
+            const dir = om < 1e-4 ? na : add(mul(na, Math.sin((1 - t) * om) / Math.sin(om)), mul(nb, Math.sin(t * om) / Math.sin(om)));
+            tgt = add(P[u], mul(dir, la + (lb - la) * t));
+          }
           else if (a.kind === 'atb' && b.kind === 'atb') tgt = toW(arm ? F.C : F.P, lerp(a.atb, b.atb, t));
           else tgt = lerp(a.tgt, b.tgt, t);
           const l1 = arm ? B.upper : B.thigh, l2 = arm ? B.fore : B.shin;
@@ -479,7 +489,12 @@
   function ready(ex) {
     if (ex.S) return;
     ex.K = {}; ex.S = {};
-    for (const [k, v] of Object.entries(ex.poses)) { ex.K[k] = prep(v); ex.S[k] = solvePose(ex.K[k]); }
+    for (const [k, v0] of Object.entries(ex.poses)) {
+      let v = v0;
+      if (ex.tendu != null) { v = Object.assign({}, v0); for (const id of ['aL', 'aR']) if (v[id] && v[id].tendu === undefined && !v[id].free) v[id] = Object.assign({}, v[id], { tendu: ex.tendu }); }
+      ex.K[k] = prep(v); ex.S[k] = solvePose(ex.K[k]);
+    }
+    if (ex.interp) for (const S of Object.values(ex.S)) for (const id of ['aL', 'aR']) if (!S.lim[id].interp) S.lim[id].interp = ex.interp;   // mode de passage des bras pour tout l'exercice
   }
   function timeline(ex, time) {
     const seq = ex.seq; let total = 0; for (const s of seq) total += s[1] + s[2];
