@@ -679,5 +679,14 @@ window.WL_EN = {
  "retire {0}": "removes {0}",
  "« {0} » à la suite": "“{0}” afterwards",
  "exercices ajoutés à la main": "exercises added by hand",
- " et ": " and "
+ " et ": " and ",
+ "puis {0}": "then {0}",
+ "Durée en secondes": "Duration in seconds",
+ "Durée : un nombre de secondes.": "Duration: a number of seconds.",
+ "Minutes": "Minutes",
+ "Secondes": "Seconds",
+ "Exercices ajoutés": "Added exercises",
+ "Séance {0}": "Workout {0}",
+ "Série {0} sur {1} · {2}": "Set {0} of {1} · {2}",
+ "{0} / {1}": "{0} / {1}"
 };

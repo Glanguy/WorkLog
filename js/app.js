@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.8.1';
+  const APP_VERSION = '0.8.2';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -544,6 +544,8 @@
         if (d.hidden === true) out[k].hidden = true;
         const src = (Array.isArray(d.src) ? d.src : []).filter((x) => typeof x === 'string');
         if (src.length) out[k].src = [...new Set(src)];
+        // 0.8.2 : la séance qui a donné son nom à la journée (id de séance type, ou « copy » pour une séance recopiée).
+        if (typeof d.own === 'string' && d.own.length < 80) out[k].own = d.own;
       }
     }
     return out;
@@ -1351,7 +1353,7 @@
     const d = S.days[k];
     if (!d || d.hidden) return null;
     const ents = dayEntries(k);
-    for (const id of dayOrder(k)) {
+    for (const id of dayFlow(k)) {
       const n = ents.filter((e) => e.exerciseId === id).length;
       const plan = d.plan[id];
       if (!n || (plan && n < plan.length)) return id;
@@ -1517,7 +1519,8 @@
       const card = h('section', { class: 'hero2', style: hg ? { '--c': hg.color } : null },
         h('div', { class: 'hero2-top' },
           h('div', { class: 'hero2-txt' }, h('span', { class: 'kicker acc', text: T('Séance du jour') }),
-            h('strong', { class: 'hero2-title', text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') })),
+            h('strong', { class: 'hero2-title', text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
+            (() => { const gs = dayGroups(tk).filter((g) => !g.loose); return gs.length > 1 ? h('span', { class: 'hero2-more', text: T('puis {0}', gs.slice(1).map((g) => g.title).join(' · ')) }) : null; })()),
           ring(k, tOrder.length)),
         h('button', { type: 'button', class: 'btn acc wide', onclick: () => go('session', tk) }, k ? T('Reprendre') : T('Commencer')));
       // Glisser vers la gauche : retirer la séance prévue de l'accueil (les séries déjà faites restent).
@@ -1554,9 +1557,27 @@
     const open = () => go('exercise', isTodo ? { id: ex.id, day: tk } : ex.id);
     card.append(h('button', { type: 'button', class: 'quick-head', onclick: open }, thumb(ex),
       h('span', { class: 'qh-txt' }, h('span', { class: 'kicker acc', text: isTodo ? T('À faire maintenant') : T('Reprendre') }),
-        h('strong', { text: dn(ex) }), h('span', { class: 'qh-sub', text: kind ? '' : T('Série {0}', done + 1) + (plan && plan.length ? ' / ' + plan.length : '') })),
+        h('strong', { text: dn(ex) }), h('span', { class: 'qh-sub', text: kind && !(plan && plan.length) ? '' : T('Série {0}', done + 1) + (plan && plan.length ? ' / ' + plan.length : '') })),
       icon('right')));
-    if (kind || ex.missing) { card.append(h('button', { type: 'button', class: 'btn acc wide', onclick: open }, T('Ouvrir l’exercice'))); return card; }
+    const hsLine = () => {
+      const hs = S.homeSaved; S.homeSaved = null;
+      return hs && S.entries.some((x) => x.id === hs.id) ? h('div', { class: 'saved-line', role: 'status' }, icon('check'), h('span', { text: hs.text }),
+        h('button', { type: 'button', class: 'undo', text: T('Annuler'), onclick: () => { S.entries = S.entries.filter((x) => x.id !== hs.id); saveUser(); after(); } })) : null;
+    };
+    if (kind || ex.missing) {
+      const q = isTodo && !ex.missing ? plannedNext(tk, ex.id) : null;
+      if (q) {
+        card.append(h('p', { class: 'qh-plan', text: T('Prévu : {0}', q.text) }),
+          h('button', { type: 'button', class: 'btn acc wide', onclick: async () => {
+            const e = await saveSet(ex, q.vals, Date.now());
+            S.homeSaved = { id: e.id, text: T('Série enregistrée · {0}', entryText(e)) };
+            after();
+          } }, icon('check'), T('Valider la série')),
+          h('button', { type: 'button', class: 'btn ghost wide', onclick: open }, T('Ouvrir l’exercice')));
+      } else card.append(h('button', { type: 'button', class: 'btn acc wide', onclick: open }, T('Ouvrir l’exercice')));
+      const l = hsLine(); if (l) card.append(l);
+      return card;
+    }
     const v = startVals(ex, plan ? plan[done] : null);
     const step = stepOf(ex);
     const out = {};
@@ -1661,8 +1682,18 @@
     const doneN = () => dayEntries(dayK).filter((e) => e.exerciseId === ex.id).length;
     const nextPlanned = () => { const p = plannedAll(); return p ? p[doneN()] || null : null; };
     const bwOk = canBW(ex);
-    let v = startVals(ex, nextPlanned());
-    if (v.bw && !bwOk) v = { w: 20, r: v.r, bw: false };
+    // 0.8.2 : la même carte pour le cardio et les exercices tenus (étirements, gainage) : la durée en grand.
+    const kind = cardioKind(ex);
+    const KF = kind && kind !== 'hold' ? CARDIO[kind].fields : [];
+    const startK = (pl) => {
+      const l0 = lastOf(ex.id);
+      const l = l0 && l0.c === 1 ? l0 : null;
+      const o = { dur: pl && fin(pl.dur) && pl.dur > 0 ? pl.dur : l && l.dur > 0 ? l.dur : kind === 'hold' ? 30 : 1200 };
+      for (const k of KF) o[k] = l && fin(l[k]) ? l[k] : '';
+      return o;
+    };
+    let v = kind ? startK(nextPlanned()) : startVals(ex, nextPlanned());
+    if (!kind && v.bw && !bwOk) v = { w: 20, r: v.r, bw: false };
     let extra = 0;          // séries non prévues autorisées (« Une série en plus »)
     let dt = null;          // heure choisie ; null = maintenant
     const baseDt = () => (fixedDay ? keyDate(fixedDay).getTime() + 18 * 3600000 + doneN() * 120000 : null);
@@ -1681,7 +1712,33 @@
     const wUnit = h('span', { class: 'unit', text: 'kg' });
     const wPrev = h('span', { class: 'big-prev', 'aria-live': 'polite' });
     const box = (lab, inp, unit, prev) => h('label', { class: 'bigbox' }, lab, h('span', { class: 'bigrow' }, inp, unit), prev || null);
-    const fill = () => {
+    // Champs du cardio et des exercices tenus
+    const nIn = (label) => h('input', { class: 'field big-in', type: 'text', inputmode: 'numeric', autocomplete: 'off', enterkeyhint: 'done', 'aria-label': label });
+    const mIn = kind ? nIn(kind === 'hold' ? T('Durée en secondes') : T('Durée : minutes')) : null;
+    const sIn = kind && kind !== 'hold' ? nIn(T('Durée : secondes')) : null;
+    const kIns = {};
+    for (const k of KF) kIns[k] = h('input', { class: 'field', type: 'text', inputmode: 'decimal', autocomplete: 'off', enterkeyhint: 'done', placeholder: CFIELD[k].ph, 'aria-label': CFIELD[k].label });
+    const kAll = () => [mIn, sIn].concat(KF.map((k) => kIns[k])).filter(Boolean);
+    kAll().forEach((inp, i, a) => {
+      inp.addEventListener('input', () => { msg.textContent = ''; });
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (a[i + 1]) a[i + 1].focus(); else inp.blur(); } });
+    });
+    const fillK = () => {
+      if (kind === 'hold') mIn.value = fmtIn(v.dur);
+      else { mIn.value = String(Math.floor(v.dur / 60)); sIn.value = v.dur % 60 ? String(Math.round(v.dur % 60)) : ''; }
+      for (const k of KF) kIns[k].value = fin(v[k]) ? fmtIn(v[k]) : '';
+    };
+    const readK = () => {
+      let dur;
+      if (kind === 'hold') { const t = mIn.value.trim(); const mm = /^(\d+):(\d{1,2})$/.exec(t); dur = mm ? Number(mm[1]) * 60 + Number(mm[2]) : parseNum(t); }
+      else { const m = mIn.value.trim() ? parseNum(mIn.value) : 0; const s2 = sIn.value.trim() ? parseNum(sIn.value) : 0; dur = m >= 0 && s2 >= 0 ? m * 60 + s2 : NaN; }
+      let ok = Number.isFinite(dur) && dur > 0;
+      const out = { c: 1, dur: Math.round(dur) };
+      for (const k of KF) { const t = kIns[k].value.trim(); if (!t) continue; const n = parseNum(t); if (n >= 0) out[k] = n; else ok = false; }
+      return { ok, vals: out };
+    };
+    const fill = () => { if (kind) fillK(); else fillW(); };
+    const fillW = () => {
       wIn.value = v.bw ? (v.w ? (v.w < 0 ? '-' : '+') + fmtIn(Math.abs(v.w)) : '') : fmtIn(v.w);
       rIn.value = fmtIn(v.r);
       wLab.textContent = v.bw ? T('Lest (kg)') : T('Poids (kg)');
@@ -1769,11 +1826,32 @@
         doneBox.textContent = '';
         doneBox.append(h('p', { class: 'done-t' }, icon('check'), h('span', { text: plural(p.length, 'série prévue faite', 'séries prévues faites') + T(' pour cet exercice.') })),
           endBtns(),
-          h('button', { type: 'button', class: 'linkbtn', onclick: () => { extra++; paint(); wIn.focus(); } }, icon('plus'), h('span', { text: T('Une série en plus') })));
+          h('button', { type: 'button', class: 'linkbtn', onclick: () => { extra++; paint(); (kind ? mIn : wIn).focus(); } }, icon('plus'), h('span', { text: T('Une série en plus') })));
       }
       paintChips();
     }
+    async function saveK() {
+      msg.textContent = '';
+      if (lockedNow()) return true;
+      const r = readK();
+      if (!r.ok) { msg.textContent = kind === 'hold' ? T('Durée : un nombre de secondes.') : T('Durée obligatoire ; les autres valeurs doivent être des nombres.'); return false; }
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      const e = await saveSet(ex, r.vals, dt || Date.now());
+      lastSaved = e;
+      v = { dur: r.vals.dur };
+      for (const k of KF) v[k] = fin(r.vals[k]) ? r.vals[k] : '';
+      if (fixedDay) dt = baseDt(); else dt = null;
+      const np = nextPlanned();
+      if (np && fin(np.dur) && np.dur > 0) v.dur = np.dur;
+      fill();
+      showSaved(e, doneN());
+      paint();
+      onSaved();
+      afterAll();
+      return true;
+    }
     async function save() {
+      if (kind) return saveK();
       msg.textContent = '';
       if (lockedNow()) return true;
       const cur = read();
@@ -1796,6 +1874,10 @@
       showSaved(e, doneN());
       paint();
       onSaved();
+      afterAll();
+      return true;
+    }
+    function afterAll() {
       // Toutes les séries prévues faites : on propose de passer à l'exercice suivant.
       const p = plannedAll();
       if (p && doneN() === p.length + extra) {
@@ -1809,12 +1891,11 @@
           h('button', { type: 'button', class: 'btn ghost wide', text: T('Rester ici'), onclick: () => close() }));
         });
       }
-      return true;
     }
     const multiLink = h('button', { type: 'button', class: 'linkbtn' }, icon('stack'), h('span', { text: T('Noter plusieurs séries') }));
     // Quitter avec des valeurs changées et pas validées : WorkLog demande.
     let base = '';
-    const sig = () => wIn.value + '|' + rIn.value;
+    const sig = () => (kind ? kAll().map((x) => x.value).join('|') : wIn.value + '|' + rIn.value);
     const guard = { dirty: () => !lockedNow() && sig() !== base, save, title: T('Valider cette série ?'), text: T('Tu as changé une série sans la valider.'), yes: T('Valider la série'), no: T('Ne pas valider') };
     const markBase = () => { base = sig(); };
     function openMulti(draft) {
@@ -1831,8 +1912,12 @@
     }
     multiLink.addEventListener('click', () => openMulti(null));
     fill(); paint();
+    const kick = (t) => h('span', { class: 'kicker', text: t });
     entry.append(
-      h('div', { class: 'bigboxes' }, box(wLab, wIn, wUnit, wPrev), box(h('span', { class: 'kicker', text: T('Répétitions') }), rIn, h('span', { class: 'unit', text: T('reps') }))),
+      kind === 'hold' ? h('div', { class: 'bigboxes one' }, box(kick(T('Durée')), mIn, h('span', { class: 'unit', text: 's' })))
+        : kind ? h('div', { class: 'bigboxes' }, box(kick(T('Minutes')), mIn, h('span', { class: 'unit', text: 'min' })), box(kick(T('Secondes')), sIn, h('span', { class: 'unit', text: 's' })))
+        : h('div', { class: 'bigboxes' }, box(wLab, wIn, wUnit, wPrev), box(kick(T('Répétitions')), rIn, h('span', { class: 'unit', text: T('reps') }))),
+      ...(KF.length ? [h('div', { class: 'kgrid' }, ...KF.map((k) => h('label', { class: 'kf' }, kick(CFIELD[k].label), kIns[k])))] : []),
       h('div', { class: 'mini-chips' }, bwBtn, dtChip),
       msg,
       h('button', { type: 'button', class: 'btn acc wide big', onclick: async () => { if (await save()) markBase(); } }, icon('check'), h('span', { text: T('Valider la série') })));
@@ -1840,6 +1925,14 @@
     markBase();
     S.guard = guard;
     card.setFrom = (src) => {
+      if (kind) {
+        if (!src || src.c !== 1 || !(src.dur > 0)) return;
+        v = { dur: src.dur };
+        for (const k of KF) v[k] = fin(src[k]) ? src[k] : '';
+        fill(); paint();
+        card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+        return;
+      }
       const rv = rowVals(src); if (!rv) return;
       const bw = !!rv.bw && bwOk;
       v.bw = bw;
@@ -1967,8 +2060,8 @@
     let draft = null;
     if (S.draft && S.draft.id === id) { draft = S.draft.rows; S.draft = null; }
     let copyToForm;
-    if (!kind && !ex.missing) {
-      // Musculation : la carte « Série n » avec les roues.
+    if (!ex.missing) {
+      // 0.8.2 : la carte « Série n » pour tous les exercices (musculation, cardio, étirements).
       serie = serieCard(ex, { day: dayCtx, arg }, refresh);
       wrap.append(serie);
       copyToForm = (e) => { serie.setFrom(e); serie.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' }); };
@@ -2970,6 +3063,66 @@
     for (const e of dayEntries(key)) if (!ids.includes(e.exerciseId)) ids.push(e.exerciseId);
     return ids;
   }
+  /* 0.8.2 : les séances d'une journée, dans l'ordre où elles ont été prévues (la première en haut,
+     celles ajoutées ensuite en dessous), puis les exercices ajoutés à la main.
+     La première séance porte le nom donné à la journée (bouton « Modifier »). */
+  function dayGroups(key) {
+    const d = S.days[key];
+    const order = dayOrder(key);
+    const groups = [];
+    const seen = new Set();
+    for (const pid of (d && d.src) || []) {
+      const p = S.plans.find((x) => x.id === pid);
+      if (!p) continue;
+      const inPlan = new Set(p.items.map((it) => it.ex));
+      const ids = order.filter((id) => inPlan.has(id) && !seen.has(id));
+      if (!ids.length) continue;
+      ids.forEach((id) => seen.add(id));
+      groups.push({ plan: p, ids });
+    }
+    const rest = order.filter((id) => !seen.has(id));
+    const s = S.sessions[key];
+    const own = s && d ? d.own : null;
+    if (rest.length) {
+      // Une séance recopiée (« Refaire cette séance ») qui a donné son nom à la journée est une séance à part
+      // entière : elle a sa carte, et elle passe en haut car elle a été choisie en premier.
+      const copy = own === 'copy' && groups.length > 0;
+      if (copy) groups.unshift({ plan: null, ids: rest, loose: false });
+      else groups.push({ plan: null, ids: rest, loose: groups.length > 0 });
+    }
+    // Le nom de la journée va à la séance qui l'a donné ; sinon (anciennes données, nom choisi à la main) à la première.
+    let named = s ? groups.findIndex((g) => (own === 'copy' ? !g.plan : g.plan && g.plan.id === own)) : -1;
+    if (s && named < 0) named = 0;
+    groups.forEach((g, i) => {
+      if (i === named) { g.title = sessionTitle(s); g.main = s.main; g.sec = s.sec; g.named = true; }
+      else if (g.plan) { g.title = planTitle(g.plan); g.main = GROUPS.has(g.plan.main) ? g.plan.main : guessMain(g.ids); g.sec = g.plan.sec || []; }
+      else { g.title = T('Exercices ajoutés'); g.main = guessMain(g.ids); g.sec = []; }
+    });
+    return groups;
+  }
+  const dayFlow = (key) => dayGroups(key).flatMap((g) => g.ids);
+  /* La prochaine série prévue d'un exercice, si elle est complète : elle se valide d'un appui. */
+  function plannedNext(key, id) {
+    const d = S.days[key];
+    const p = d && d.plan[id];
+    if (!p || !p.length) return null;
+    const n = dayEntries(key).filter((e) => e.exerciseId === id).length;
+    const st = p[n];
+    const ex = getEx(id);
+    if (!st || ex.missing) return null;
+    const out = (vals) => ({ n: n + 1, of: p.length, vals, text: plannedText(st) });
+    if (cardioKind(ex)) return fin(st.dur) && st.dur > 0 ? out({ c: 1, dur: st.dur }) : null;
+    if (st.dur !== undefined || !(fin(st.r) && st.r > 0)) return null;
+    if (st.bw) { if (!canBW(ex) || !bwKg()) return null; const r = valsToEntry({ w: fin(st.w) ? st.w : 0, r: st.r, bw: true }); return r.ok ? out(r.vals) : null; }
+    return fin(st.w) && st.w > 0 ? out({ w: r2(st.w), r: st.r }) : null;
+  }
+  async function quickValidate(key, id, after) {
+    const q = plannedNext(key, id);
+    if (!q) return;
+    const e = await saveSet(getEx(id), q.vals, Date.now());
+    S.qvSaved = { id: e.id, ex: id, text: T('Série {0} enregistrée · {1}', q.n, entryText(e)) };
+    after();
+  }
   function guessMain(ids) {
     const c = new Map();
     for (const id of ids) { const ex = S.byId.get(id); if (ex) c.set(ex.leaf, (c.get(ex.leaf) || 0) + 1); }
@@ -2989,7 +3142,10 @@
     // La journée garde le lien vers la séance type d'origine (pour la retirer si la séance type est supprimée).
     if (src.id && S.plans.some((p) => p.id === src.id)) d.src = [...new Set((d.src || []).concat(src.id))];
     const main = GROUPS.has(src.main) ? src.main : guessMain(src.items.map((it) => it.ex));
-    if (main && !S.sessions[key]) S.sessions[key] = { name: (src.name || '').trim(), main, sec: (src.sec || []).filter((x) => GROUPS.has(x) && x !== main) };
+    if (main && !S.sessions[key]) {
+      S.sessions[key] = { name: (src.name || '').trim(), main, sec: (src.sec || []).filter((x) => GROUPS.has(x) && x !== main) };
+      d.own = src.id && S.plans.some((p) => p.id === src.id) ? src.id : 'copy';
+    }
   }
   const sessionTitle = (s) => s.name || GROUPS.get(s.main).label;
 
@@ -3252,7 +3408,27 @@
           order.length ? h('div', { class: 'sess-prog' }, h('strong', { text: T('{0} / {1} exercices', k, order.length) }),
             h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k / order.length) + '%' } }))) : null));
       } else body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? T(' · aujourd’hui') : '') }));
-      if (entries.length || order.length) {
+      const groups = dayGroups(key);
+      const seances = groups.filter((g) => !g.loose);
+      const qs = S.qvSaved; S.qvSaved = null;
+      if (seances.length > 1) {
+        // Plusieurs séances prévues : une carte par séance, la première en haut.
+        const doneIds = new Set(entries.map((e) => e.exerciseId));
+        const box = h('div', { class: 'sess-name sess-cards' });
+        seances.forEach((g, i) => {
+          const gc = GROUPS.get(g.main);
+          const k2 = g.ids.filter((id) => doneIds.has(id)).length;
+          box.append(h('div', { class: 'card named' + (k2 === g.ids.length ? ' all-done' : ''), style: gc ? { '--c': gc.color } : null },
+            h('div', { class: 'row' },
+              h('button', { type: 'button', class: 'nm-btn', onclick: () => { const t = body.querySelector('#grp-' + i); if (t) t.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }); } },
+                h('small', { class: 'nm-n', text: T('Séance {0}', i + 1) }), h('strong', { class: 'nm', text: g.title })),
+              (g.named || (!S.sessions[key] && i === 0)) ? h('button', { type: 'button', class: 'textbtn', text: T('Modifier'), onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }) : null),
+            h('div', { class: 'tags' }, tag(g.main, true), ...(g.sec || []).map((id) => tag(id))),
+            h('div', { class: 'sess-prog mini' }, h('strong', { text: T('{0} / {1} exercices', k2, g.ids.length) }),
+              h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k2 / g.ids.length) + '%' } })))));
+        });
+        body.append(box);
+      } else if (entries.length || order.length) {
         const nameBox = h('div', { class: 'sess-name' });
         const s = S.sessions[key];
         if (!s) nameBox.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }, icon('tag'), T('Nommer la séance')));
@@ -3273,10 +3449,12 @@
       if (!order.length) {
         body.append(h('p', { class: 'empty-note pad', text: isToday ? T('Rien de prévu aujourd’hui. Ajoute des exercices ou lance une de tes séances types.') : T('Aucun exercice ce jour-là.') }));
       } else {
-        const list = h('div', { class: 'dlist' + (tl ? ' tl2' : '') });
         const cur = tl ? currentTodo(key) : null;
+        const many = groups.length > 1;
+        groups.forEach((g, gi) => {
+        const list = h('div', { class: 'dlist' + (tl ? ' tl2' : '') });
         let num = 0;
-        for (const id of order) {
+        for (const id of g.ids) {
           num++;
           const sets = entries.filter((e) => e.exerciseId === id);
           const ex = getEx(id, sets[0] && sets[0].name);
@@ -3290,20 +3468,33 @@
               h('div', { class: 'txt' }, h('div', { class: 'nm', text: dn(ex) }), h('div', { class: 'st' + (sets.length ? '' : ' todo'), text: status }))),
             h('span', { class: 'chev' }, icon('right')));
           const node = tl ? h('span', { class: 'node ' + state, 'aria-hidden': 'true' }, state === 'done' ? icon('check') : String(num)) : null;
+          const qv = tl && state === 'now' && isToday ? plannedNext(key, id) : null;
           const nowFoot = tl && state === 'now' ? h('div', { class: 'now-foot' },
             planAll && planAll.length ? h('div', { class: 'sdots', 'aria-label': T('{0} séries faites sur {1}', sets.length, planAll.length) },
               planAll.map((p, i) => h('i', { class: i < sets.length ? 'on' : '' })), h('span', { text: T('{0} / {1} séries', sets.length, planAll.length) })) : null,
-            h('button', { type: 'button', class: 'btn acc wide', onclick: () => go('exercise', { id, day: key }) }, icon('play'), sets.length ? T('Continuer') : T('C’est parti'))) : null;
+            qv ? h('button', { type: 'button', class: 'btn acc wide big next qv', onclick: () => quickValidate(key, id, render) }, icon('check'),
+              h('span', { class: 'nx' }, h('small', { text: T('Série {0} sur {1} · {2}', qv.n, qv.of, qv.text) }), h('b', { text: T('Valider la série') })))
+              : h('button', { type: 'button', class: 'btn acc wide', onclick: () => go('exercise', { id, day: key }) }, icon('play'), sets.length ? T('Continuer') : T('C’est parti'))) : null;
+          const qline = qs && qs.ex === id && S.entries.some((x) => x.id === qs.id) ? h('div', { class: 'saved-line', role: 'status' }, icon('check'), h('span', { text: qs.text }),
+            h('button', { type: 'button', class: 'undo', text: T('Annuler'), onclick: () => { S.entries = S.entries.filter((x) => x.id !== qs.id); saveUser(); render(); } })) : null;
           list.append(h('div', { class: 'sitem' + (tl ? ' st-' + state : ''), 'data-id': id }, node,
             h('article', { class: 'dcard' + (sets.length ? '' : ' todo') + (tl && state === 'now' ? ' now' : '') },
               swipeable(head, () => removeFromDay(id), T('Retirer ') + dn(ex) + T(' de la séance')),
               sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': T('Modifier la série ') + entryText(e), onclick: () => editEntry(e, render) },
                 h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: entryText(e) }), e.c === 1 ? null : h('span', { class: 'tot', text: fmtNum(e.w * e.r) })),
                 () => deleteEntry(e, render), T('Supprimer la série'))),
-              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: plannedText(p) }))) : null, nowFoot)));
+              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: plannedText(p) }))) : null, qline, nowFoot)));
         }
-        sortable(list, (ids) => { const d = dayMeta(key, true); d.order = ids; saveUser(); if (tl) render(); });
-        body.append(list, h('p', { class: 'hint', text: T('Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.') }));
+        sortable(list, (ids) => { const d = dayMeta(key, true); d.order = groups.flatMap((x) => (x === g ? ids : x.ids)); saveUser(); if (tl) render(); });
+        if (many) {
+          const gc = GROUPS.get(g.main);
+          const k3 = g.ids.filter((id) => entries.some((e) => e.exerciseId === id)).length;
+          body.append(h('h3', { class: 'grp-h', id: 'grp-' + gi, style: gc ? { '--c': gc.color } : null }, h('span', { class: 'grp-dot', 'aria-hidden': 'true' }),
+            h('span', { class: 'grp-t', text: g.title }), h('span', { class: 'grp-n', text: T('{0} / {1}', k3, g.ids.length) })));
+        }
+        body.append(list);
+        });
+        body.append(h('p', { class: 'hint', text: T('Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.') }));
       }
       body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), T('Ajouter un exercice')));
       const doneIds = new Set(entries.map((e) => e.exerciseId));
@@ -3589,8 +3780,11 @@
     const loose = order.filter((id) => !done.has(id) && !seen.has(id) && !p.items.some((it) => it.ex === id));
     if (loose.length) groups.push({ plan: null, ids: loose, stretch: false });
     const run = (remove) => {
+      let at = -1;
       if (remove && remove.length) {
         const dd = dayMeta(tk, true);
+        const ids0 = remove.filter((g) => g.plan).map((g) => g.plan.id);
+        at = (dd.src || []).findIndex((id) => ids0.includes(id));
         const drop = new Set(remove.flatMap((g) => g.ids));
         dd.order = dayOrder(tk).filter((id) => !drop.has(id));
         for (const id of drop) delete dd.plan[id];
@@ -3600,12 +3794,15 @@
         if (remove.some((g) => !g.stretch)) delete S.sessions[tk];
       }
       startDay(tk, p);
+      const d2 = S.days[tk];
+      if (at >= 0 && d2 && d2.src) { d2.src = d2.src.filter((id) => id !== p.id); d2.src.splice(Math.min(at, d2.src.length), 0, p.id); }
       p.last = tk;
       saveUser();
       go('session', tk);
     };
     if (!groups.length || isStretchPlan(p)) { run(null); return; }
-    const name = (g) => (g.plan ? planTitle(g.plan) : T('exercices ajoutés à la main'));
+    const copyName = d && d.own === 'copy' && S.sessions[tk] ? sessionTitle(S.sessions[tk]) : null;
+    const name = (g) => (g.plan ? planTitle(g.plan) : copyName || T('exercices ajoutés à la main'));
     const list = (gs) => { const a = gs.map((g) => '« ' + name(g) + ' »'); return a.length > 1 ? a.slice(0, -1).join(', ') + T(' et ') + a[a.length - 1] : a[0] || ''; };
     const muscu = groups.filter((g) => !g.stretch);
     const others = groups.filter((g) => g.stretch);

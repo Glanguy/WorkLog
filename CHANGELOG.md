@@ -1,5 +1,21 @@
 # WorkLog : historique des versions
 
+## 0.8.2
+**Plusieurs séances le même jour**
+- La page « Aujourd’hui » affiche en haut une carte par séance prévue (nom, muscles, avancement). La séance choisie en premier reste en haut, celles ajoutées ensuite passent en dessous.
+- La liste des exercices est rangée par séance, dans le même ordre. L’exercice « en cours » suit cet ordre : toute la première séance, puis la suivante.
+- Remplacer une séance : la nouvelle prend sa place (en haut si c’était la première).
+- Une séance recopiée depuis le calendrier (« Refaire cette séance aujourd’hui ») a aussi sa carte et garde son nom ; si elle a été choisie en premier, elle reste en haut. Le bouton « Modifier » est sur la séance qui donne son nom à la journée.
+- Accueil : les autres séances du jour s’affichent sous le titre (« puis Étirements · Vélo »).
+
+**La même carte de série pour tous les exercices**
+- Étirements, gainage et cardio utilisent maintenant la carte « Série 1 sur 2 » de la musculation : la durée prévue est déjà remplie, « Valider la série », confirmation avec « Annuler », puis la proposition de passer à l’exercice suivant quand toutes les séries prévues sont faites.
+- Étirements et gainage : une grande case « Durée » en secondes. Cardio : minutes et secondes en grand, distance, pente, niveau, tours ou calories en dessous.
+
+**Valider une série programmée d’un appui**
+- Sur la page de la séance, l’exercice en cours affiche « Valider la série » au lieu de « C’est parti » quand la série suivante est programmée (charge et répétitions, ou durée). Pour changer les valeurs, toucher l’exercice ouvre sa fiche.
+- Même chose sur la carte « À faire maintenant » de l’accueil pour les étirements et le cardio.
+
 ## 0.8.1
 **Plus simple, façon iPhone**
 - Transitions comme sur iPhone : la nouvelle page glisse depuis la droite pendant que l'ancienne recule et s'assombrit ; au retour, l'inverse. Changer d'onglet : simple fondu.
