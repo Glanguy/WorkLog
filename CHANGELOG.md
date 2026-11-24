@@ -1,5 +1,43 @@
 # WorkLog : historique des versions
 
+## 0.8.1
+**Plus simple, façon iPhone**
+- Transitions comme sur iPhone : la nouvelle page glisse depuis la droite pendant que l'ancienne recule et s'assombrit ; au retour, l'inverse. Changer d'onglet : simple fondu.
+- La barre du bas ne bouge plus pendant les transitions ; elle glisse hors de l'écran sur les pages sans onglet.
+- Style « liquid glass » : boutons, pastilles, barre du bas et touches de calcul en verre dépoli translucide, avec reflet ; boutons citron et cartes violettes avec un léger relief.
+- Toucher l'onglet où l'on est ramène à sa page de base (recherche, filtres et groupe effacés dans Exercices ; mois en cours dans Calendrier).
+- Le « + » de la barre du bas ouvre la création d'une séance type.
+
+**Fiche exercice**
+- Plus de roues : poids et répétitions se tapent au clavier, dans deux grandes cases (le poids accepte un calcul, le résultat s'affiche dessous ; un calcul long rétrécit pour tenir dans la case).
+- Plus de bouton « Cran », plus de « Recopier » dans la carte (le dernier poids et les dernières répétitions restent dans les cases après « Valider » ; le bouton recopier de « Dernière séance » reste).
+- « Poids du corps » seulement sur les exercices qui s'y prêtent (pompes, tractions, dips, gainage, exercices sans matériel).
+- La date et l'heure de la série sont toujours affichées (l'heure suit l'horloge) ; un appui permet de les changer.
+- Muscle principal et un muscle secondaire ; « … » affiche les autres.
+- La section « Animation et muscles » du bas est retirée (la vignette du haut s'agrandit d'un appui).
+- La confirmation « Série n enregistrée · Annuler » s'affiche dans la carte, sous le bouton, au lieu d'un bandeau en haut qui cachait des boutons.
+- Séance avec des séries prévues : « Série 2 sur 3 », puis, une fois toutes faites, une fenêtre propose de passer à l'exercice suivant de la séance (ou de voir la séance terminée). La saisie est alors fermée ; « Une série en plus » permet quand même d'en ajouter une.
+
+**Accueil**
+- « À faire maintenant » : un appui sur le poids ou les répétitions permet de les taper au clavier ; les − / + restent à 2,5 kg. La confirmation s'affiche dans la carte.
+
+**Bibliothèque**
+- Bouton « Filtres » à côté de la recherche : type (musculation, étirements), matériel (poids du corps, haltères, barre, barre EZ, kettlebell, machine, poulie, élastique, Smith machine, médecine-ball/swiss ball, TRX/anneaux/sangles, autre), groupe musculaire, favoris, déjà faits, unilatéral (un bras ou une jambe à la fois, exercices alternés compris), à la maison (poids du corps, élastiques, kettlebell). Seuls les filtres choisis restent affichés, en pastilles qu'on retire d'un appui. Les filtres marchent aussi sans texte de recherche.
+- Le matériel et le côté unilatéral sont déduits du nom de l'exercice (la base ne les donne pas) : quelques exercices peuvent être mal classés.
+- Favoris : exporter et importer sont réunis dans le bouton « … » en haut à droite.
+
+**Séances**
+- Mes séances : seulement le groupe musculaire principal sur chaque séance.
+- Séances d'étirements et de mobilité : durée estimée (temps prévus, 30 s par défaut, + 10 s pour changer de position).
+- « Aujourd'hui » sur une séance de musculation alors qu'une autre séance est déjà prévue : choix entre remplacer la séance prévue (les exercices déjà commencés restent) ou l'ajouter à la suite. Les séances d'étirements et de mobilité s'ajoutent directement.
+
+**Couleurs, menus, diagnostic**
+- Les groupes musculaires retrouvent chacun leur couleur, ravivée pour le fond noir : cou gris bleuté, épaules bleu, pectoraux rose, dos menthe, bras orange, abdos or, jambes orchidée, cardio corail. On les voit sur les étiquettes, les cartes de séances, les tuiles de la bibliothèque, le muscle principal de la fiche exercice, la carte « Séance du jour » et en point sous les jours nommés du calendrier.
+- Séances : exporter et importer sont réunis dans le bouton « … » en haut à droite, en face du titre.
+- Réglages : la section Diagnostic est cachée. 7 appuis sur « WorkLog version… » la font apparaître ; c'est gardé dans l'export de l'historique complet.
+- Noms d'exercices longs : ils passent à la ligne dans les boutons (« Exercice suivant », fenêtre de fin des séries prévues) au lieu de déborder de l'écran.
+- « Aujourd'hui » avec plusieurs séances déjà prévues (par exemple Jambes + Étirements) : choix entre remplacer seulement la séance de musculation en gardant les étirements, remplacer tout ce qui est prévu, ou ajouter à la suite.
+
 ## 0.8.0
 **Nouveau design « Néon »**
 - Fond noir, violet électrique (#5B3BFF) et jaune citron (#E6FF2B). Le citron sert seulement à ce qu'il faut voir en premier : la séance du jour, les gros chiffres, les records et le bouton pour valider une série.

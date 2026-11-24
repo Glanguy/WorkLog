@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.8.0';
+  const APP_VERSION = '0.8.1';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -129,6 +129,8 @@
     stack: '<path d="M4 8l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4"/>',
     steps: '<path d="M4 17h4v-4h4V9h4V5h4"/>',
     history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5M12 8v4l3 2"/>',
+    swap: '<path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+    sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   };
   function icon(name, cls) {
     const el = sv('svg', { viewBox: '0 0 24 24', class: 'ic ' + (cls || ''), 'aria-hidden': 'true' });
@@ -157,23 +159,23 @@
   const frMuscle = (s) => MUSCLES[s] || cap(String(s));
 
   const TREE = [
-    { id: 'cou', label: T('Cou'), color: '#ACA0FF', m: ['neck'] },
-    { id: 'epaules', label: T('Épaules'), color: '#ACA0FF', m: ['shoulders'] },
-    { id: 'pectoraux', label: T('Pectoraux'), color: '#ACA0FF', m: ['chest'] },
-    { id: 'dos', label: T('Dos'), color: '#ACA0FF', m: ['traps', 'lats', 'middle back', 'lower back'] },
-    { id: 'bras', label: T('Bras'), color: '#ACA0FF', subs: [
+    { id: 'cou', label: T('Cou'), color: '#9FB2D4', m: ['neck'] },
+    { id: 'epaules', label: T('Épaules'), color: '#5FA8FF', m: ['shoulders'] },
+    { id: 'pectoraux', label: T('Pectoraux'), color: '#FF6FAE', m: ['chest'] },
+    { id: 'dos', label: T('Dos'), color: '#3EE0B5', m: ['traps', 'lats', 'middle back', 'lower back'] },
+    { id: 'bras', label: T('Bras'), color: '#FFA54A', subs: [
       { id: 'biceps', label: T('Biceps'), m: ['biceps'] },
       { id: 'triceps', label: T('Triceps'), m: ['triceps'] },
       { id: 'avant-bras', label: T('Avant-bras'), m: ['forearms'] },
     ] },
-    { id: 'abdos', label: T('Abdominaux et taille'), color: '#ACA0FF', m: ['abdominals'] },
-    { id: 'jambes', label: T('Jambes'), color: '#ACA0FF', subs: [
+    { id: 'abdos', label: T('Abdominaux et taille'), color: '#E8C547', m: ['abdominals'] },
+    { id: 'jambes', label: T('Jambes'), color: '#B784FF', subs: [
       { id: 'fessiers-ischios', label: T('Fessiers et ischio-jambiers'), m: ['glutes', 'hamstrings'] },
       { id: 'abducteurs', label: T('Abducteurs et adducteurs'), m: ['abductors', 'adductors'] },
       { id: 'quadriceps', label: T('Quadriceps'), m: ['quadriceps'] },
       { id: 'mollets', label: T('Mollets'), m: ['calves'] },
     ] },
-    { id: 'cardio', label: T('Cardio'), color: '#ACA0FF' },
+    { id: 'cardio', label: T('Cardio'), color: '#FF6B6B' },
   ];
   const GROUPS = new Map();      // id -> { id, label, full, top, color }
   const LEAF_OF = new Map();     // muscle anglais -> id de la (sous-)catégorie
@@ -202,7 +204,7 @@
     plans: [],           // séances types : { id, name, folder, main, sec, items: [{ ex, sets: [{ w, r }] }], created, last }
     folders: [],         // noms des dossiers de séances types
     schedules: [],       // programmations répétées : { id, plan, start, every (semaines), days [0 = lundi … 6], until, made: [dates déjà ajoutées] }
-    settings: { bw: '', pct: 70, steps: {}, nas: { url: '', email: '' } },   // réglages : poids du corps (kg), crans des roues, adresse du NAS
+    settings: { bw: '', pct: 70, steps: {}, diag: false, nas: { url: '', email: '' } },   // réglages : poids du corps (kg), crans des roues, adresse du NAS
     savedAt: 0,          // date de la dernière modification des données
     guard: null,         // saisie non validée sur la page en cours : { dirty(), save() }
     draft: null,         // saisie à remettre après « Annuler » : { id, rows }
@@ -573,7 +575,7 @@
     // Cran de la roue du poids, choisi pour chaque exercice (0.8.0).
     const steps = {};
     if (s.steps && typeof s.steps === 'object') for (const [k, v] of Object.entries(s.steps)) if (typeof k === 'string' && STEPS.includes(v)) steps[k] = v;
-    return { bw, pct, steps, nas: { url: str(nas.url, 300).trim(), email: str(nas.email, 200).trim() } };
+    return { bw, pct, steps, diag: s.diag === true, nas: { url: str(nas.url, 300).trim(), email: str(nas.email, 200).trim() } };
   }
   const cleanFolders = (a) => [...new Set((Array.isArray(a) ? a : []).filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 40)))];
 
@@ -1213,7 +1215,7 @@
       inner.style.transform = 'translateY(' + (-window.scrollY) + 'px)';
       old.remove();
       inner.append(old);
-      ghost = h('div', { class: 'pg-ghost ' + (anim === 'fwd' ? 'under' : 'over'), 'aria-hidden': 'true' }, inner);
+      ghost = h('div', { class: 'pg-ghost ' + (anim === 'fwd' || anim === 'fade' ? 'under' : 'over'), 'aria-hidden': 'true' }, inner);
       document.body.append(ghost);
     }
     if (thumbIO) { thumbIO.disconnect(); }
@@ -1227,20 +1229,21 @@
     root.textContent = '';
     const fn = VIEWS()[entry.view] || viewHome;
     root.append(fn(entry.arg, entry.ui || {}));
-    // Barre du bas (0.8.0) : sur l'accueil, les exercices, les séances et le calendrier.
-    const tabbed = isTabEntry(entry);
-    root.classList.toggle('has-nav', tabbed);
-    if (tabbed) root.append(navPill(entry.view));
+    // Barre du bas : posée une seule fois hors de la page, elle ne bouge pas pendant les transitions.
+    syncNav(entry);
     if (S.planDraft && !S.stack.some((e) => e.view === 'plan')) S.planDraft = null;
     const y = (entry.ui && entry.ui.scroll) || 0;
     window.scrollTo(0, y);
     if (y) requestAnimationFrame(() => window.scrollTo(0, y));
     lastScrollY = window.scrollY;
     if (ghost) {
-      const cls = anim === 'fwd' ? 'enter' : anim === 'close' ? 'leave-down' : 'leave-right';
-      const done = () => { if (ghost) { ghost.remove(); ghost = null; } root.classList.remove('enter'); };
-      if (anim === 'fwd') { root.classList.add('enter'); root.addEventListener('animationend', done, { once: true }); } else { ghost.classList.add(cls); ghost.addEventListener('animationend', done, { once: true }); }
-      setTimeout(done, 700);
+      // Comme sur iPhone : la nouvelle page glisse depuis la droite pendant que l'ancienne recule un peu
+      // et s'assombrit ; au retour, c'est l'inverse. Changer d'onglet : simple fondu.
+      const done = () => { if (ghost) { ghost.remove(); ghost = null; } root.classList.remove('enter', 'emerge', 'fadein', 'rise'); };
+      if (anim === 'fwd') { root.classList.add('enter'); ghost.classList.add('recede'); root.addEventListener('animationend', done, { once: true }); }
+      else if (anim === 'fade') { root.classList.add('fadein'); ghost.classList.add('fadeout'); root.addEventListener('animationend', done, { once: true }); }
+      else { ghost.classList.add(anim === 'close' ? 'leave-down' : 'leave-right'); root.classList.add(anim === 'close' ? 'rise' : 'emerge'); ghost.addEventListener('animationend', done, { once: true }); }
+      setTimeout(done, 800);
     }
   }
   /* Bandeau du haut : caché quand on descend, de retour dès qu'on remonte un peu. */
@@ -1297,12 +1300,12 @@
     });
   }
   const leave = (fn) => { if (guarded()) askLeave(fn); else fn(); };
-  function goNow(view, arg) {
+  function goNow(view, arg, anim) {
     snapshot();
     const entry = { view, arg: arg == null ? null : arg, ui: null };
     S.stack.push(entry);
     history.pushState({ i: S.stack.length - 1, view, arg: entry.arg }, '');
-    render(entry, 'fwd');
+    render(entry, anim || 'fwd');
   }
   /* Remplace la page en cours (après validation d'une séance type). */
   function replaceNow(view, arg, anim) {
@@ -1329,9 +1332,17 @@
   const isTabEntry = (e) => !!e && TAB_VIEWS.has(e.view) && !(e.view === 'library' && e.arg && e.arg.pick);
   function tabGo(view) {
     const top = S.stack[S.stack.length - 1];
-    if (top && top.view === view && !(top.arg && top.arg.pick)) { window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' }); return; }
-    if (view === 'home') { goHome(); return; }
-    leave(() => { if (!top || top.view === 'home') goNow(view, null); else { snapshot(); replaceNow(view, null); } });
+    if (top && top.view === view && !(top.arg && top.arg.pick)) {
+      // Toucher l'onglet où l'on est : retour à sa page de base (recherche, filtres et groupe effacés).
+      if (view === 'home') { window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' }); return; }
+      if (view === 'calendar') S.cal = null;
+      if (view === 'library') S.libFilters = null;
+      leave(() => replaceNow(view, null, 'fade'));
+      return;
+    }
+    if (view === 'home') { leave(() => { S.navAnim = 'fade'; const n = S.stack.length - 1; if (n > 0) history.go(-n); else render(S.stack[0], 'fade'); }); return; }
+    if (view === 'calendar') S.cal = null;
+    leave(() => { if (!top || top.view === 'home') goNow(view, null, 'fade'); else { snapshot(); replaceNow(view, null, 'fade'); } });
   }
   /* Exercice à faire maintenant dans la séance du jour : le premier de la liste qui n'a pas encore
      de série, ou dont il reste des séries prévues. */
@@ -1348,18 +1359,27 @@
     return null;
   }
   /* Le « + » : l'exercice en cours de la séance du jour, sinon la bibliothèque. */
-  function plusGo() {
-    materialize(todayKey());
-    const id = currentTodo();
-    if (id) go('exercise', { id, day: todayKey() }); else tabGo('library');
-  }
-  function navPill(active) {
-    const it = (view, ic, label) => h('button', { type: 'button', class: 'nv' + (active === view ? ' on' : ''), 'aria-label': label,
-      'aria-current': active === view ? 'page' : null, onclick: () => tabGo(view) }, icon(ic));
+  /* Le « + » : créer une séance type. */
+  function plusGo() { createPlan(); }
+  let navEl = null;
+  function navPill() {
+    const it = (view, ic, label) => h('button', { type: 'button', class: 'nv', 'data-view': view, 'aria-label': label, onclick: () => tabGo(view) }, icon(ic));
     return h('nav', { class: 'navpill', 'aria-label': T('Navigation principale') },
       it('home', 'home', T('Accueil')), it('library', 'book', T('Exercices')),
-      h('button', { type: 'button', class: 'nv plus', 'aria-label': T('Noter une série'), onclick: plusGo }, icon('plus')),
+      h('button', { type: 'button', class: 'nv plus', 'aria-label': T('Créer une séance'), onclick: plusGo }, icon('plus')),
       it('seances', 'list', T('Séances')), it('calendar', 'cal', T('Calendrier')));
+  }
+  function syncNav(entry) {
+    const tabbed = isTabEntry(entry);
+    app().classList.toggle('has-nav', tabbed);
+    if (!navEl) { navEl = navPill(); document.body.append(navEl); }
+    navEl.classList.toggle('off', !tabbed);
+    navEl.inert = !tabbed;
+    navEl.querySelectorAll('.nv[data-view]').forEach((b) => {
+      const on = tabbed && b.dataset.view === entry.view;
+      b.classList.toggle('on', on);
+      if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
   }
   /* Logo + « WorkLog » (Log en citron). */
   const lockup = () => h('div', { class: 'wordmark' }, h('img', { src: 'icons/logo.svg', alt: '', width: '36', height: '36' }),
@@ -1397,15 +1417,46 @@
     render(S.stack[S.stack.length - 1], anim);
   });
 
-  /* Cran de la roue du poids : réglé pour l'exercice, sinon deviné d'après le matériel. */
-  function stepOf(ex) {
-    const v = S.settings.steps && S.settings.steps[ex.id];
-    if (STEPS.includes(v)) return v;
-    const n = (ex.key || '') + ' ' + skey(ex.name || '');
-    if (/dumbbell|kettlebell/.test(n)) return 2;
-    if (/lever|machine|cable|sled|smith machine|pulldown|pushdown/.test(n)) return 5;
-    return 2.5;
+  /* ---------- matériel (0.8.1) ----------
+     La base ne dit pas avec quoi se fait un exercice : on le déduit de son nom anglais. */
+  const EQUIP = [
+    ['pdc', 'Poids du corps'], ['halteres', 'Haltères'], ['barre', 'Barre'], ['ez', 'Barre EZ'], ['kettlebell', 'Kettlebell'],
+    ['machine', 'Machine'], ['poulie', 'Poulie'], ['elastique', 'Élastique'], ['smith', 'Smith machine'], ['ballon', 'Médecine-ball, swiss ball'],
+    ['trx', 'TRX, anneaux, sangles'], ['autre', 'Autre matériel'],
+  ];
+  const EQ_RULES = [
+    ['smith', /\bsmith\b/],
+    ['kettlebell', /kettlebell|\bkb\b/],
+    ['halteres', /dumbbell|\bdb\b/],
+    ['ez', /\bez\b|ez[- ]?bar|ez[- ]?curl|cambered/],
+    ['trx', /suspend|suspension|\btrx\b|\bstraps?\b|\brings?\b|gymnastic ring/],
+    ['elastique', /\bbands?\b|\bbanded\b|resistance band|elastic|mini band/],
+    ['poulie', /cable|pulley|rope attachment|pull[- ]?down|push[- ]?down|crossover|face pull|\bv[- ]bar\b/],
+    ['barre', /barbell|trap bar|hex bar|landmine|\bclean\b|\bsnatch\b|\bjerk\b|olympic bar|\bthruster\b|good morning|deadlift|\brack\b/],
+    ['machine', /lever|leverage|machine|\bsled\b|leg press|hack squat|leg extension|leg curl|calf press|pec deck|butterfly|assisted.*(?:pull|chin|dip)|seated row|chest press|hip adduction|hip abduction|t[- ]bar|glute ham|hyperextension|roman chair|preacher/],
+    ['ballon', /medicine ball|med ball|weighted ball|stability ball|swiss ball|exercise ball|bosu|slam ball|\bball\b/],
+    ['autre', /\btire\b|battling rope|rope climb|\broller\b|ab wheel|sandbag|\bplate\b|\bclub\b|\bmace\b|balance board|\bstep\b|\bbox\b|towel|\bbench\b(?!.*press)|\bchair\b|\bwall\b/],
+  ];
+  function eqOf(ex) {
+    if (ex._eq) return ex._eq;
+    const n = ex.key || skey(ex.name || '');
+    let r = 'pdc';
+    for (const [k, re] of EQ_RULES) if (re.test(n)) { r = k; break; }
+    // banc, mur, chaise : l'exercice reste au poids du corps
+    if (r === 'autre' && /\bbench\b|\bchair\b|\bwall\b|\bstep\b|\bbox\b|towel/.test(n) && !/\btire\b|rope|roller|wheel|sandbag|plate|club|mace|board/.test(n)) r = 'pdc';
+    ex._eq = r;
+    return r;
   }
+  /* Unilatéral : un bras ou une jambe à la fois (exercices alternés compris), d'après le nom. */
+  const UNI_RE = /one[- ]arm|one[- ]leg|one[- ]hand|single[- ]?(arm|leg|hand)|unilateral|alternat|\blunges?\b|split squat|bulgarian|step[- ]?ups?\b|pistol|\bone[- ]side/;
+  const isUni = (ex) => UNI_RE.test(ex.key || '');
+  /* À la maison : sans matériel de salle (poids du corps, élastiques, kettlebell). */
+  const isHome = (ex) => ['pdc', 'elastique', 'kettlebell'].includes(eqOf(ex));
+  const eqLabel = (k) => T((EQUIP.find((x) => x[0] === k) || EQUIP[EQUIP.length - 1])[1]);
+  /* « Poids du corps » proposé seulement là où il a un sens (pompes, tractions, dips, gainage…). */
+  const canBW = (ex) => !cardioKind(ex) && (eqOf(ex) === 'pdc' || /weighted (pull|chin|dip)|\bdips?\b|pull[- ]?ups?|chin[- ]?ups?|push[- ]?ups?|muscle[- ]?ups?/.test(ex.key || ''));
+
+  function stepOf() { return 2.5; }   // − / + de l'accueil : 2,5 kg par appui
   const r2 = (v) => Math.round(v * 100) / 100;
   /* Dernière série enregistrée d'un exercice. */
   function lastOf(id) {
@@ -1462,7 +1513,8 @@
       const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
-      const card = h('section', { class: 'hero2' },
+      const hg = s && GROUPS.get(s.main);
+      const card = h('section', { class: 'hero2', style: hg ? { '--c': hg.color } : null },
         h('div', { class: 'hero2-top' },
           h('div', { class: 'hero2-txt' }, h('span', { class: 'kicker acc', text: T('Séance du jour') }),
             h('strong', { class: 'hero2-title', text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') })),
@@ -1509,8 +1561,29 @@
     const step = stepOf(ex);
     const out = {};
     const stepper = (key, label, inc, fmt) => {
-      const val = h('strong', { class: 'qs-v', 'aria-live': 'polite' });
+      // Le chiffre se touche pour le taper au clavier (le poids accepte un calcul : 20+2,5+2,5).
+      const val = h('button', { type: 'button', class: 'qs-v', 'aria-label': T('{0} : toucher pour taper une valeur', label) });
       const paint = () => { val.textContent = fmt(v[key]); };
+      val.addEventListener('click', () => {
+        const inp = key === 'w' ? calcInput({ 'aria-label': label }) : h('input', { class: 'field', type: 'text', inputmode: 'numeric', autocomplete: 'off', enterkeyhint: 'done', 'aria-label': label });
+        inp.classList.add('qs-in');
+        inp.value = key === 'w' && v.bw ? (v.w ? (v.w < 0 ? '-' : '+') + fmtIn(Math.abs(v.w)) : '') : fmtIn(v[key]);
+        val.replaceWith(inp);
+        inp.focus();
+        try { inp.select(); } catch (e) { /* ignoré */ }
+        let done = false;
+        const finish = () => {
+          if (done) return; done = true;
+          if (key === 'w') finishCalc(inp);
+          const t = inp.value.trim();
+          const n = key === 'w' ? (t === '' && v.bw ? 0 : calcEval(t)) : parseNum(t);
+          const ok = Number.isFinite(n) && (key === 'r' ? Number.isInteger(n) && n > 0 : v.bw || n > 0);
+          if (ok) v[key] = r2(n);
+          inp.replaceWith(val); paint();
+        };
+        inp.addEventListener('blur', () => setTimeout(finish, 0));
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+      });
       const btn = (d, ic, l) => h('button', { type: 'button', class: 'qs-b', 'aria-label': l, onclick: () => {
         const nv = r2(v[key] + d * inc);
         if (key === 'r' ? nv >= 1 : (v.bw || nv > 0)) { v[key] = nv; paint(); }
@@ -1526,9 +1599,15 @@
       if (r.noBw) { if (!(await askBodyWeight())) return; return card.querySelector('.btn.acc').click(); }
       if (!r.ok) { toast(T('Poids ou répétitions invalides.')); return; }
       const e = await saveSet(ex, r.vals);
-      toast(T('Série enregistrée : {0}', entryText(e)), { ms: 6000, sticky: true, action: () => { S.entries = S.entries.filter((x) => x.id !== e.id); saveUser(); after(); } });
+      S.homeSaved = { id: e.id, text: T('Série enregistrée · {0}', entryText(e)) };   // confirmation dans la carte, après l'affichage
       after();
     } }, icon('check'), T('Valider')));
+    // Confirmation de la série tout juste validée, avec « Annuler » (dans la carte, rien ne flotte).
+    const hs = S.homeSaved; S.homeSaved = null;
+    if (hs && S.entries.some((x) => x.id === hs.id)) {
+      card.append(h('div', { class: 'saved-line', role: 'status' }, icon('check'), h('span', { text: hs.text }),
+        h('button', { type: 'button', class: 'undo', text: T('Annuler'), onclick: () => { S.entries = S.entries.filter((x) => x.id !== hs.id); saveUser(); after(); } })));
+    }
     return card;
   }
   /* « Cette semaine » : une barre par jour (nombre de séries), aujourd'hui en citron. */
@@ -1567,243 +1646,225 @@
     { k: '3m', label: T('3 mois'), short: T('3 m'), days: 91.3 },
     { k: '6m', label: T('6 mois'), short: T('6 m'), days: 182.6 },
   ];
-  /* ---------- roue de valeurs (0.8.0) ----------
-     On la fait défiler du doigt (une valeur par cran), ou on touche la valeur du milieu pour la taper.
-     Le poids accepte un calcul (20+2,5+2,5) avec la barre au-dessus du clavier. */
-  function wheel(o) {
-    // o : { label, value, list(value) → nombres triés, fmt(v), onChange(v), calc (poids) , int (répétitions), signed (lest) }
-    const ROW = 48;
-    let value = o.value; let vals = []; let settleT = 0; let raf = 0; let ignore = 0;
-    const sc = h('div', { class: 'wl', role: 'spinbutton', tabindex: '0', 'aria-label': o.label });
-    const box = h('div', { class: 'wl-box' }, h('span', { class: 'wl-band', 'aria-hidden': 'true' }), sc);
-    const el = h('div', { class: 'wheel' }, h('span', { class: 'kicker', text: o.label }), box);
-    const idx = () => Math.max(0, Math.min(vals.length - 1, Math.round(sc.scrollTop / ROW)));
-    function paint() {
-      raf = 0;
-      const i = idx();
-      sc.querySelectorAll('.wl-it').forEach((n, k) => { n.classList.toggle('on', k === i); n.classList.toggle('near', Math.abs(k - i) === 1); });
-    }
-    function aria() { sc.setAttribute('aria-valuenow', String(value)); sc.setAttribute('aria-valuetext', o.fmt(value)); }
-    function jump() {
-      const i = vals.indexOf(value);
-      ignore++;
-      sc.scrollTop = Math.max(0, i) * ROW;
-      paint(); aria();
-      requestAnimationFrame(() => requestAnimationFrame(() => { ignore = Math.max(0, ignore - 1); }));
-    }
-    function build() {
-      vals = o.list(value).slice();
-      if (!vals.includes(value)) { vals.push(value); vals.sort((x, y) => x - y); }
-      sc.textContent = '';
-      sc.append(h('div', { class: 'wl-pad' }));
-      vals.forEach((v, i) => sc.append(h('div', { class: 'wl-it', 'data-i': String(i), text: o.fmt(v) })));
-      sc.append(h('div', { class: 'wl-pad' }));
-      jump();
-      requestAnimationFrame(jump);   // une fois la roue à l'écran
-    }
-    function choose(i, smooth) {
-      const v = vals[i];
-      if (v === undefined) return;
-      if (smooth && !reduceMotion()) sc.scrollTo({ top: i * ROW, behavior: 'smooth' }); else { sc.scrollTop = i * ROW; paint(); }
-      if (v !== value) { value = v; aria(); o.onChange(value); }
-    }
-    sc.addEventListener('scroll', () => {
-      if (!raf) raf = requestAnimationFrame(paint);
-      if (ignore) return;
-      clearTimeout(settleT);
-      settleT = setTimeout(() => { const i = idx(); const v = vals[i]; if (v !== undefined && v !== value) { value = v; aria(); o.onChange(value); } }, 110);
-    }, { passive: true });
-    sc.addEventListener('click', (e) => {
-      const it = e.target.closest('.wl-it');
-      if (!it) return;
-      const i = Number(it.dataset.i);
-      if (i === idx()) edit(); else choose(i, true);
-    });
-    sc.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); choose(Math.max(0, Math.min(vals.length - 1, idx() + (e.key === 'ArrowUp' ? -1 : 1))), false); }
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); }
-    });
-    /* Saisie au clavier : la roue laisse la place à un champ. */
-    function edit() {
-      const inp = o.calc ? calcInput({ 'aria-label': o.label }) : h('input', { class: 'field', type: 'text', inputmode: 'numeric', autocomplete: 'off', enterkeyhint: 'done', 'aria-label': o.label });
-      inp.classList.add('wl-in');
-      inp.value = o.signed && value < 0 ? '-' + fmtIn(-value) : value === 0 && o.signed ? '' : fmtIn(value);
-      box.classList.add('editing');
-      // Résultat du calcul affiché sous le champ pendant la saisie (20+2,5+2,5 → = 25).
-      const prev = h('span', { class: 'wl-prev', 'aria-live': 'polite' });
-      const showPrev = () => { const t = inp.value.trim(); const n = o.calc && OPS.test(t.replace(/^[-−]/, '')) ? calcEval(t) : NaN; prev.textContent = Number.isFinite(n) ? '= ' + fmtNum(n) : ''; };
-      inp.addEventListener('input', showPrev);
-      box.append(inp, prev);
-      let done = false;
-      const finish = () => {
-        if (done) return; done = true;
-        if (o.calc) finishCalc(inp);
-        const raw = inp.value.trim();
-        const n = raw === '' && o.signed ? 0 : o.calc ? calcEval(raw) : parseNum(raw);
-        inp.remove(); prev.remove(); box.classList.remove('editing');
-        const ok = Number.isFinite(n) && (o.int ? Number.isInteger(n) && n > 0 : o.signed ? true : n > 0);
-        if (ok) { value = r2(n); build(); o.onChange(value); } else { if (raw) toast(o.int ? T('Répétitions : un nombre entier.') : T('Poids : un nombre positif.')); jump(); }
-      };
-      inp.addEventListener('blur', () => setTimeout(finish, 0));
-      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } if (e.key === 'Escape') { inp.value = o.fmt(value); inp.blur(); } });
-      inp.focus();
-      try { inp.select(); } catch (e) { /* ignoré */ }
-    }
-    el.set = (v) => { value = v; build(); };
-    el.get = () => value;
-    el.rebuild = (opts) => { Object.assign(o, opts || {}); build(); };
-    build();
-    return el;
-  }
-  const weightList = (step, signed) => (v) => {
-    const out = [];
-    if (signed) { for (let x = -60; x <= 100 + 1e-9; x += step) out.push(r2(x)); return out; }
-    const top = Math.max(200, Math.ceil((v * 1.5 + 20) / step) * step);
-    for (let x = step; x <= top + 1e-9; x += step) out.push(r2(x));
-    return out;
-  };
-  const repsList = (v) => { const out = []; for (let x = 1; x <= Math.max(30, v + 10); x++) out.push(x); return out; };
   const fmtLest = (x) => (x > 0 ? '+' : x < 0 ? '−' : '') + fmtNum(Math.abs(x));
+  /* Date et heure lisibles : « Aujourd'hui · 18:42 », sinon « mar. 24 nov. · 18:42 ». */
+  const whenText = (t) => (dayKey(t) === todayKey() ? T('Aujourd’hui') : cap(fDayShort.format(t))) + ' · ' + fTime.format(t);
 
-  /* Carte « Série n » de la fiche exercice : deux roues, poids du corps, cran, heure, « Valider ». */
+  /* Carte « Série n » de la fiche exercice (0.8.1) : poids et répétitions au clavier (le poids accepte
+     un calcul), poids du corps si l'exercice s'y prête, date et heure, « Valider ».
+     Dans une séance avec des séries prévues : une fois toutes faites, la saisie se ferme et
+     WorkLog propose l'exercice suivant (« Une série en plus » reste possible). */
   function serieCard(ex, ctx, onSaved) {
     const dayK = ctx.day || todayKey();
     const fixedDay = ctx.day && ctx.day !== todayKey() ? ctx.day : null;
-    const plannedAll = () => (S.days[dayK] && S.days[dayK].plan[ex.id]) || null;
+    const plannedAll = () => (ctx.day && S.days[dayK] && S.days[dayK].plan[ex.id] && S.days[dayK].plan[ex.id].length ? S.days[dayK].plan[ex.id] : null);
     const doneN = () => dayEntries(dayK).filter((e) => e.exerciseId === ex.id).length;
     const nextPlanned = () => { const p = plannedAll(); return p ? p[doneN()] || null : null; };
-    let v = startVals(ex, ctx.day ? nextPlanned() : null);
-    let touched = false;
-    let dt = null; let manual = false;   // heure de la série : maintenant, ou choisie
-    const baseDt = () => (fixedDay ? keyDate(fixedDay).getTime() + 18 * 3600000 + doneN() * 120000 : Date.now());
-    if (fixedDay) { dt = baseDt(); manual = true; }
+    const bwOk = canBW(ex);
+    let v = startVals(ex, nextPlanned());
+    if (v.bw && !bwOk) v = { w: 20, r: v.r, bw: false };
+    let extra = 0;          // séries non prévues autorisées (« Une série en plus »)
+    let dt = null;          // heure choisie ; null = maintenant
+    const baseDt = () => (fixedDay ? keyDate(fixedDay).getTime() + 18 * 3600000 + doneN() * 120000 : null);
+    dt = baseDt();
+    let lastSaved = null;
     const card = h('section', { class: 'serie' });
     const title = h('h2', {});
     const sub = h('span', { class: 'serie-sub' });
     const plannedLine = h('p', { class: 'serie-plan' });
     const msg = h('p', { class: 'form-msg', role: 'alert' });
-    const wW = wheel({ label: '', value: v.w, list: weightList(stepOf(ex), v.bw), fmt: (x) => (v.bw ? fmtLest(x) : fmtNum(x)), calc: true, signed: v.bw,
-      onChange: (x) => { v.w = x; touched = true; msg.textContent = ''; } });
-    const wR = wheel({ label: T('Répétitions'), value: v.r, list: repsList, fmt: (x) => fmtNum(x), int: true, onChange: (x) => { v.r = x; touched = true; msg.textContent = ''; } });
-    const wLab = wW.querySelector('.kicker');
-    const paintW = () => { wLab.textContent = v.bw ? T('Lest (kg)') : T('Poids (kg)'); wW.querySelector('.wl').setAttribute('aria-label', wLab.textContent); };
-    // Petits boutons sous les roues
-    const bwBtn = h('button', { type: 'button', class: 'mini-chip' });
-    const stepBtn = h('button', { type: 'button', class: 'mini-chip', 'aria-haspopup': 'dialog' });
+    // Les deux champs
+    const wIn = calcInput({ 'aria-label': T('Poids (kg)') });
+    wIn.classList.add('big-in');
+    const rIn = h('input', { class: 'field big-in', type: 'text', inputmode: 'numeric', autocomplete: 'off', enterkeyhint: 'done', 'aria-label': T('Répétitions') });
+    const wLab = h('span', { class: 'kicker' });
+    const wUnit = h('span', { class: 'unit', text: 'kg' });
+    const wPrev = h('span', { class: 'big-prev', 'aria-live': 'polite' });
+    const box = (lab, inp, unit, prev) => h('label', { class: 'bigbox' }, lab, h('span', { class: 'bigrow' }, inp, unit), prev || null);
+    const fill = () => {
+      wIn.value = v.bw ? (v.w ? (v.w < 0 ? '-' : '+') + fmtIn(Math.abs(v.w)) : '') : fmtIn(v.w);
+      rIn.value = fmtIn(v.r);
+      wLab.textContent = v.bw ? T('Lest (kg)') : T('Poids (kg)');
+      wIn.setAttribute('aria-label', wLab.textContent);
+      wIn.placeholder = v.bw ? '0' : '';
+      wPrev.textContent = '';
+    };
+    const read = () => {
+      const tw = wIn.value.trim();
+      const w = tw === '' && v.bw ? 0 : calcEval(tw);
+      const r = parseNum(rIn.value);
+      return { w, r };
+    };
+    // Un calcul long (20+2,5+2,5) : le texte rétrécit pour rester entier dans la case.
+    const fit = () => { const n = wIn.value.length; wIn.style.fontSize = n > 9 ? '20px' : n > 6 ? '26px' : ''; };
+    wIn.addEventListener('input', () => { fit(); const t = wIn.value.trim(); const n = OPS.test(t.replace(/^[-−+]/, '')) ? calcEval(t) : NaN; wPrev.textContent = Number.isFinite(n) ? '= ' + fmtNum(n) + ' kg' : ''; msg.textContent = ''; });
+    wIn.addEventListener('blur', () => setTimeout(fit, 0));
+    rIn.addEventListener('input', () => { msg.textContent = ''; });
+    wIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); rIn.focus(); } });
+    rIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); rIn.blur(); } });
+    // Poids du corps (seulement si l'exercice s'y prête), date et heure
+    const bwBtn = bwOk ? h('button', { type: 'button', class: 'mini-chip' }) : null;
     const dtText = h('span');
     const dtIn = h('input', { type: 'datetime-local', class: 'dt-over', 'aria-label': T('Date et heure de la série') });
     const dtChip = h('label', { class: 'mini-chip dtchip' }, icon('clock'), dtText, dtIn);
     function paintChips() {
-      bwBtn.textContent = '';
-      bwBtn.append(icon('body'), h('span', { text: v.bw ? T('Poids du corps') + (bwKg() ? ' · ' + fmtNum(r2(bwKg() + v.w)) + ' kg' : '') : T('Poids du corps') }));
-      bwBtn.setAttribute('aria-pressed', String(!!v.bw));
-      stepBtn.textContent = '';
-      stepBtn.append(icon('steps'), h('span', { text: T('Cran {0} kg', fmtNum(stepOf(ex))) }));
-      dtText.textContent = manual && dt ? (dayKey(dt) === todayKey() ? T('Aujourd’hui') + ' · ' + fTime.format(dt) : cap(fDayShort.format(dt)) + ' · ' + fTime.format(dt)) : T('Maintenant');
-      dtIn.value = toLocalInput(manual && dt ? dt : Date.now());
+      if (bwBtn) {
+        bwBtn.textContent = '';
+        bwBtn.append(icon('body'), h('span', { text: T('Poids du corps') + (v.bw && bwKg() ? ' · ' + fmtNum(bwKg()) + ' kg' : '') }));
+        bwBtn.setAttribute('aria-pressed', String(!!v.bw));
+      }
+      const t = dt || Date.now();
+      dtText.textContent = whenText(t);
+      dtIn.value = toLocalInput(t);
     }
-    bwBtn.addEventListener('click', async () => {
+    if (bwBtn) bwBtn.addEventListener('click', async () => {
       if (!v.bw && !bwKg() && !(await askBodyWeight())) return;
+      const cur = read();
+      if (Number.isInteger(cur.r) && cur.r > 0) v.r = cur.r;
       v.bw = !v.bw;
       const l = lastOf(ex.id);
       v.w = v.bw ? (l && l.bw && fin(l.x) ? l.x : 0) : (l && !l.bw && l.c !== 1 ? l.w : 20);
-      touched = true;
-      wW.rebuild({ list: weightList(stepOf(ex), v.bw), signed: v.bw });
-      wW.set(v.w); paintW(); paintChips();
+      fill(); paintChips();
     });
-    stepBtn.addEventListener('click', () => {
-      bottomSheet((box, close) => {
-        box.append(h('h2', { class: 'bs-title', text: T('Cran de la roue du poids') }),
-          h('p', { class: 'bs-note', text: T('Pour cet exercice uniquement. Tu peux toujours taper un poids précis en touchant le chiffre.') }));
-        for (const st of STEPS) {
-          const on = st === stepOf(ex);
-          box.append(h('button', { type: 'button', class: 'mrow' + (on ? ' on' : ''), 'aria-pressed': String(on), onclick: () => close(() => {
-            S.settings.steps[ex.id] = st; saveUser();
-            wW.rebuild({ list: weightList(st, v.bw) }); paintChips();
-          }) }, h('span', { class: 'mt' }, h('b', { text: fmtNum(st) + ' kg' })), on ? icon('check') : null));
-        }
-        box.append(h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: T('Fermer'), onclick: () => close() }));
-      });
-    });
-    dtIn.addEventListener('change', () => {
-      const t = new Date(dtIn.value).getTime();
-      if (Number.isFinite(t)) { dt = t; manual = true; } else { dt = baseDt(); manual = !!fixedDay; }
-      paintChips();
-    });
-    // Liens : plusieurs séries, recopier la dernière
-    const copyLink = h('button', { type: 'button', class: 'linkbtn' });
-    function paintTop() {
+    dtIn.addEventListener('change', () => { const t = new Date(dtIn.value).getTime(); dt = Number.isFinite(t) ? t : baseDt(); paintChips(); });
+    // L'heure affichée suit l'horloge tant qu'on ne l'a pas changée.
+    const tick = setInterval(() => { if (!dt) paintChips(); }, 20000);
+    S.cleanups.push(() => clearInterval(tick));
+
+    /* Confirmation dans la carte, sous le bouton : rien ne flotte par-dessus la page. */
+    const savedLine = h('div', { class: 'saved-line', role: 'status', 'aria-live': 'polite' });
+    function showSaved(e, n) {
+      savedLine.textContent = '';
+      if (!e) return;
+      savedLine.append(icon('check'), h('span', { text: T('Série {0} enregistrée · {1}', n, entryText(e)) }),
+        h('button', { type: 'button', class: 'undo', text: T('Annuler'), onclick: () => {
+          S.entries = S.entries.filter((x) => x.id !== e.id); saveUser();
+          lastSaved = null; showSaved(null); paint(); onSaved();
+        } }));
+    }
+    const lockedNow = () => { const p = plannedAll(); return !!p && doneN() >= p.length + extra; };
+    const nextEx = () => { const id = currentTodo(dayK); return id && id !== ex.id ? id : null; };
+    const goNext = (id) => replaceNow('exercise', { id, day: dayK }, 'fwd');
+    const endBtns = () => {
+      const id = nextEx();
+      return id ? h('button', { type: 'button', class: 'btn acc wide big next', onclick: () => goNext(id) }, h('span', { class: 'nx' }, h('small', { text: T('Exercice suivant') }), h('b', { text: dn(getEx(id)) })), icon('right'))
+        : h('button', { type: 'button', class: 'btn acc wide big', onclick: () => replaceNow('session', dayK, 'fwd') }, icon('check'), h('span', { text: T('Voir la séance terminée') }));
+    };
+    // Zone de saisie / zone « tout est fait »
+    const entry = h('div', { class: 'serie-entry' });
+    const doneBox = h('div', { class: 'serie-done' });
+    function paint() {
       const n = doneN();
-      title.textContent = T('Série {0}', n + 1);
-      sub.textContent = n ? plural(n, 'déjà faite', 'déjà faites') : fixedDay ? cap(fDayLong.format(keyDate(fixedDay))) : T('Première série du jour');
-      const p = ctx.day ? nextPlanned() : null;
-      plannedLine.hidden = !p;
-      if (p) plannedLine.textContent = T('Prévu : {0}', plannedText(p));
-      const l = lastOf(ex.id);
-      copyLink.hidden = !l || l.c === 1;
-      if (l && l.c !== 1) { copyLink.textContent = ''; copyLink.append(icon('copy'), h('span', { text: T('Recopier {0}', entryText(l)) })); }
+      const p = plannedAll();
+      const locked = lockedNow();
+      title.textContent = locked ? T('Séries prévues faites') : p && n < p.length ? T('Série {0} sur {1}', n + 1, p.length) : T('Série {0}', n + 1);
+      sub.textContent = locked ? '' : n ? plural(n, 'déjà faite', 'déjà faites') : fixedDay ? cap(fDayLong.format(keyDate(fixedDay))) : T('Première série du jour');
+      const np = nextPlanned();
+      plannedLine.hidden = !np || locked;
+      if (np) plannedLine.textContent = T('Prévu : {0}', plannedText(np));
+      entry.hidden = locked;
+      doneBox.hidden = !locked;
+      multiLink.hidden = locked;
+      if (locked) {
+        doneBox.textContent = '';
+        doneBox.append(h('p', { class: 'done-t' }, icon('check'), h('span', { text: plural(p.length, 'série prévue faite', 'séries prévues faites') + T(' pour cet exercice.') })),
+          endBtns(),
+          h('button', { type: 'button', class: 'linkbtn', onclick: () => { extra++; paint(); wIn.focus(); } }, icon('plus'), h('span', { text: T('Une série en plus') })));
+      }
+      paintChips();
     }
-    function setFrom(src) {
-      const rv = rowVals(src); if (!rv) return;
-      const bw = !!rv.bw;
-      const w = bw ? (rv.neg ? -1 : 1) * (parseNum(rv.w) || 0) : parseNum(rv.w);
-      const r = parseNum(rv.r);
-      if (bw !== !!v.bw) { v.bw = bw; wW.rebuild({ list: weightList(stepOf(ex), bw), signed: bw }); paintW(); }
-      if (Number.isFinite(w)) { v.w = w; wW.set(w); }
-      if (Number.isInteger(r) && r > 0) { v.r = r; wR.set(r); }
-      touched = true; paintChips();
-      card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
-    }
-    copyLink.addEventListener('click', () => { const l = lastOf(ex.id); if (l) setFrom(l); });
     async function save() {
       msg.textContent = '';
-      const r = valsToEntry(v);
+      if (lockedNow()) return true;
+      const cur = read();
+      const vals = { w: cur.w, r: cur.r, bw: v.bw };
+      if (!(Number.isInteger(cur.r) && cur.r > 0) || !Number.isFinite(cur.w) || (!v.bw && cur.w <= 0)) {
+        msg.textContent = T('Poids : un nombre positif (au poids du corps, le total doit rester positif). Répétitions : un nombre entier.');
+        return false;
+      }
+      const r = valsToEntry(vals);
       if (r.noBw) { if (!(await askBodyWeight())) return false; return save(); }
       if (!r.ok) { msg.textContent = T('Poids : un nombre positif (au poids du corps, le total doit rester positif). Répétitions : un nombre entier.'); return false; }
-      const e = await saveSet(ex, r.vals, manual && dt ? dt : Date.now());
-      touched = false;
-      if (fixedDay) dt = baseDt(); else { dt = null; manual = false; }
-      const p = ctx.day ? nextPlanned() : null;
-      if (p) { const nv = startVals(ex, p); if (!!nv.bw === !!v.bw) { v.w = nv.w; v.r = nv.r; wW.set(v.w); wR.set(v.r); } }
-      paintTop(); paintChips();
-      toast(T('Série enregistrée : {0}', entryText(e)), { ms: 6000, sticky: true, action: () => {
-        S.entries = S.entries.filter((x) => x.id !== e.id); saveUser(); paintTop(); onSaved();
-      } });
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      const e = await saveSet(ex, r.vals, dt || Date.now());
+      lastSaved = e;
+      v.w = cur.w; v.r = cur.r;
+      if (fixedDay) dt = baseDt(); else dt = null;
+      const np = nextPlanned();
+      if (np) { const nv = startVals(ex, np); if (!!nv.bw === !!v.bw) { v.w = nv.w; v.r = nv.r; } }
+      fill();
+      showSaved(e, doneN());
+      paint();
       onSaved();
+      // Toutes les séries prévues faites : on propose de passer à l'exercice suivant.
+      const p = plannedAll();
+      if (p && doneN() === p.length + extra) {
+        const id = nextEx();
+        bottomSheet((bx, close) => {
+          bx.append(h('div', { class: 'bs-done' }, h('span', { class: 'bs-done-ic' }, icon('check')),
+            h('h2', { class: 'bs-title', text: T('Toutes les séries prévues sont faites') }),
+            h('p', { class: 'bs-note', text: id ? T('Passer à l’exercice suivant ?') : T('C’était le dernier exercice de la séance.') })),
+          id ? h('button', { type: 'button', class: 'btn acc wide big', onclick: () => close(() => goNext(id)) }, h('span', { text: dn(getEx(id)) }), icon('right'))
+            : h('button', { type: 'button', class: 'btn acc wide big', onclick: () => close(() => replaceNow('session', dayK, 'fwd')) }, h('span', { text: T('Voir la séance') })),
+          h('button', { type: 'button', class: 'btn ghost wide', text: T('Rester ici'), onclick: () => close() }));
+        });
+      }
       return true;
     }
     const multiLink = h('button', { type: 'button', class: 'linkbtn' }, icon('stack'), h('span', { text: T('Noter plusieurs séries') }));
-    const guard = { dirty: () => touched, save, title: T('Valider cette série ?'), text: T('Tu as réglé une série sans la valider.'), yes: T('Valider la série'), no: T('Ne pas valider') };
-    /* L'ancienne saisie (plusieurs lignes, date de chaque série) dans une fenêtre du bas. */
+    // Quitter avec des valeurs changées et pas validées : WorkLog demande.
+    let base = '';
+    const sig = () => wIn.value + '|' + rIn.value;
+    const guard = { dirty: () => !lockedNow() && sig() !== base, save, title: T('Valider cette série ?'), text: T('Tu as changé une série sans la valider.'), yes: T('Valider la série'), no: T('Ne pas valider') };
+    const markBase = () => { base = sig(); };
     function openMulti(draft) {
-      bottomSheet((box, close, setCancel) => {
+      bottomSheet((bx, close, setCancel) => {
         const restore = () => { S.guard = guard; };
-        const rest = plannedAll() ? plannedAll().slice(doneN()) : null;
-        const form = buildForm(ex, { day: ctx.day, draft, planned: rest && rest.length ? rest : null, arg: ctx.arg }, () => close(() => { restore(); paintTop(); onSaved(); }));
+        const p = plannedAll();
+        const rest = p ? p.slice(doneN()) : null;
+        const form = buildForm(ex, { day: ctx.day, draft, planned: rest && rest.length ? rest : null, arg: ctx.arg }, () => close(() => { restore(); paint(); onSaved(); }));
         form.classList.add('in-sheet');
-        box.classList.add('multi');
-        box.append(form);
+        bx.classList.add('multi');
+        bx.append(form);
         setCancel(restore);
       });
     }
     multiLink.addEventListener('click', () => openMulti(null));
-    paintW(); paintChips(); paintTop();
-    card.append(
-      h('div', { class: 'serie-head' }, title, sub),
-      plannedLine,
-      h('div', { class: 'wheels' }, wW, wR),
-      h('p', { class: 'wl-hint', text: T('Fais glisser, ou touche le chiffre pour le taper.') }),
-      h('div', { class: 'mini-chips' }, bwBtn, stepBtn, dtChip),
+    fill(); paint();
+    entry.append(
+      h('div', { class: 'bigboxes' }, box(wLab, wIn, wUnit, wPrev), box(h('span', { class: 'kicker', text: T('Répétitions') }), rIn, h('span', { class: 'unit', text: T('reps') }))),
+      h('div', { class: 'mini-chips' }, bwBtn, dtChip),
       msg,
-      h('button', { type: 'button', class: 'btn acc wide big', onclick: save }, icon('check'), h('span', { text: T('Valider la série') })),
-      h('div', { class: 'serie-links' }, multiLink, copyLink));
+      h('button', { type: 'button', class: 'btn acc wide big', onclick: async () => { if (await save()) markBase(); } }, icon('check'), h('span', { text: T('Valider la série') })));
+    card.append(h('div', { class: 'serie-head' }, title, sub), plannedLine, entry, doneBox, savedLine, h('div', { class: 'serie-links' }, multiLink));
+    markBase();
     S.guard = guard;
-    card.setFrom = setFrom;
+    card.setFrom = (src) => {
+      const rv = rowVals(src); if (!rv) return;
+      const bw = !!rv.bw && bwOk;
+      v.bw = bw;
+      v.w = bw ? (rv.neg ? -1 : 1) * (parseNum(rv.w) || 0) : parseNum(rv.w);
+      v.r = parseNum(rv.r);
+      fill(); paint();
+      card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+    };
     card.openMulti = openMulti;
-    card.refresh = () => { paintTop(); paintChips(); };
+    card.refresh = () => { paint(); };
     return card;
   }
 
+  /* Muscle principal + un secondaire ; « … » déplie les autres. */
+  function muscleChips(ex, secM) {
+    const g = GROUPS.get(ex.top);
+    const box = h('div', { class: 'mchips' }, h('span', { class: 'mchip main', style: g ? { '--c': g.color } : null, text: frMuscle(ex.p) }));
+    if (secM.length) box.append(h('span', { class: 'mchip', text: secM[0] }));
+    if (secM.length > 1) {
+      const more = h('button', { type: 'button', class: 'mchip more', 'aria-expanded': 'false', 'aria-label': T('Voir les autres muscles secondaires ({0})', secM.length - 1), text: '…' });
+      more.addEventListener('click', () => { more.replaceWith(...secM.slice(1).map((m) => h('span', { class: 'mchip', text: m }))); });
+      box.append(more);
+    }
+    return box;
+  }
   function viewExercise(arg, ui) {
     const id = typeof arg === 'string' ? arg : (arg && arg.id) || '';
     const dayCtx = arg && typeof arg === 'object' && arg.day ? arg.day : null;
@@ -1816,7 +1877,7 @@
     let metric = metrics.includes(ui.metric) ? ui.metric : metrics[0];
     let explainOpen = !!ui.explain;   // « En savoir plus » déplié
     // Sections repliables : « Progression » ouverte, « Dernière séance » et « Animation et muscles » fermées.
-    const openSec = Object.assign({ last: false, prog: true, form: true, vis: false }, ui.openSec || {});
+    const openSec = Object.assign({ last: false, prog: true, form: true }, ui.openSec || {});
     S.getUI = () => ({ range, metric, explain: explainOpen, openSec });
     const wrap = h('main', { class: 'page exercise' });
     const fromHome = prevView() === 'home' || prevView() === null;
@@ -1826,7 +1887,7 @@
     wrap.append(h('div', { class: 'ex-top' },
       ex.missing ? null : h('span', { class: 'ex-thumb' }, thumb(ex, { zoom: true })),
       h('div', { class: 'ex-id' }, h('h1', { class: 'ex-title', text: dn(ex) }),
-        ex.missing ? null : h('div', { class: 'mchips' }, h('span', { class: 'mchip main', text: frMuscle(ex.p) }), secM.slice(0, 3).map((m) => h('span', { class: 'mchip', text: m }))))));
+        ex.missing ? null : muscleChips(ex, secM))));
     wrap.append(noteBox(() => S.notes[id], (v) => { if (v.trim()) S.notes[id] = v; else delete S.notes[id]; },
       T('Note : réglages, position de la machine…'), T('Note sur l’exercice')));
 
@@ -1931,16 +1992,6 @@
     }
     wrap.append(fold('prog', T('Ta progression'), h('div', { class: 'card' }, chartBox)));
     wrap.append(fold('last', T('Dernière séance'), h('div', { class: 'card' }, recent), lastSub));
-    if (!ex.missing) {
-      const visBox = h('div', { class: 'visbox' }, visual(ex));
-      visBox.append(h('div', { class: 'legend' },
-        h('p', {}, h('i', { class: 'p' }), h('span', { text: T('Muscle principal : ') }), h('b', { text: frMuscle(ex.p) })),
-        secM.length ? h('p', {}, h('i', { class: 's' }), h('span', { text: T('Muscles secondaires : ') }), secM.join(', ')) : null));
-      if (ex.src === 0 && !has3d(ex)) visBox.append(h('p', { class: 'credit', text: T('Animation © Gym visual') }));
-      if (has3d(ex) && W3 && W3.credit) visBox.append(h('p', { class: 'credit', text: W3.credit }));
-      if (has3d(ex) && W3 && W3.creditOf) { const c = W3.creditOf(ex.id); if (c) visBox.append(h('p', { class: 'credit', text: c })); }
-      wrap.append(fold('vis', T('Animation et muscles'), visBox));
-    }
     refresh();
     return wrap;
   }
@@ -2467,7 +2518,67 @@
     const body = h('div');
     const clearBtn = h('button', { type: 'button', class: 'clear', 'aria-label': T('Effacer la recherche'), hidden: !search.value,
       onclick: () => { search.value = ''; clearBtn.hidden = true; render(); search.focus(); } }, icon('close'));
-    wrap.append(h('div', { class: 'searchbox' }, search, clearBtn), tabBar, body);
+    // Filtres (0.8.1) : type, matériel, groupe musculaire, favoris, déjà faits. Un bouton à côté de la
+    // recherche ouvre la fenêtre des filtres ; seuls les filtres choisis restent affichés, en pastilles.
+    const F0 = ui.f || {};
+    const F = { type: ['all', 'musc', 'str'].includes(F0.type) ? F0.type : 'all', eq: new Set(Array.isArray(F0.eq) ? F0.eq.filter((k) => EQUIP.some((x) => x[0] === k)) : []),
+      group: GROUPS.has(F0.group) ? F0.group : 'all', fav: !!F0.fav, done: !!F0.done, uni: !!F0.uni, home: !!F0.home };
+    const nF = () => (F.type !== 'all' ? 1 : 0) + F.eq.size + (F.group !== 'all' ? 1 : 0) + (F.fav ? 1 : 0) + (F.done ? 1 : 0) + (F.uni ? 1 : 0) + (F.home ? 1 : 0);
+    const doneIds = () => new Set(S.entries.map((e) => e.exerciseId));
+    const passF = (ex, dset) => (F.type === 'all' || (F.type === 'str' ? ex.st : !ex.st)) && (!F.eq.size || F.eq.has(eqOf(ex)))
+      && (F.group === 'all' || ex.top === F.group) && (!F.fav || S.favs.has(ex.id)) && (!F.done || dset.has(ex.id))
+      && (!F.uni || isUni(ex)) && (!F.home || isHome(ex));
+    const fBtn = h('button', { type: 'button', class: 'filterbtn', 'aria-haspopup': 'dialog', onclick: () => openFilters() });
+    const fRow = h('div', { class: 'fchips-row' });
+    function paintF() {
+      const n = nF();
+      fBtn.textContent = '';
+      fBtn.append(icon('sliders'));
+      if (n) fBtn.append(h('span', { class: 'fbadge', text: String(n) }));
+      fBtn.setAttribute('aria-label', n ? T('Filtres ({0} actifs)', n) : T('Filtres'));
+      fBtn.classList.toggle('on', n > 0);
+      fRow.textContent = '';
+      fRow.hidden = !n;
+      const pillX = (label, off) => h('button', { type: 'button', class: 'fchip on', 'aria-label': T('Retirer le filtre {0}', label), onclick: () => { off(); paintF(); render(); } }, label, icon('close'));
+      if (F.type !== 'all') fRow.append(pillX(F.type === 'str' ? T('Étirements') : T('Musculation'), () => { F.type = 'all'; }));
+      for (const k of F.eq) fRow.append(pillX(eqLabel(k), () => { F.eq.delete(k); }));
+      if (F.group !== 'all') fRow.append(pillX(T((TREE.find((t) => t.id === F.group) || {}).label || ''), () => { F.group = 'all'; }));
+      if (F.fav) fRow.append(pillX(T('Favoris'), () => { F.fav = false; }));
+      if (F.done) fRow.append(pillX(T('Déjà faits'), () => { F.done = false; }));
+      if (F.uni) fRow.append(pillX(T('Unilatéral'), () => { F.uni = false; }));
+      if (F.home) fRow.append(pillX(T('À la maison'), () => { F.home = false; }));
+      if (n > 1) fRow.append(h('button', { type: 'button', class: 'linkbtn', text: T('Tout effacer'), onclick: () => { resetF(); paintF(); render(); } }));
+    }
+    const resetF = () => { F.type = 'all'; F.eq.clear(); F.group = 'all'; F.fav = false; F.done = false; F.uni = false; F.home = false; };
+    function openFilters() {
+      bottomSheet((box, close) => {
+        const dset = doneIds();
+        const countBtn = h('button', { type: 'button', class: 'btn acc wide big', onclick: () => close(() => { paintF(); render(); }) });
+        const paintCount = () => {
+          const raw = search.value.trim();
+          const n = (raw ? searchExercises(raw) : S.exercises).filter((ex) => passF(ex, dset)).length;
+          countBtn.textContent = nF() ? T('Voir {0}', plural(n, 'exercice', 'exercices')) : T('Voir tous les exercices');
+        };
+        const sec = (title, ...kids) => h('section', { class: 'fsec' }, h('h3', { class: 'kicker', text: title }), h('div', { class: 'fchips' }, kids.flat()));
+        const toggle = (label, on, fn) => { const b = h('button', { type: 'button', class: 'fchip', 'aria-pressed': String(on), text: label }); b.addEventListener('click', () => { fn(b); paintCount(); }); return b; };
+        const single = (opts, get, set) => opts.map(([k, label]) => toggle(label, get() === k, (b) => { set(k); b.parentElement.querySelectorAll('.fchip').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); }));
+        box.append(h('div', { class: 'fhead' }, h('h2', { class: 'bs-title', text: T('Filtres') }),
+          h('button', { type: 'button', class: 'linkbtn', text: T('Réinitialiser'), onclick: () => { resetF(); close(() => { paintF(); render(); openFilters(); }); } })));
+        box.append(
+          sec(T('Type'), single([['all', T('Tout')], ['musc', T('Musculation')], ['str', T('Étirements')]], () => F.type, (k) => { F.type = k; })),
+          sec(T('Matériel'), EQUIP.map(([k]) => toggle(eqLabel(k), F.eq.has(k), (b) => { if (F.eq.has(k)) F.eq.delete(k); else F.eq.add(k); b.setAttribute('aria-pressed', String(F.eq.has(k))); }))),
+          sec(T('Groupe musculaire'), single([['all', T('Tous')]].concat(TREE.map((t) => [t.id, T(t.label)])), () => F.group, (k) => { F.group = k; })),
+          sec(T('Autres'), toggle(T('Favoris'), F.fav, (b) => { F.fav = !F.fav; b.setAttribute('aria-pressed', String(F.fav)); }),
+            toggle(T('Déjà faits'), F.done, (b) => { F.done = !F.done; b.setAttribute('aria-pressed', String(F.done)); }),
+            toggle(T('Unilatéral'), F.uni, (b) => { F.uni = !F.uni; b.setAttribute('aria-pressed', String(F.uni)); }),
+            toggle(T('À la maison'), F.home, (b) => { F.home = !F.home; b.setAttribute('aria-pressed', String(F.home)); })),
+          countBtn);
+        box.classList.add('filters');
+        paintCount();
+      });
+    }
+    paintF();
+    wrap.append(h('div', { class: 'searchrow' }, h('div', { class: 'searchbox' }, search, clearBtn), fBtn), fRow, tabBar, body);
     let tab = TABS.some((t) => t[0] === ui.tab) ? ui.tab : (S.favs.size ? 'fav' : 'musc');
     // Groupes dépliés (Musculation, Étirements) ou repliés (Favoris, dépliés par défaut).
     const toggled = new Set(Array.isArray(ui.open) ? ui.open : []);
@@ -2477,7 +2588,7 @@
     // 0.8.0 : on choisit d'abord une tuile (Favoris, un muscle, Étirements), puis la liste s'affiche.
     let grp = ui.grp === 'fav' || ui.grp === 'str' || TREE.some((t) => t.id === ui.grp) ? ui.grp : null;
     let sub = typeof ui.sub === 'string' ? ui.sub : 'all';
-    S.getUI = () => ({ q: search.value, tab, open: [...toggled], sType, sGroup, grp, sub });
+    S.getUI = () => ({ q: search.value, tab, open: [...toggled], sType, sGroup, grp, sub, f: { type: F.type, eq: [...F.eq], group: F.group, fav: F.fav, done: F.done, uni: F.uni, home: F.home } });
     search.placeholder = T('Ou cherche un exercice');
     const inTab = (ex) => (tab === 'fav' ? S.favs.has(ex.id) : tab === 'str' ? ex.st : !ex.st);
     const favIn = filePicker(async (f) => { if (await importPart(f, 'favs')) render(); });
@@ -2557,25 +2668,15 @@
       }
       const raw = search.value.trim();
       renderTabs(!!raw);
-      if (raw) {
-        const found = searchExercises(raw);
-        const typeOk = (ex, t) => (t === 'all' ? true : t === 'fav' ? S.favs.has(ex.id) : t === 'str' ? ex.st : !ex.st);
-        const byType = found.filter((ex) => typeOk(ex, sType));
-        const hits = sGroup === 'all' ? byType : byType.filter((ex) => ex.top === sGroup);
-        // Catégories pour chercher seulement dans ce qu'on veut ; le chiffre = nombre de résultats.
-        const chip = (label, on, n, fn) => h('button', { type: 'button', class: 'chip small', 'aria-pressed': String(on), onclick: fn }, label, h('span', { class: 'n', text: String(n) }));
-        body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': T('Type d’exercice') },
-          [['all', T('Tout')], ['fav', T('Favoris')], ['musc', T('Musculation')], ['str', T('Étirements')]].map(([id, label]) =>
-            chip(T(label), sType === id, found.filter((ex) => typeOk(ex, id) && (sGroup === 'all' || ex.top === sGroup)).length, () => { sType = id; render(); }))));
-        const tops = TREE.filter((t) => byType.some((ex) => ex.top === t.id) || sGroup === t.id);
-        if (tops.length > 1 || sGroup !== 'all') {
-          body.append(h('div', { class: 'chips scroll', role: 'group', 'aria-label': T('Groupe musculaire') },
-            chip(T('Tous les muscles'), sGroup === 'all', byType.length, () => { sGroup = 'all'; render(); }),
-            tops.map((t) => chip(T(t.label), sGroup === t.id, byType.filter((ex) => ex.top === t.id).length, () => { sGroup = t.id; render(); }))));
-        }
-        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: found.length ? T('Aucun résultat dans cette catégorie.') : T('Aucun exercice ne correspond à « {0} ».', raw) })); return; }
-        body.append(h('div', { class: 'results' }, hits.slice(0, 60).map((ex) => exRow(ex, true))));
-        if (hits.length > 60) body.append(h('p', { class: 'empty-note more', text: T('{0} résultats, les 60 premiers sont affichés. Précise ta recherche ou choisis une catégorie.', hits.length) }));
+      if (raw || nF()) {
+        // Recherche dans tous les exercices, puis les filtres choisis.
+        const dset = doneIds();
+        const found = raw ? searchExercises(raw) : S.exercises.slice().sort((a, b) => dn(a).localeCompare(dn(b), 'fr'));
+        const hits = found.filter((ex) => passF(ex, dset));
+        body.append(h('p', { class: 'res-n', text: plural(hits.length, 'exercice', 'exercices') }));
+        if (!hits.length) { body.append(h('p', { class: 'empty-note', text: raw && !found.length ? T('Aucun exercice ne correspond à « {0} ».', raw) : T('Aucun exercice avec ces filtres.') })); return; }
+        body.append(h('div', { class: 'results' }, hits.slice(0, 80).map((ex) => exRow(ex, true))));
+        if (hits.length > 80) body.append(h('p', { class: 'empty-note more', text: T('{0} résultats, les 80 premiers sont affichés. Précise ta recherche ou ajoute un filtre.', hits.length) }));
         return;
       }
       tabBar.hidden = true;
@@ -2585,8 +2686,8 @@
         const nMusc = (id) => S.exercises.filter((ex) => ex.top === id && !ex.st).length;
         const nFav = S.exercises.filter((ex) => S.favs.has(ex.id)).length;
         const nStr = S.exercises.filter((ex) => ex.st).length;
-        const tile = (g, label, n, cls, ic) => h('button', { type: 'button', class: 'mtile ' + (cls || ''), onclick: () => pickGrp(g) },
-          h('span', { class: 'mt-top' }, ic ? icon(ic, ic === 'star' ? 'fill' : '') : h('span'), h('span', { class: 'mt-n', text: fmtNum(n) })),
+        const tile = (g, label, n, cls, ic) => h('button', { type: 'button', class: 'mtile ' + (cls || ''), style: GROUPS.get(g) ? { '--c': GROUPS.get(g).color } : null, onclick: () => pickGrp(g) },
+          h('span', { class: 'mt-top' }, ic ? icon(ic, ic === 'star' ? 'fill' : '') : h('span', { class: 'mt-dot', 'aria-hidden': 'true' }), h('span', { class: 'mt-n', text: fmtNum(n) })),
           h('strong', { text: label }));
         body.append(h('h2', { class: 'lib-q', text: T('Choisis un muscle') }),
           h('div', { class: 'mtiles' },
@@ -2598,7 +2699,11 @@
       const gLabel = grp === 'fav' ? T('Favoris') : grp === 'str' ? T('Étirements') : TREE.find((t) => t.id === grp).label;
       body.append(h('div', { class: 'grp-head' },
         h('button', { type: 'button', class: 'pill', onclick: () => pickGrp(null) }, icon('left'), T('Muscles')),
-        h('h2', { text: gLabel })));
+        h('h2', { text: gLabel }),
+        grp === 'fav' && !pick ? h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Exporter ou importer les favoris'), onclick: () => actionSheet(T('Favoris'), [
+          { icon: 'export', label: T('Exporter les favoris'), run: exportFavs },
+          { icon: 'import', label: T('Importer des favoris'), run: () => favIn.click() }]) }, icon('dots', 'fill')) : null,
+        grp === 'fav' ? favIn : null));
       if (grp !== 'fav' && grp !== 'str') {
         // Un groupe musculaire : ses sous-groupes en pastilles, puis la liste.
         tab = 'musc';
@@ -2631,11 +2736,6 @@
         }
       }
       // Favoris : exporter seulement les favoris, ou importer ceux d'un fichier.
-      if (tab === 'fav' && !pick) {
-        body.append(h('div', { class: 'tools' },
-          h('button', { type: 'button', class: 'pill', onclick: exportFavs }, icon('export'), T('Exporter les favoris')),
-          h('button', { type: 'button', class: 'pill', onclick: () => favIn.click() }, icon('import'), T('Importer')), favIn));
-      }
       if (!wrapG.childElementCount) {
         body.append(h('p', { class: 'empty-note', text: tab === 'fav' ? T('Aucun favori pour l’instant. Touche l’étoile à côté d’un exercice pour le retrouver ici, rangé par catégorie.') : T('Aucun exercice dans cet onglet.') }));
         return;
@@ -2797,6 +2897,7 @@
       const st = cleanSettings(d.settings);
       if (st.bw && !bwKg()) S.settings.bw = st.bw;
       for (const [k, v] of Object.entries(st.steps)) if (!S.settings.steps[k]) S.settings.steps[k] = v;
+      if (st.diag) S.settings.diag = true;
       if (st.nas.url && !S.settings.nas.url) S.settings.nas = st.nas;
     }
     return res;
@@ -3080,8 +3181,10 @@
         nRec += rec;
         const named = has && S.sessions[k];
         const isToday = isCurrent && d === now.getDate();
+        const ng = named && GROUPS.get(named.main);
         grid.append(h('button', {
-          type: 'button', class: 'day' + (has ? ' has' : '') + (rec ? ' rec' : '') + (planned ? ' planned' : '') + (isToday ? ' today' : '') + (k === sel ? ' sel' : ''), text: String(d),
+          type: 'button', class: 'day' + (has ? ' has' : '') + (rec ? ' rec' : '') + (planned ? ' planned' : '') + (isToday ? ' today' : '') + (k === sel ? ' sel' : '') + (ng ? ' named' : ''), text: String(d),
+          style: ng ? { '--c': ng.color } : null,
           'aria-pressed': String(k === sel),
           'aria-label': d + ' ' + fMonth.format(new Date(y, m, 1)) + (has ? T(', séance') : planned ? T(', séance prévue') : '') + (rec ? T(', record') : '') + (named ? ' : ' + sessionTitle(named) : ''),
           onclick: () => select(k),
@@ -3450,14 +3553,80 @@
     saveUser();
   }
   const planTitle = (p) => p.name.trim() || T('Séance sans nom');
+  /* Séance d'étirements ou de mobilité : la plupart de ses exercices sont des étirements ou des exercices tenus. */
+  const isStretchPlan = (p) => p.items.length > 0 && p.items.filter((it) => { const ex = getEx(it.ex); return ex.st || cardioKind(ex) === 'hold'; }).length * 2 >= p.items.length;
+  /* Durée estimée d'une séance d'étirements : temps prévus (30 s par défaut) + 10 s pour changer de position. */
+  function planMinutes(p) {
+    let sec = 0;
+    for (const it of p.items) {
+      const sets = (it.sets || []).filter(keepSet);
+      if (!sets.length) { sec += 30 + 10; continue; }
+      for (const x of sets) sec += (fin(x.dur) && x.dur > 0 ? x.dur : 30) + 10;
+    }
+    return Math.max(1, Math.round(sec / 60));
+  }
+  /* « Aujourd'hui » sur une séance type. Étirements / mobilité : ajoutés à ce qui est prévu. Musculation
+     avec une autre séance déjà prévue : on demande quoi remplacer. Les exercices déjà commencés aujourd'hui
+     ne sont jamais retirés. Avec plusieurs séances prévues (Jambes + Étirements, par exemple), on peut
+     remplacer seulement la séance de musculation, ou tout ce qui est prévu. */
   function startPlanToday(p) {
     if (!p.items.length) { toast(T('Ajoute au moins un exercice à cette séance.')); return; }
     const tk = todayKey();
-    startDay(tk, p);
-    p.last = tk;
-    saveUser();
-    go('session', tk);
-    toast(T('« {0} » ajoutée à aujourd’hui', planTitle(p)));
+    materialize(tk);
+    const d = S.days[tk];
+    const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
+    const order = d && !d.hidden ? dayOrder(tk) : [];
+    // Ce qui est prévu et pas encore commencé, regroupé par séance type d'origine.
+    const groups = [];
+    const seen = new Set();
+    for (const pid of (d && d.src) || []) {
+      const sp = S.plans.find((x) => x.id === pid);
+      if (!sp || sp.id === p.id) continue;
+      const ids = sp.items.map((it) => it.ex).filter((id) => order.includes(id) && !done.has(id) && !seen.has(id));
+      ids.forEach((id) => seen.add(id));
+      if (ids.length) groups.push({ plan: sp, ids, stretch: isStretchPlan(sp) });
+    }
+    const loose = order.filter((id) => !done.has(id) && !seen.has(id) && !p.items.some((it) => it.ex === id));
+    if (loose.length) groups.push({ plan: null, ids: loose, stretch: false });
+    const run = (remove) => {
+      if (remove && remove.length) {
+        const dd = dayMeta(tk, true);
+        const drop = new Set(remove.flatMap((g) => g.ids));
+        dd.order = dayOrder(tk).filter((id) => !drop.has(id));
+        for (const id of drop) delete dd.plan[id];
+        const gone = new Set(remove.filter((g) => g.plan).map((g) => g.plan.id));
+        dd.src = (dd.src || []).filter((id) => !gone.has(id));
+        // Le nom de la journée suit la nouvelle séance de musculation.
+        if (remove.some((g) => !g.stretch)) delete S.sessions[tk];
+      }
+      startDay(tk, p);
+      p.last = tk;
+      saveUser();
+      go('session', tk);
+    };
+    if (!groups.length || isStretchPlan(p)) { run(null); return; }
+    const name = (g) => (g.plan ? planTitle(g.plan) : T('exercices ajoutés à la main'));
+    const list = (gs) => { const a = gs.map((g) => '« ' + name(g) + ' »'); return a.length > 1 ? a.slice(0, -1).join(', ') + T(' et ') + a[a.length - 1] : a[0] || ''; };
+    const muscu = groups.filter((g) => !g.stretch);
+    const others = groups.filter((g) => g.stretch);
+    bottomSheet((box, close) => {
+      const opt = (ic, title, sub, remove) => h('button', { type: 'button', class: 'bs-item two', onclick: () => close(() => run(remove)) }, icon(ic),
+        h('span', { class: 'bs-tt' }, h('b', { text: title }), sub ? h('small', { text: sub }) : null));
+      box.append(h('h2', { class: 'bs-title', text: groups.length > 1 ? T('Plusieurs séances sont prévues aujourd’hui') : T('Une séance est déjà prévue aujourd’hui') }),
+        h('p', { class: 'bs-note', text: T('Prévu : {0}. Les exercices déjà commencés restent.', list(groups)) }));
+      if (groups.length === 1) {
+        box.append(opt('swap', T('Remplacer « {0} »', name(groups[0])), T('par « {0} »', planTitle(p)), groups));
+      } else if (muscu.length && others.length) {
+        // Cas Jambes + Étirements : remplacer la musculation en gardant les étirements, ou tout remplacer.
+        box.append(opt('swap', T('Remplacer {0}', list(muscu)), T('et garder {0}', list(others)), muscu),
+          opt('swap', T('Remplacer {0}', list(groups)), T('tout ce qui est prévu est remplacé par « {0} »', planTitle(p)), groups));
+      } else {
+        for (const g of groups) box.append(opt('swap', T('Remplacer « {0} »', name(g)), T('et garder le reste'), [g]));
+        box.append(opt('swap', T('Tout remplacer'), T('retire {0}', list(groups)), groups));
+      }
+      box.append(opt('plus', T('Ajouter à ce qui est prévu'), T('« {0} » à la suite', planTitle(p)), null),
+        h('button', { type: 'button', class: 'btn ghost wide bs-cancel', text: T('Annuler'), onclick: () => close() }));
+    });
   }
   async function newFolder(after) {
     const n = await promptDialog(T('Nouveau dossier'), T('Nom du dossier'), '');
@@ -3476,7 +3645,11 @@
     const openF = new Set(Array.isArray(ui.openF) ? ui.openF : []);
     S.getUI = () => ({ tab, filter, pfilter, openF: [...openF] });
     const wrap = h('main', { class: 'page seances' });
-    wrap.append(h('header', { class: 'bar' }, h('h1', { class: 'grow big', text: T('Séances') })));
+    // « … » en haut à droite : exporter (toutes les séances types ou certaines) ou importer.
+    wrap.append(h('header', { class: 'bar' }, h('h1', { class: 'grow big', text: T('Séances') }),
+      h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Exporter ou importer des séances'), onclick: () => actionSheet(T('Séances types'), [
+        S.plans.length ? { icon: 'export', label: T('Exporter des séances'), run: exportPlansSheet } : null,
+        { icon: 'import', label: T('Importer des séances'), run: () => { const inp = wrap.querySelector('input[type=file]'); if (inp) inp.click(); } }].filter(Boolean)) }, icon('dots', 'fill'))));
     const tabBar = h('div', { class: 'tabs two', role: 'tablist' });
     const body = h('div');
     wrap.append(tabBar, body);
@@ -3551,10 +3724,7 @@
       body.append(h('div', { class: 'plan-btns' },
         h('button', { type: 'button', class: 'btn primary wide', onclick: () => createPlan() }, icon('plus'), T(' Créer une séance')),
         h('button', { type: 'button', class: 'newfolder', onclick: () => newFolder(() => render()) }, icon('folderplus'), h('span', { text: T('Nouveau dossier') }))));
-      // Exporter toutes les séances types ou seulement certaines ; importer celles d'un fichier.
-      body.append(h('div', { class: 'tools' },
-        S.plans.length ? h('button', { type: 'button', class: 'pill', onclick: exportPlansSheet }, icon('export'), T('Exporter des séances')) : null,
-        h('button', { type: 'button', class: 'pill', onclick: () => plansIn.click() }, icon('import'), T('Importer')), plansIn));
+      body.append(plansIn);
       if (!S.plans.length && !allFolders().length) {
         body.append(h('div', { class: 'card empty-card' }, h('strong', { text: T('Aucune séance type') }),
           h('p', { text: T('Crée une séance (Push, Jambes…), ajoute ses exercices et, si tu veux, les séries et charges prévues. Range-la dans un dossier, puis lance-la le jour où tu la fais.') })));
@@ -3597,8 +3767,9 @@
         h('span', { class: 'handle phandle', role: 'button', 'aria-label': T('Glisser « {0} » vers un autre dossier', planTitle(p)) }, icon('grip')),
         h('button', { type: 'button', class: 'pmain', onclick: () => go('plan', p.id) },
           h('div', { class: 'nm', text: planTitle(p) }),
-          g ? h('div', { class: 'tags' }, tag(p.main, true), p.sec.map((id) => tag(id))) : null,
-          h('div', { class: 'meta', text: plural(p.items.length, 'exercice', 'exercices') + (nSets ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · ' + T('faite {0}', ago(p.last)) : '') })),
+          g ? h('div', { class: 'tags' }, tag(p.main, true)) : null,
+          h('div', { class: 'meta' }, isStretchPlan(p) ? h('b', { class: 'pmin' }, icon('clock'), T('≈ {0} min', planMinutes(p))) : null,
+            (isStretchPlan(p) ? ' · ' : '') + plural(p.items.length, 'exercice', 'exercices') + (nSets && !isStretchPlan(p) ? ' · ' + plural(nSets, 'série prévue', 'séries prévues') : '') + (p.last ? ' · ' + T('faite {0}', ago(p.last)) : ''))),
         h('button', { type: 'button', class: 'pgo', 'aria-label': T('Faire « {0} » aujourd’hui', planTitle(p)), onclick: () => startPlanToday(p) }, icon('play'), h('span', { text: T('Aujourd’hui') })),
         h('button', { type: 'button', class: 'pmore', 'aria-label': T('Options de « {0} »', planTitle(p)), onclick: () => planMenu(p) }, icon('dots', 'fill')));
     }
@@ -4159,13 +4330,23 @@
     const cr = h('input', { type: 'checkbox' });
     cr.checked = crashOn();
     cr.addEventListener('change', () => { lsSet(CRASH_KEY, cr.checked ? '1' : '0'); diagWrite([]); diagApply(); });
-    wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Diagnostic') }),
+    if (S.settings.diag) wrap.append(h('section', { class: 'sec' }, h('h2', { text: T('Diagnostic') }),
       h('div', { class: 'card' },
         h('label', { class: 'gs-row' }, dg, h('span', { class: 'gl', text: T('Afficher le compteur') })),
         h('p', { class: 'hint', text: T('Affiche en bas de l’écran le nombre de lignes, de vignettes animées et de catégories ouvertes.') }),
         h('label', { class: 'gs-row' }, cr, h('span', { class: 'gl', text: T('Rapports de plantage') })),
         h('p', { class: 'hint', text: T('L’app note discrètement son état toutes les 2 secondes, sur ce téléphone uniquement. Si elle se fige ou s’arrête sans être fermée normalement, le relevé de juste avant s’affiche à la réouverture, prêt à être copié.') }))));
-    wrap.append(h('p', { class: 'ver-line', text: T('WorkLog version {0}', APP_VERSION) }));
+    // Diagnostic caché : 7 appuis sur la version le font apparaître (gardé dans l'export complet).
+    let taps = 0; let tapT = 0;
+    const ver = h('button', { type: 'button', class: 'ver-line', text: T('WorkLog version {0}', APP_VERSION) });
+    ver.addEventListener('click', () => {
+      if (S.settings.diag) return;
+      const now = Date.now(); taps = now - tapT < 1500 ? taps + 1 : 1; tapT = now;
+      const left = 7 - taps;
+      if (left <= 0) { S.settings.diag = true; saveUser(); snapshot(); render(S.stack[S.stack.length - 1]); return; }
+      ver.textContent = left <= 4 ? T('Encore {0} appui(s) pour le diagnostic', left) : T('WorkLog version {0}', APP_VERSION);
+    });
+    wrap.append(ver);
     return wrap;
   }
 

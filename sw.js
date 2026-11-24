@@ -3,7 +3,7 @@
    - Liste des exercices : cache d'abord, mise à jour en arrière-plan.
    - Images et animations d'exercices déjà vues : gardées en cache (les plus anciennes sont retirées).
    Les séries, favoris et séances sont dans IndexedDB, pas ici. */
-const CACHE = 'worklog-0.8.0';
+const CACHE = 'worklog-0.8.1';
 const IMG_CACHE = 'worklog-img-v1';
 const IMG_MAX = 1500;   // environ 130 Mo d'images au plus
 let puts = 0;
