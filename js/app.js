@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.8.4';
+  const APP_VERSION = '0.8.5';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -943,7 +943,16 @@
     const wrap = h('div', { class: 'swipe' }, del, content);
     content.classList.add('swipe-c');
     let sx = 0; let sy = 0; let dx = 0; let mode = null; let open = false; let pid = null; let swiped = false;
-    const setX = (x, anim) => { content.style.transition = anim ? 'transform .18s ease' : 'none'; content.style.transform = x ? 'translateX(' + x + 'px)' : ''; };
+    // 0.8.5 : la poubelle rouge n'est visible que pendant le glissement (au repos, ses bords dépassaient
+    // des coins arrondis : fin trait rouge sous les lignes).
+    let hideT = 0;
+    const setX = (x, anim) => {
+      content.style.transition = anim ? 'transform .18s ease' : 'none'; content.style.transform = x ? 'translateX(' + x + 'px)' : '';
+      clearTimeout(hideT);
+      if (x) wrap.classList.add('moving');
+      else if (anim) hideT = setTimeout(() => wrap.classList.remove('moving'), 200);
+      else wrap.classList.remove('moving');
+    };
     const shut = () => { open = false; wrap.classList.remove('open'); setX(0, true); };
     content.addEventListener('pointerdown', (e) => {
       if (e.button > 0 || e.target.closest('.handle, input, textarea, select')) return;
@@ -3399,6 +3408,21 @@
     wrap.append(body);
     const refresh = () => { const y = window.scrollY; body.textContent = ''; body.append(dayDetail(key, refresh, (k) => { if (k === key) refresh(); else replaceNow('session', k); }, { timeline: true })); window.scrollTo(0, y); };
     refresh();
+    // 0.8.5 : à l'ouverture (et au retour d'une fiche), la carte de l'exercice en cours est entière à l'écran,
+    // « Valider la série » compris : on défile juste ce qu'il faut. Après une validation sur place, on ne bouge pas.
+    const showNow = () => {
+      const c = body.querySelector('.dcard.now');
+      if (!c || !c.isConnected) return;
+      let top = 0; for (let el = c; el; el = el.offsetParent) top += el.offsetTop;
+      const vTop = window.scrollY + 76; const vBot = window.scrollY + window.innerHeight - 16;
+      if (top >= vTop && top + c.offsetHeight <= vBot) return;
+      const dy = top < vTop ? top - vTop : Math.min(top + c.offsetHeight - vBot, top - vTop);
+      window.scrollTo(0, Math.max(0, window.scrollY + dy));
+    };
+    requestAnimationFrame(() => requestAnimationFrame(showNow));
+    // Et encore une fois à la fin de l'animation d'arrivée (certains navigateurs mesurent mal pendant le glissement).
+    const root = document.getElementById('app');
+    if (root) root.addEventListener('animationend', (e) => { if (e.target === root) showNow(); }, { once: true });
     return wrap;
   }
   function dayDetail(key, refresh, select, opts) {
@@ -3419,7 +3443,7 @@
         const doneIds = new Set(entries.map((e) => e.exerciseId));
         const k = order.filter((id) => doneIds.has(id)).length;
         body.append(h('div', { class: 'sess-head' },
-          h('span', { class: 'kicker acc', text: isToday ? T('Séance du jour') : dayLabel(keyDate(key)) }),
+          h('div', { class: 'sess-top' }, h('span', { class: 'kicker acc', text: isToday ? T('Séance du jour') : dayLabel(keyDate(key)) }), dayMenu()),
           h('h1', { class: 'sess-title', text: top.length > 1 ? top[0].title : s0 ? sessionTitle(s0) : isToday ? T('Aujourd’hui') : dayLabel(keyDate(key)) }),
           order.length ? h('div', { class: 'sess-prog' }, h('strong', { text: T('{0} / {1} exercices', k, order.length) }),
             h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k / order.length) + '%' } }))) : null));
@@ -3427,22 +3451,17 @@
       const seances = groups.filter((g) => !g.loose);
       const qs = S.qvSaved; S.qvSaved = null;
       if (seances.length > 1) {
-        // Plusieurs séances prévues : une carte par séance, la première en haut.
-        const doneIds = new Set(entries.map((e) => e.exerciseId));
-        const box = h('div', { class: 'sess-name sess-cards' });
+        // Plusieurs séances prévues. 0.8.5 : une seule ligne (au lieu d'une carte par séance) ; chaque nom
+        // ramène à sa partie de la liste, qui a déjà son titre et son avancement.
+        const line = h('div', { class: 'sess-line', role: 'group', 'aria-label': T('Séances du jour') });
         seances.forEach((g, i) => {
           const gc = GROUPS.get(g.main);
-          const k2 = g.ids.filter((id) => doneIds.has(id)).length;
-          box.append(h('div', { class: 'card named' + (k2 === g.ids.length ? ' all-done' : ''), style: gc ? { '--c': gc.color } : null },
-            h('div', { class: 'row' },
-              h('button', { type: 'button', class: 'nm-btn', onclick: () => { const t = body.querySelector('#grp-' + i); if (t) t.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }); } },
-                h('small', { class: 'nm-n', text: T('Séance {0}', i + 1) }), h('strong', { class: 'nm', text: g.title })),
-              (g.named || (!S.sessions[key] && i === 0)) ? h('button', { type: 'button', class: 'textbtn', text: T('Modifier'), onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }) : null),
-            h('div', { class: 'tags' }, tag(g.main, true), ...(g.sec || []).map((id) => tag(id))),
-            h('div', { class: 'sess-prog mini' }, h('strong', { text: T('{0} / {1} exercices', k2, g.ids.length) }),
-              h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k2 / g.ids.length) + '%' } })))));
+          line.append(h('button', { type: 'button', class: 'sl-item', style: gc ? { '--c': gc.color } : null,
+            onclick: () => { const t = body.querySelector('#grp-' + i); if (t) t.scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }); } }, g.title));
         });
-        body.append(box);
+        const ni = seances.findIndex((g) => g.named);
+        if (ni >= 0 || !S.sessions[key]) line.append(h('button', { type: 'button', class: 'textbtn', text: T('Modifier'), onclick: () => sessionDialog(key, entries.length ? entries : order.map((id) => ({ exerciseId: id })), render) }));
+        body.append(h('div', { class: 'sess-name' }, line));
       } else if (entries.length || order.length) {
         const nameBox = h('div', { class: 'sess-name' });
         const s = S.sessions[key];
@@ -3454,12 +3473,6 @@
             h('div', { class: 'tags' }, tag(s.main, true), s.sec.map((id) => tag(id)))));
         }
         body.append(nameBox);
-      }
-      body.append(noteBox(() => (S.days[key] || {}).note, (v) => { const d = dayMeta(key, true); d.note = v; },
-        T('Note de séance : sensations, fatigue…'), T('Note de la séance')));
-      if (entries.length) {
-        const st = dayStats(entries);
-        body.append(h('p', { class: 'sum', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' ' + T('kg au total') : '') }));
       }
       if (!order.length) {
         body.append(h('p', { class: 'empty-note pad', text: isToday ? T('Rien de prévu aujourd’hui. Ajoute des exercices ou lance une de tes séances types.') : T('Aucun exercice ce jour-là.') }));
@@ -3476,7 +3489,8 @@
           const planned = !sets.length && meta && meta.plan[id] ? meta.plan[id] : null;
           const planAll = meta && meta.plan[id] ? meta.plan[id] : null;
           const state = id === cur ? 'now' : sets.length && !(planAll && sets.length < planAll.length) ? 'done' : 'todo';
-          const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? T('À faire · ') + plural(planned.length, 'série prévue', 'séries prévues') : T('À faire');
+          const same = planned ? plannedSame(planned) : null;   // 0.8.5 : « 3 × 10 · 80 kg » au lieu de 3 pastilles identiques
+          const status = sets.length ? plural(sets.length, 'série', 'séries') : planned ? T('À faire · ') + (same || plural(planned.length, 'série prévue', 'séries prévues')) : T('À faire');
           const head = h('div', { class: 'dhead' },
             h('span', { class: 'handle', role: 'button', 'aria-label': T('Déplacer ') + dn(ex), title: T('Maintenir et glisser pour déplacer') }, icon('grip')),
             h('button', { type: 'button', class: 'open', onclick: () => go('exercise', { id, day: key }) }, thumb(ex, { zoom: true }),
@@ -3498,7 +3512,7 @@
               sets.map((e) => swipeable(h('button', { type: 'button', class: 'line-set', 'aria-label': T('Modifier la série ') + entryText(e), onclick: () => editEntry(e, render) },
                 h('span', { class: 'tm', text: fTime.format(e.ts) }), h('b', { text: entryText(e) }), e.c === 1 ? null : h('span', { class: 'tot', text: fmtNum(e.w * e.r) })),
                 () => deleteEntry(e, render), T('Supprimer la série'))),
-              planned ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: plannedText(p) }))) : null, qline, nowFoot)));
+              planned && !same ? h('div', { class: 'sets planned' }, planned.map((p) => h('span', { class: 'set', text: plannedText(p) }))) : null, qline, nowFoot)));
         }
         sortable(list, (ids) => { const d = dayMeta(key, true); d.order = groups.flatMap((x) => (x === g ? ids : x.ids)); saveUser(); if (tl) render(); });
         if (many) {
@@ -3512,25 +3526,37 @@
         body.append(h('p', { class: 'hint', text: T('Maintiens la poignée pour changer l’ordre. Glisse une ligne vers la gauche pour la supprimer.') }));
       }
       body.append(h('button', { type: 'button', class: 'btn ghost wide addex', onclick: () => go('library', { pick: 'day', id: key }) }, icon('plus'), T('Ajouter un exercice')));
-      const doneIds = new Set(entries.map((e) => e.exerciseId));
-      if (order.some((id) => !doneIds.has(id))) {
-        body.append(h('button', { type: 'button', class: 'textbtn danger center clearplan', onclick: () => clearPlanned(key, render) },
-          entries.length ? T('Retirer les exercices prévus non faits') : T('Retirer la séance prévue')));
-      }
-      if (key >= todayKey() && S.plans.length) {
+      // Rien de prévu : lancer une séance type reste en vue (sinon, c'est dans le « … »).
+      if (!order.length && key >= todayKey() && S.plans.length) {
         body.append(h('button', { type: 'button', class: 'btn ghost wide', onclick: () => scheduleDialog({ date: key, onDone: (k) => (select ? select(k) : render()) }) }, icon('folder'), isToday ? T('Lancer ou programmer une séance type') : T('Prévoir une séance type')));
       }
       const scs = S.schedules.filter((sc) => occurs(sc, key) && S.plans.some((p) => p.id === sc.plan));
       if (scs.length) {
         body.append(h('div', { class: 'sched-note' }, scs.map((sc) => h('p', {}, h('b', { text: planTitle(S.plans.find((p) => p.id === sc.plan)) }), ' · ' + schedText(sc)))));
       }
+      // 0.8.5 : le résumé et la note passent en bas (la liste d'abord) ; les autres actions sont dans le « … ».
       if (entries.length) {
-        body.append(h('section', { class: 'sec tight acts-day' },
-          isToday ? null : h('button', { type: 'button', class: 'pill', onclick: () => redoDay(key, select) }, icon('copy'), T('Refaire cette séance aujourd’hui')),
-          h('button', { type: 'button', class: 'pill', onclick: () => dayToPlan(key) }, icon('folder'), T('Enregistrer comme séance type')),
-          h('button', { type: 'button', class: 'pill', onclick: () => copySummary(key) }, icon('copy'), T('Copier pour Strava')),
-          h('button', { type: 'button', class: 'pill', onclick: () => exportActivity(key) }, icon('export'), T('Exporter l’activité (fichier)'))));
+        const st = dayStats(entries);
+        body.append(h('p', { class: 'sum pad', text: plural(st.nEx, 'exercice', 'exercices') + ' · ' + plural(st.nSets, 'série', 'séries') + (st.load ? ' · ' + fmtNum(Math.round(st.load)) + ' ' + T('kg au total') : '') }));
       }
+      body.append(noteBox(() => (S.days[key] || {}).note, (v) => { const d = dayMeta(key, true); d.note = v; },
+        T('Note de séance : sensations, fatigue…'), T('Note de la séance')));
+    }
+    /* 0.8.5 : page de la séance : les actions rares sont dans le « … » en haut à droite (« Retirer » en dernier). */
+    function dayMenu() {
+      const entries = dayEntries(key);
+      const order = dayOrder(key);
+      const doneIds = new Set(entries.map((e) => e.exerciseId));
+      const items = [
+        order.length && key >= todayKey() && S.plans.length ? { icon: 'folder', label: isToday ? T('Lancer ou programmer une séance type') : T('Prévoir une séance type'), run: () => scheduleDialog({ date: key, onDone: (k) => (select ? select(k) : render()) }) } : null,
+        entries.length && !isToday ? { icon: 'copy', label: T('Refaire cette séance aujourd’hui'), run: () => redoDay(key, select) } : null,
+        entries.length ? { icon: 'folder', label: T('Enregistrer comme séance type'), run: () => dayToPlan(key) } : null,
+        entries.length ? { icon: 'copy', label: T('Copier pour Strava'), run: () => copySummary(key) } : null,
+        entries.length ? { icon: 'export', label: T('Exporter l’activité (fichier)'), run: () => exportActivity(key) } : null,
+        order.some((id) => !doneIds.has(id)) ? { icon: 'trash', danger: true, label: entries.length ? T('Retirer les exercices prévus non faits') : T('Retirer la séance prévue'), run: () => clearPlanned(key, render) } : null,
+      ].filter(Boolean);
+      if (!items.length) return null;
+      return h('button', { type: 'button', class: 'iconbtn', 'aria-label': T('Autres actions de la séance'), onclick: () => actionSheet(isToday ? T('Séance du jour') : dayLabel(keyDate(key)), items) }, icon('dots', 'fill'));
     }
     function removeFromDay(id) {
       const removed = S.entries.filter((e) => e.exerciseId === id && dayKey(e.ts) === key);
@@ -3571,6 +3597,15 @@
   /* Séries faites d'un exercice, sous forme de séries prévues (charges, ou durée pour un exercice tenu). */
   const plannedText = (p) => (p.dur !== undefined ? (p.dur !== '' ? fmtDur(p.dur) : T('… s'))
     : (p.bw ? bwText(fin(p.w) ? p.w : 0) : p.w !== '' ? fmtNum(p.w) + ' kg' : T('… kg')) + T(' × ') + (p.r !== '' ? fmtNum(p.r) : '…'));
+  /* 0.8.5 : séries prévues toutes identiques, en une ligne : « 3 × 10 · 80 kg », « 2 × 30 s ». Sinon null. */
+  function plannedSame(arr) {
+    if (!arr || arr.length < 2) return null;
+    const k = (p) => JSON.stringify([p.w, p.r, p.dur, !!p.bw]);
+    if (arr.some((p) => k(p) !== k(arr[0]))) return null;
+    const p = arr[0]; const n = fmtNum(arr.length) + T(' × ');
+    if (p.dur !== undefined) return n + (p.dur !== '' ? fmtDur(p.dur) : T('… s'));
+    return n + (p.r !== '' ? fmtNum(p.r) : '…') + ' · ' + (p.bw ? bwText(fin(p.w) ? p.w : 0) : p.w !== '' ? fmtNum(p.w) + ' kg' : T('… kg'));
+  }
   const isHold = (id) => cardioKind(S.byId.get(id)) === 'hold';
   const doneSets = (entries, id) => entries.filter((e) => e.exerciseId === id && (e.c !== 1 || isHold(id))).map((e) => (e.c === 1 ? { w: '', r: '', dur: e.dur } : e.bw ? { w: e.x || '', r: e.r, bw: 1 } : { w: e.w, r: e.r }));
   function redoDay(key, select) {

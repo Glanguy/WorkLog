@@ -1,5 +1,16 @@
 # WorkLog : historique des versions
 
+## 0.8.5
+**Page « Aujourd’hui » plus directe**
+- La page s’ouvre sur l’exercice en cours : sa carte est entière à l’écran, « Valider la série » compris. Même chose en revenant d’une fiche exercice.
+- Plusieurs séances le même jour : une ligne de pastilles (« Jambes », « Étirements bas du corps ») remplace les grandes cartes ; un appui ramène à la séance dans la liste. « Modifier » est au bout de la ligne.
+- Séries prévues identiques : une seule ligne sous le nom (« À faire · 3 × 10 · 80 kg », « 2 × 30 s ») au lieu de pastilles répétées. Les pastilles restent quand les séries diffèrent.
+- Le résumé (exercices, séries, kg) et la note de séance passent en bas de la page.
+- « Lancer ou programmer une séance type », « Enregistrer comme séance type », « Copier pour Strava », « Exporter l’activité » et « Retirer les exercices prévus non faits » sont dans le bouton « … » en haut à droite. Une journée sans rien de prévu garde le bouton « Lancer ou programmer une séance type » en vue.
+
+**Corrections**
+- Plus de fin trait rouge ni de coins clairs sur le bord des lignes d’exercice : la poubelle n’apparaît qu’en glissant la ligne.
+
 ## 0.8.4
 **Corrections**
 - Double appui sur « Valider la série » (accueil, page de la séance, fiche exercice) : il pouvait encore enregistrer deux séries, car le 2e appui arrivait juste après l'enregistrement. Plus rien n'est enregistré dans la demi-seconde qui suit.

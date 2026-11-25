@@ -2,6 +2,8 @@
 /* WorkLog : textes de l'interface en anglais (clé = texte français dans js/app.js).
    {0}, {1} : valeurs insérées (nombre, nom, date). */
 window.WL_EN = {
+ "Séances du jour": "Today’s sessions",
+ "Autres actions de la séance": "More session actions",
  "Afficher le compteur": "Show the counter",
  "Affiche en bas de l’écran le nombre de lignes, de vignettes animées et de catégories ouvertes.": "Shows at the bottom of the screen the number of rows, animated thumbnails and open categories.",
  "Rapports de plantage": "Crash reports",
