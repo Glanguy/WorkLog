@@ -1,5 +1,10 @@
 # WorkLog : historique des versions
 
+## 0.8.4
+**Corrections**
+- Double appui sur « Valider la série » (accueil, page de la séance, fiche exercice) : il pouvait encore enregistrer deux séries, car le 2e appui arrivait juste après l'enregistrement. Plus rien n'est enregistré dans la demi-seconde qui suit.
+- « Noter plusieurs séries » : un double appui sur « Valider » n'enregistre plus les séries deux fois.
+
 ## 0.8.3
 **Corrections**
 - Plusieurs séances le même jour : le titre de l’accueil et de la page « Aujourd’hui » est celui de la séance du haut, les autres suivent (« puis … »). Avant, après un remplacement, la même séance pouvait apparaître deux fois et la première disparaître du titre.

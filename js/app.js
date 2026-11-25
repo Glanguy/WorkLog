@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.8.3';
+  const APP_VERSION = '0.8.4';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -89,12 +89,15 @@
     return el;
   }
   /* 0.8.3 : un bouton qui enregistre ne réagit qu'une fois : il reste désactivé jusqu'à la fin de l'enregistrement
-     (un double appui enregistrait deux séries). */
+     (un double appui enregistrait deux séries).
+     0.8.4 : et rien n'est enregistré dans les 600 ms qui suivent un enregistrement : le 2e appui d'un double appui
+     arrive après la fin de l'écriture, parfois sur un bouton redessiné (accueil, page de la séance). */
+  let lastSave = 0;
   const onceClick = (fn) => async (ev) => {
     const b = ev.currentTarget;
-    if (!b || b.disabled) return;
+    if (!b || b.disabled || Date.now() - lastSave < 600) return;
     b.disabled = true;
-    try { await fn(ev); } finally { b.disabled = false; }
+    try { await fn(ev); } finally { lastSave = Date.now(); b.disabled = false; }
   };
   function sv(tag, attrs, ...kids) {
     const el = document.createElementNS(NS, tag);
@@ -2452,7 +2455,7 @@
         h('div', { class: 'form-actions' },
           msg,
           h('button', { type: 'button', class: 'btn ghost', onclick: () => { rows.push(newRow()); renderRows(); const last = rows[rows.length - 1]; const f = last.nodes.w || last.nodes.min; if (f) f.focus(); } }, icon('plus'), T('Ajouter une série')),
-          h('button', { type: 'button', class: 'btn primary', onclick: save, text: T('Valider') }))));
+          h('button', { type: 'button', class: 'btn primary', onclick: onceClick(save), text: T('Valider') }))));
     formSec.fill = fill;
     return formSec;
   }
@@ -3409,9 +3412,10 @@
       const entries = dayEntries(key);
       const order = dayOrder(key);
       const meta = S.days[key];
+      const groups = dayGroups(key);
       if (tl) {
         const s0 = S.sessions[key];
-        const top = dayGroups(key).filter((g) => !g.loose);   // 0.8.3 : plusieurs séances : le titre est celle du haut
+        const top = groups.filter((g) => !g.loose);   // 0.8.3 : plusieurs séances : le titre est celle du haut
         const doneIds = new Set(entries.map((e) => e.exerciseId));
         const k = order.filter((id) => doneIds.has(id)).length;
         body.append(h('div', { class: 'sess-head' },
@@ -3420,7 +3424,6 @@
           order.length ? h('div', { class: 'sess-prog' }, h('strong', { text: T('{0} / {1} exercices', k, order.length) }),
             h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k / order.length) + '%' } }))) : null));
       } else body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? T(' · aujourd’hui') : '') }));
-      const groups = dayGroups(key);
       const seances = groups.filter((g) => !g.loose);
       const qs = S.qvSaved; S.qvSaved = null;
       if (seances.length > 1) {
