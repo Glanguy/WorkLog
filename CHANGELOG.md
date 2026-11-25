@@ -1,5 +1,11 @@
 # WorkLog : historique des versions
 
+## 0.8.3
+**Corrections**
+- Plusieurs séances le même jour : le titre de l’accueil et de la page « Aujourd’hui » est celui de la séance du haut, les autres suivent (« puis … »). Avant, après un remplacement, la même séance pouvait apparaître deux fois et la première disparaître du titre.
+- Un double appui sur « Valider la série » (page de la séance, accueil, fiche exercice) n’enregistre plus deux séries : le bouton reste inactif pendant l’enregistrement.
+- Remplacer une séance recopiée depuis le calendrier qui était en haut : la nouvelle séance prend sa place, en haut.
+
 ## 0.8.2
 **Plusieurs séances le même jour**
 - La page « Aujourd’hui » affiche en haut une carte par séance prévue (nom, muscles, avancement). La séance choisie en premier reste en haut, celles ajoutées ensuite passent en dessous.

@@ -14,7 +14,7 @@
   const BACKUP_KEY = 'worklog.backup.v1';
   const ARCHIVE_KEY = 'worklog.archive.v1';
   const DATA_V = 2;
-  const APP_VERSION = '0.8.2';
+  const APP_VERSION = '0.8.3';
   const SYNC_KEY = 'worklog.sync.v1';   // connexion au NAS : jeton et suivi, gardés sur ce téléphone uniquement
   const LANG_KEY = 'worklog.lang';
   const NS = 'http://www.w3.org/2000/svg';
@@ -88,6 +88,14 @@
     }
     return el;
   }
+  /* 0.8.3 : un bouton qui enregistre ne réagit qu'une fois : il reste désactivé jusqu'à la fin de l'enregistrement
+     (un double appui enregistrait deux séries). */
+  const onceClick = (fn) => async (ev) => {
+    const b = ev.currentTarget;
+    if (!b || b.disabled) return;
+    b.disabled = true;
+    try { await fn(ev); } finally { b.disabled = false; }
+  };
   function sv(tag, attrs, ...kids) {
     const el = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
@@ -1515,12 +1523,15 @@
       const done = new Set(dayEntries(tk).map((e) => e.exerciseId));
       const k = tOrder.filter((id) => done.has(id)).length;
       const s = S.sessions[tk];
-      const hg = s && GROUPS.get(s.main);
+      // 0.8.3 : plusieurs séances : le titre est celle du haut, les autres suivent (« puis … »).
+      const gs = dayGroups(tk).filter((g) => !g.loose);
+      const g0 = gs.length > 1 ? gs[0] : null;
+      const hg = g0 ? GROUPS.get(g0.main) : s && GROUPS.get(s.main);
       const card = h('section', { class: 'hero2', style: hg ? { '--c': hg.color } : null },
         h('div', { class: 'hero2-top' },
           h('div', { class: 'hero2-txt' }, h('span', { class: 'kicker acc', text: T('Séance du jour') }),
-            h('strong', { class: 'hero2-title', text: s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
-            (() => { const gs = dayGroups(tk).filter((g) => !g.loose); return gs.length > 1 ? h('span', { class: 'hero2-more', text: T('puis {0}', gs.slice(1).map((g) => g.title).join(' · ')) }) : null; })()),
+            h('strong', { class: 'hero2-title', text: g0 ? g0.title : s ? sessionTitle(s) : plural(tOrder.length, 'exercice prévu', 'exercices prévus') }),
+            g0 ? h('span', { class: 'hero2-more', text: T('puis {0}', gs.slice(1).map((g) => g.title).join(' · ')) }) : null),
           ring(k, tOrder.length)),
         h('button', { type: 'button', class: 'btn acc wide', onclick: () => go('session', tk) }, k ? T('Reprendre') : T('Commencer')));
       // Glisser vers la gauche : retirer la séance prévue de l'accueil (les séries déjà faites restent).
@@ -1568,11 +1579,11 @@
       const q = isTodo && !ex.missing ? plannedNext(tk, ex.id) : null;
       if (q) {
         card.append(h('p', { class: 'qh-plan', text: T('Prévu : {0}', q.text) }),
-          h('button', { type: 'button', class: 'btn acc wide', onclick: async () => {
+          h('button', { type: 'button', class: 'btn acc wide', onclick: onceClick(async () => {
             const e = await saveSet(ex, q.vals, Date.now());
             S.homeSaved = { id: e.id, text: T('Série enregistrée · {0}', entryText(e)) };
             after();
-          } }, icon('check'), T('Valider la série')),
+          }) }, icon('check'), T('Valider la série')),
           h('button', { type: 'button', class: 'btn ghost wide', onclick: open }, T('Ouvrir l’exercice')));
       } else card.append(h('button', { type: 'button', class: 'btn acc wide', onclick: open }, T('Ouvrir l’exercice')));
       const l = hsLine(); if (l) card.append(l);
@@ -1615,14 +1626,14 @@
     card.append(h('div', { class: 'qs-wrap' },
       stepper('w', v.bw ? T('Lest (kg)') : T('Poids (kg)'), step, (x) => (v.bw ? (x > 0 ? '+' : x < 0 ? '−' : '') + fmtNum(Math.abs(x)) : fmtNum(x))),
       stepper('r', T('Répétitions'), 1, (x) => fmtNum(x))));
-    card.append(h('button', { type: 'button', class: 'btn acc wide', onclick: async () => {
-      const r = valsToEntry(v);
-      if (r.noBw) { if (!(await askBodyWeight())) return; return card.querySelector('.btn.acc').click(); }
+    card.append(h('button', { type: 'button', class: 'btn acc wide', onclick: onceClick(async () => {
+      let r = valsToEntry(v);
+      if (r.noBw) { if (!(await askBodyWeight())) return; r = valsToEntry(v); }
       if (!r.ok) { toast(T('Poids ou répétitions invalides.')); return; }
       const e = await saveSet(ex, r.vals);
       S.homeSaved = { id: e.id, text: T('Série enregistrée · {0}', entryText(e)) };   // confirmation dans la carte, après l'affichage
       after();
-    } }, icon('check'), T('Valider')));
+    }) }, icon('check'), T('Valider')));
     // Confirmation de la série tout juste validée, avec « Annuler » (dans la carte, rien ne flotte).
     const hs = S.homeSaved; S.homeSaved = null;
     if (hs && S.entries.some((x) => x.id === hs.id)) {
@@ -1920,7 +1931,7 @@
       ...(KF.length ? [h('div', { class: 'kgrid' }, ...KF.map((k) => h('label', { class: 'kf' }, kick(CFIELD[k].label), kIns[k])))] : []),
       h('div', { class: 'mini-chips' }, bwBtn, dtChip),
       msg,
-      h('button', { type: 'button', class: 'btn acc wide big', onclick: async () => { if (await save()) markBase(); } }, icon('check'), h('span', { text: T('Valider la série') })));
+      h('button', { type: 'button', class: 'btn acc wide big', onclick: onceClick(async () => { if (await save()) markBase(); }) }, icon('check'), h('span', { text: T('Valider la série') })));
     card.append(h('div', { class: 'serie-head' }, title, sub), plannedLine, entry, doneBox, savedLine, h('div', { class: 'serie-links' }, multiLink));
     markBase();
     S.guard = guard;
@@ -3400,11 +3411,12 @@
       const meta = S.days[key];
       if (tl) {
         const s0 = S.sessions[key];
+        const top = dayGroups(key).filter((g) => !g.loose);   // 0.8.3 : plusieurs séances : le titre est celle du haut
         const doneIds = new Set(entries.map((e) => e.exerciseId));
         const k = order.filter((id) => doneIds.has(id)).length;
         body.append(h('div', { class: 'sess-head' },
           h('span', { class: 'kicker acc', text: isToday ? T('Séance du jour') : dayLabel(keyDate(key)) }),
-          h('h1', { class: 'sess-title', text: s0 ? sessionTitle(s0) : isToday ? T('Aujourd’hui') : dayLabel(keyDate(key)) }),
+          h('h1', { class: 'sess-title', text: top.length > 1 ? top[0].title : s0 ? sessionTitle(s0) : isToday ? T('Aujourd’hui') : dayLabel(keyDate(key)) }),
           order.length ? h('div', { class: 'sess-prog' }, h('strong', { text: T('{0} / {1} exercices', k, order.length) }),
             h('div', { class: 'pbar', 'aria-hidden': 'true' }, h('div', { style: { width: Math.round(100 * k / order.length) + '%' } }))) : null));
       } else body.append(h('h2', { class: 'dd-title', text: dayLabel(keyDate(key)) + (isToday ? T(' · aujourd’hui') : '') }));
@@ -3472,7 +3484,7 @@
           const nowFoot = tl && state === 'now' ? h('div', { class: 'now-foot' },
             planAll && planAll.length ? h('div', { class: 'sdots', 'aria-label': T('{0} séries faites sur {1}', sets.length, planAll.length) },
               planAll.map((p, i) => h('i', { class: i < sets.length ? 'on' : '' })), h('span', { text: T('{0} / {1} séries', sets.length, planAll.length) })) : null,
-            qv ? h('button', { type: 'button', class: 'btn acc wide big next qv', onclick: () => quickValidate(key, id, render) }, icon('check'),
+            qv ? h('button', { type: 'button', class: 'btn acc wide big next qv', onclick: onceClick(() => quickValidate(key, id, render)) }, icon('check'),
               h('span', { class: 'nx' }, h('small', { text: T('Série {0} sur {1} · {2}', qv.n, qv.of, qv.text) }), h('b', { text: T('Valider la série') })))
               : h('button', { type: 'button', class: 'btn acc wide', onclick: () => go('exercise', { id, day: key }) }, icon('play'), sets.length ? T('Continuer') : T('C’est parti'))) : null;
           const qline = qs && qs.ex === id && S.entries.some((x) => x.id === qs.id) ? h('div', { class: 'saved-line', role: 'status' }, icon('check'), h('span', { text: qs.text }),
@@ -3786,6 +3798,9 @@
         const ids0 = remove.filter((g) => g.plan).map((g) => g.plan.id);
         at = (dd.src || []).findIndex((id) => ids0.includes(id));
         const drop = new Set(remove.flatMap((g) => g.ids));
+        // 0.8.3 : une séance recopiée qui était en haut est remplacée à sa place, en haut.
+        const g0 = dayGroups(tk)[0];
+        if (g0 && !g0.plan && g0.ids.some((id) => drop.has(id))) at = 0;
         dd.order = dayOrder(tk).filter((id) => !drop.has(id));
         for (const id of drop) delete dd.plan[id];
         const gone = new Set(remove.filter((g) => g.plan).map((g) => g.plan.id));
